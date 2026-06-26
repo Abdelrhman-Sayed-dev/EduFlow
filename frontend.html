@@ -1,0 +1,1869 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>منصة المدرس</title>
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style>
+:root{
+  --primary:#0F766E;--primary-10:#F0FDFA;--primary-20:#CCFBF1;--primary-40:#2DD4BF;--primary-60:#0F766E;--primary-80:#134E4A;
+  --success:#10B981;--success-bg:#ECFDF5;--info:#3B82F6;--info-bg:#EFF6FF;
+  --warning:#F59E0B;--warning-bg:#FFFBEB;--danger:#EF4444;--danger-bg:#FEF2F2;
+  --bg:#F8FAFC;--surface:#FFFFFF;--surface-2:#F8FAFC;--surface-3:#F1F5F9;
+  --border:#E2E8F0;--border-2:#CBD5E1;
+  --text:#0F172A;--text-2:#475569;--text-3:#94A3B8;
+  --sidebar-w:260px;
+  --radius-sm:8px;--radius-md:12px;--radius-lg:16px;--radius-xl:20px;
+  --shadow-sm:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);
+  --shadow-md:0 4px 24px rgba(0,0,0,.06);
+  --shadow-lg:0 8px 40px rgba(0,0,0,.10);
+  --shadow-xl:0 20px 60px rgba(0,0,0,.14);
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;}
+body{font-family:'Cairo',sans-serif;background:var(--bg);color:var(--text);height:100vh;overflow:hidden;}
+::-webkit-scrollbar{width:4px;height:4px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:9px;}
+button{font-family:'Cairo',sans-serif;}
+
+/* APP SHELL */
+#app{display:flex;height:100vh;}
+.sidebar{
+  width:var(--sidebar-w);flex-shrink:0;background:var(--surface);
+  border-left:1px solid var(--border);display:flex;flex-direction:column;
+  height:100vh;overflow:hidden;
+}
+.sidebar-brand{padding:20px 20px 16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border);}
+.brand-mark{width:36px;height:36px;border-radius:10px;background:var(--primary);display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0;}
+.brand-text{font-size:14px;font-weight:700;color:var(--text);}
+.brand-sub{font-size:11px;color:var(--text-3);font-weight:400;}
+.sidebar-body{flex:1;overflow-y:auto;padding:12px 10px;}
+.nav-section{font-size:10px;font-weight:600;color:var(--text-3);letter-spacing:.07em;text-transform:uppercase;padding:14px 10px 6px;user-select:none;}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:var(--radius-sm);cursor:pointer;color:var(--text-2);font-size:13.5px;font-weight:500;border:none;background:none;width:100%;text-align:right;transition:background .12s,color .12s;}
+.nav-item:hover{background:var(--surface-3);color:var(--text);}
+.nav-item.active{background:var(--primary-10);color:var(--primary);}
+.nav-item.active .nav-ic{color:var(--primary);}
+.nav-ic{flex-shrink:0;color:var(--text-3);transition:color .12s;}
+.sidebar-footer{padding:12px 10px;border-top:1px solid var(--border);}
+.user-card{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--radius-md);background:var(--surface-3);cursor:pointer;transition:background .12s;}
+.user-card:hover{background:var(--border);}
+.avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary-40));display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:700;flex-shrink:0;}
+.user-name{font-size:13px;font-weight:600;color:var(--text);}
+.user-role{font-size:11px;color:var(--text-3);}
+.user-card .chevron{margin-right:auto;color:var(--text-3);}
+
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;}
+.topbar{height:56px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 24px;flex-shrink:0;}
+.topbar-left .breadcrumb{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-3);}
+.topbar-left .breadcrumb b{color:var(--text);font-weight:600;}
+.topbar-right{display:flex;align-items:center;gap:8px;}
+.topbar-date{font-size:12px;color:var(--text-3);padding:0 8px;}
+.page{flex:1;overflow-y:auto;padding:24px;}
+
+.page-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:10px;}
+.page-header h1{font-size:22px;font-weight:700;color:var(--text);line-height:1.3;}
+.page-header p{font-size:13.5px;color:var(--text-2);margin-top:3px;}
+.header-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px;}
+@media (max-width:1100px){.stats-grid{grid-template-columns:repeat(2,1fr);}}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-xl);padding:18px 20px;box-shadow:var(--shadow-sm);position:relative;overflow:hidden;}
+.stat-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px;}
+.stat-icon{width:38px;height:38px;border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.stat-icon.teal{background:var(--primary-10);color:var(--primary);}
+.stat-icon.blue{background:var(--info-bg);color:var(--info);}
+.stat-icon.green{background:var(--success-bg);color:var(--success);}
+.stat-icon.amber{background:var(--warning-bg);color:var(--warning);}
+.stat-value{font-size:28px;font-weight:700;color:var(--text);line-height:1;margin-bottom:4px;}
+.stat-label{font-size:12.5px;color:var(--text-2);font-weight:500;}
+
+.table-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-xl);box-shadow:var(--shadow-sm);overflow:hidden;margin-bottom:20px;}
+.toolbar{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--border);flex-wrap:wrap;}
+.search-wrap{position:relative;flex:1;min-width:200px;}
+.search-wrap input{width:100%;padding:8px 12px 8px 36px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:'Cairo',sans-serif;background:var(--surface-3);color:var(--text);}
+.search-wrap input:focus{outline:none;border-color:var(--primary);background:var(--surface);}
+.search-wrap .search-ic{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-3);pointer-events:none;}
+.filter-select{padding:8px 12px 8px 32px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:'Cairo',sans-serif;background:var(--surface-3) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2394A3B8' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 10px center;appearance:none;color:var(--text);cursor:pointer;}
+.filter-select:focus{outline:none;border-color:var(--primary);}
+
+.table-wrap{overflow-x:auto;}
+table{width:100%;border-collapse:collapse;font-size:13.5px;}
+th{padding:11px 16px;text-align:right;font-size:11.5px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;background:var(--surface-2);border-bottom:1px solid var(--border);white-space:nowrap;}
+td{padding:13px 16px;text-align:right;border-bottom:1px solid var(--border);color:var(--text);vertical-align:middle;}
+tbody tr:last-child td{border-bottom:none;}
+tbody tr:hover{background:var(--primary-10);}
+.td-name{font-weight:600;color:var(--text);}
+.td-sub{font-size:12px;color:var(--text-3);margin-top:2px;}
+.td-actions{display:flex;align-items:center;gap:6px;}
+.action-btn{width:30px;height:30px;border-radius:var(--radius-sm);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text-3);background:transparent;}
+.action-btn:hover{background:var(--surface-3);}
+.action-btn.edit:hover{background:var(--info-bg);color:var(--info);}
+.action-btn.del:hover{background:var(--danger-bg);color:var(--danger);}
+
+.badge{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:99px;font-size:11.5px;font-weight:600;}
+.badge-teal{background:var(--primary-10);color:var(--primary-60);}
+.badge-blue{background:var(--info-bg);color:#1D4ED8;}
+.badge-amber{background:var(--warning-bg);color:#92400E;}
+.badge-green{background:var(--success-bg);color:#065F46;}
+.badge-red{background:var(--danger-bg);color:#991B1B;}
+.badge-gray{background:var(--surface-3);color:var(--text-2);}
+
+.overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:900;opacity:0;pointer-events:none;transition:opacity .2s;}
+.overlay.open{opacity:1;pointer-events:all;}
+.modal{background:var(--surface);border-radius:var(--radius-xl);box-shadow:var(--shadow-xl);width:480px;max-width:95vw;transform:scale(.96) translateY(12px);transition:transform .2s cubic-bezier(.34,1.2,.64,1),opacity .2s;opacity:0;max-height:92vh;overflow-y:auto;}
+.overlay.open .modal{transform:scale(1) translateY(0);opacity:1;}
+.modal-header{padding:20px 22px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);}
+.modal-title{font-size:16px;font-weight:700;color:var(--text);}
+.modal-close{width:30px;height:30px;border-radius:var(--radius-sm);border:none;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--text-3);}
+.modal-close:hover{background:var(--surface-3);color:var(--text);}
+.modal-body{padding:20px 22px;}
+.modal-footer{padding:16px 22px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end;}
+
+.form-group{margin-bottom:16px;}
+.form-label{display:block;font-size:13px;font-weight:600;color:var(--text);margin-bottom:6px;}
+.form-label .req{color:var(--danger);margin-right:2px;}
+.form-input{width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13.5px;font-family:'Cairo',sans-serif;background:var(--surface);color:var(--text);}
+.form-input:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px rgba(15,118,110,.1);}
+.form-select{width:100%;padding:9px 12px 9px 32px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13.5px;font-family:'Cairo',sans-serif;background:var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2394A3B8' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 12px center;appearance:none;color:var(--text);cursor:pointer;}
+.form-select:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px rgba(15,118,110,.1);}
+.form-textarea{width:100%;padding:9px 12px;min-height:72px;resize:vertical;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13.5px;font-family:'Cairo',sans-serif;background:var(--surface);color:var(--text);}
+.form-textarea:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px rgba(15,118,110,.1);}
+.form-hint{font-size:11.5px;color:var(--text-3);margin-top:4px;}
+.form-row-2{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+
+.btn{display:inline-flex;align-items:center;gap:7px;padding:9px 16px;border-radius:var(--radius-sm);font-size:13.5px;font-weight:600;font-family:'Cairo',sans-serif;border:none;cursor:pointer;transition:background .15s,opacity .15s,transform .1s;white-space:nowrap;}
+.btn:active{transform:scale(.98);}
+.btn:disabled{opacity:.55;cursor:not-allowed;}
+.btn-primary{background:var(--primary);color:#fff;}
+.btn-primary:hover{background:var(--primary-80);}
+.btn-ghost{background:var(--surface-3);color:var(--text-2);border:1px solid var(--border);}
+.btn-ghost:hover{background:var(--border);}
+.btn-danger{background:var(--danger);color:#fff;}
+.btn-danger:hover{background:#DC2626;}
+.btn-sm{padding:7px 12px;font-size:12.5px;}
+.btn-block{width:100%;justify-content:center;}
+
+.empty-state{text-align:center;padding:60px 24px;}
+.empty-icon{width:64px;height:64px;border-radius:var(--radius-xl);background:var(--surface-3);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;margin:0 auto 16px;color:var(--text-3);}
+.empty-title{font-size:16px;font-weight:700;color:var(--text);margin-bottom:6px;}
+.empty-desc{font-size:13.5px;color:var(--text-2);margin-bottom:20px;line-height:1.6;}
+
+#toast-root{position:fixed;bottom:24px;right:50%;transform:translateX(50%);z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none;}
+.toast{background:var(--text);color:#fff;padding:11px 16px;border-radius:var(--radius-md);font-size:13.5px;font-family:'Cairo',sans-serif;font-weight:500;display:flex;align-items:center;gap:9px;box-shadow:var(--shadow-xl);pointer-events:none;animation:toastIn .2s ease both;}
+.toast.out{animation:toastOut .2s ease both;}
+@keyframes toastIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+@keyframes toastOut{to{opacity:0;transform:translateY(12px)}}
+.toast-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+.toast-dot.success{background:var(--success);}
+.toast-dot.error{background:var(--danger);}
+.toast-dot.info{background:var(--info);}
+
+/* LOGIN SCREEN */
+.login-screen{height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,var(--primary-80),var(--primary) 60%,var(--primary-40));padding:20px;}
+.login-card{background:var(--surface);border-radius:var(--radius-xl);box-shadow:var(--shadow-xl);width:420px;max-width:100%;padding:32px 30px;}
+.login-brand{display:flex;flex-direction:column;align-items:center;gap:10px;margin-bottom:24px;}
+.login-brand .brand-mark{width:52px;height:52px;border-radius:14px;}
+.login-brand h1{font-size:18px;font-weight:700;}
+.login-brand p{font-size:12.5px;color:var(--text-3);}
+.login-tabs{display:flex;background:var(--surface-3);border-radius:var(--radius-md);padding:4px;margin-bottom:22px;gap:4px;}
+.login-tab{flex:1;text-align:center;padding:9px 6px;border-radius:var(--radius-sm);font-size:13px;font-weight:600;color:var(--text-2);cursor:pointer;border:none;background:none;font-family:'Cairo',sans-serif;}
+.login-tab.active{background:var(--surface);color:var(--primary);box-shadow:var(--shadow-sm);}
+.login-error{background:var(--danger-bg);color:var(--danger);font-size:12.5px;border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:14px;display:none;}
+.login-error.show{display:block;}
+.login-hint{text-align:center;font-size:11.5px;color:var(--text-3);margin-top:16px;line-height:1.7;}
+
+/* ROLE PILL */
+.role-pill{display:inline-flex;align-items:center;gap:5px;padding:4px 11px;border-radius:99px;font-size:11.5px;font-weight:700;}
+.role-pill.admin{background:var(--danger-bg);color:#991B1B;}
+.role-pill.teacher{background:var(--info-bg);color:#1D4ED8;}
+.role-pill.supervisor{background:var(--warning-bg);color:#92400E;}
+.role-pill.student{background:var(--success-bg);color:#065F46;}
+
+/* CARDS GRID (board sessions) */
+.cards-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;}
+.session-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;box-shadow:var(--shadow-sm);}
+.session-card .thumb{width:100%;height:140px;object-fit:cover;background:var(--surface-3);display:block;cursor:pointer;}
+.session-card .info{padding:10px 12px;display:flex;align-items:center;justify-content:space-between;}
+.session-card .info b{font-size:13px;}
+.session-card .info span{font-size:11.5px;color:var(--text-3);}
+
+.access-code-box{display:flex;align-items:center;gap:8px;background:var(--surface-3);border:1px dashed var(--border-2);border-radius:var(--radius-sm);padding:8px 12px;font-family:monospace;font-size:14px;font-weight:700;color:var(--primary-80);letter-spacing:1px;}
+
+.day-col-title{font-size:13px;font-weight:700;color:var(--primary);margin:18px 0 8px;display:flex;align-items:center;gap:6px;}
+.schedule-item{display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);padding:12px 14px;margin-bottom:8px;}
+.schedule-time{background:var(--primary-10);color:var(--primary);font-weight:700;font-size:12.5px;border-radius:var(--radius-sm);padding:6px 10px;flex-shrink:0;min-width:78px;text-align:center;}
+.schedule-body{flex:1;}
+.schedule-body b{font-size:13.5px;}
+.schedule-body .sub{font-size:12px;color:var(--text-3);}
+
+.hidden{display:none !important;}
+@media (max-width:860px){
+  .sidebar{position:fixed;top:0;right:0;bottom:0;z-index:500;transform:translateX(100%);transition:transform .2s;}
+  .sidebar.open{transform:translateX(0);}
+  .stats-grid{grid-template-columns:1fr 1fr;}
+  .form-row-2{grid-template-columns:1fr;}
+}
+</style>
+</head>
+<body>
+
+<div id="toast-root"></div>
+
+<!-- ══════════ شاشة تسجيل الدخول ══════════ -->
+<div id="loginScreen" class="login-screen">
+  <div class="login-card">
+    <div class="login-brand">
+      <div class="brand-mark"><i data-lucide="graduation-cap" style="width:26px;height:26px;"></i></div>
+      <h1>منصة المدرس</h1>
+      <p>نظام إدارة الطلاب والمجموعات</p>
+    </div>
+
+    <div class="login-tabs">
+      <button class="login-tab active" data-tab="staff" onclick="switchLoginTab('staff')">تسجيل دخول الموظفين</button>
+      <button class="login-tab" data-tab="student" onclick="switchLoginTab('student')">الدخول بكود</button>
+    </div>
+
+    <div id="loginError" class="login-error"></div>
+
+    <!-- دخول الأدمن / المدرس / المشرف -->
+    <form id="staffLoginForm" onsubmit="return handleStaffLogin(event)">
+      <div class="form-group">
+        <label class="form-label">اسم المستخدم</label>
+        <input class="form-input" id="loginUsername" placeholder="اسم المستخدم" required>
+      </div>
+      <div class="form-group">
+        <label class="form-label">كلمة المرور</label>
+        <input class="form-input" id="loginPassword" type="password" placeholder="••••••••" required>
+      </div>
+      <button class="btn btn-primary btn-block" type="submit">
+        <i data-lucide="log-in" style="width:15px;height:15px;"></i> تسجيل الدخول
+      </button>
+    </form>
+
+    <!-- دخول بالكود (طالب أو مشرف أو مدرس) -->
+    <form id="studentLoginForm" class="hidden" onsubmit="return handleStudentLogin(event)">
+      <div class="form-group">
+        <label class="form-label">كود الدخول الخاص بك</label>
+        <input class="form-input" id="loginAccessCode" placeholder="مثال: ST-4F92AB" required style="font-family:monospace;text-align:center;letter-spacing:1px;">
+        <div class="form-hint">الطالب بياخد كوده من المشرف، والمشرف/المدرس بياخد كوده من الأدمن</div>
+      </div>
+      <button class="btn btn-primary btn-block" type="submit">
+        <i data-lucide="log-in" style="width:15px;height:15px;"></i> دخول
+      </button>
+    </form>
+
+    <div class="login-hint">منصة خاصة بإدارة المجموعات التعليمية © 2026</div>
+  </div>
+</div>
+
+<!-- ══════════ تطبيق السيستم ══════════ -->
+<div id="app" class="hidden">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-mark"><i data-lucide="graduation-cap" style="width:18px;height:18px;"></i></div>
+      <div>
+        <div class="brand-text">منصة المدرس</div>
+        <div class="brand-sub" id="brandRoleLabel">—</div>
+      </div>
+    </div>
+    <div class="sidebar-body" id="navContainer"></div>
+    <div class="sidebar-footer">
+      <div class="user-card" onclick="openAccountModal()">
+        <div class="avatar" id="userAvatar">?</div>
+        <div>
+          <div class="user-name" id="userNameLabel">—</div>
+          <div class="user-role" id="userRoleLabel">—</div>
+        </div>
+        <i data-lucide="settings" class="chevron" style="width:16px;height:16px;"></i>
+      </div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-left">
+        <button class="action-btn" style="display:none" id="menuToggle" onclick="document.getElementById('sidebar').classList.toggle('open')"><i data-lucide="menu"></i></button>
+        <div class="breadcrumb"><b id="pageTitleBreadcrumb">لوحة التحكم</b></div>
+      </div>
+      <div class="topbar-right">
+        <span class="topbar-date" id="topbarDate"></span>
+      </div>
+    </div>
+    <div class="page" id="pageContainer"></div>
+  </div>
+</div>
+
+<!-- ══════════ المودالات المشتركة ══════════ -->
+<div class="overlay" id="genericModal">
+  <div class="modal" id="genericModalBody"></div>
+</div>
+
+<div class="overlay" id="confirmModal">
+  <div class="modal confirm-modal" style="width:380px;">
+    <div class="modal-body">
+      <div class="confirm-icon danger" style="width:52px;height:52px;border-radius:16px;display:flex;align-items:center;justify-content:center;margin-bottom:14px;background:var(--danger-bg);color:var(--danger);">
+        <i data-lucide="alert-triangle" style="width:24px;height:24px;"></i>
+      </div>
+      <div class="confirm-title" style="font-size:16px;font-weight:700;margin-bottom:6px;" id="confirmTitle">تأكيد</div>
+      <div class="confirm-desc" style="font-size:13.5px;color:var(--text-2);line-height:1.6;" id="confirmDesc"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeOverlay('confirmModal')">إلغاء</button>
+      <button class="btn btn-danger" id="confirmActionBtn"><i data-lucide="trash-2" style="width:14px;height:14px;"></i> تأكيد</button>
+    </div>
+  </div>
+</div>
+
+<!-- لايت بوكس للصور -->
+<div class="overlay" id="imageLightbox" onclick="closeOverlay('imageLightbox')">
+  <img id="lightboxImg" src="" style="max-width:90vw;max-height:90vh;border-radius:12px;box-shadow:var(--shadow-xl);">
+</div>
+
+<script>
+/* =====================================================================
+   إعدادات عامة + أدوات مساعدة
+===================================================================== */
+const API = "";
+let TOKEN = localStorage.getItem("token") || null;
+let SESSION = JSON.parse(localStorage.getItem("session") || "null");
+let CURRENT_PAGE = null;
+
+function icons(){ if (window.lucide) lucide.createIcons(); }
+
+function showToast(msg, type="info"){
+  const root = document.getElementById("toast-root");
+  const div = document.createElement("div");
+  div.className = "toast";
+  div.innerHTML = `<span class="toast-dot ${type}"></span><span>${msg}</span>`;
+  root.appendChild(div);
+  setTimeout(()=>{ div.classList.add("out"); setTimeout(()=>div.remove(), 200); }, 2600);
+}
+
+async function api(path, options={}){
+  const headers = Object.assign({"Content-Type":"application/json"}, options.headers || {});
+  if (TOKEN) headers["Authorization"] = "Bearer " + TOKEN;
+  let res;
+  try{
+    res = await fetch(API + path, Object.assign({}, options, {headers}));
+  }catch(e){
+    showToast("في مشكلة في الاتصال بالسيرفر", "error");
+    throw e;
+  }
+  let data = null;
+  try{ data = await res.json(); }catch(e){ data = null; }
+  if (res.status === 401){
+    doLogout(true);
+    throw new Error("unauthorized");
+  }
+  if (!res.ok){
+    const msg = (data && data.detail) ? data.detail : "حصل خطأ غير متوقع";
+    showToast(msg, "error");
+    throw new Error(msg);
+  }
+  return data;
+}
+
+function openOverlay(id){ document.getElementById(id).classList.add("open"); icons(); }
+function closeOverlay(id){ document.getElementById(id).classList.remove("open"); }
+
+function openModal(titleHtml, bodyHtml, footerHtml){
+  const modal = document.getElementById("genericModalBody");
+  modal.innerHTML = `
+    <div class="modal-header">
+      <div class="modal-title">${titleHtml}</div>
+      <button class="modal-close" onclick="closeOverlay('genericModal')"><i data-lucide="x" style="width:16px;height:16px;"></i></button>
+    </div>
+    <div class="modal-body">${bodyHtml}</div>
+    <div class="modal-footer">${footerHtml}</div>
+  `;
+  openOverlay("genericModal");
+}
+
+function confirmAction(title, desc, onConfirm){
+  document.getElementById("confirmTitle").textContent = title;
+  document.getElementById("confirmDesc").textContent = desc;
+  const btn = document.getElementById("confirmActionBtn");
+  const newBtn = btn.cloneNode(true);
+  btn.parentNode.replaceChild(newBtn, btn);
+  newBtn.addEventListener("click", async ()=>{
+    await onConfirm();
+    closeOverlay("confirmModal");
+  });
+  openOverlay("confirmModal");
+}
+
+function todayStr(){ return new Date().toISOString().slice(0,10); }
+
+function showImageLightbox(src){
+  document.getElementById("lightboxImg").src = src;
+  openOverlay("imageLightbox");
+}
+
+/* =====================================================================
+   تسجيل الدخول / الخروج
+===================================================================== */
+function switchLoginTab(tab){
+  document.querySelectorAll(".login-tab").forEach(b=>b.classList.toggle("active", b.dataset.tab===tab));
+  document.getElementById("staffLoginForm").classList.toggle("hidden", tab!=="staff");
+  document.getElementById("studentLoginForm").classList.toggle("hidden", tab!=="student");
+  hideLoginError();
+}
+
+function showLoginError(msg){
+  const e = document.getElementById("loginError");
+  e.textContent = msg; e.classList.add("show");
+}
+function hideLoginError(){ document.getElementById("loginError").classList.remove("show"); }
+
+async function handleStaffLogin(ev){
+  ev.preventDefault();
+  hideLoginError();
+  const username = document.getElementById("loginUsername").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  try{
+    const res = await fetch(API + "/api/auth/login", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({username, password})
+    });
+    const data = await res.json();
+    if (!res.ok){ showLoginError(data.detail || "بيانات الدخول غلط"); return false; }
+    onLoginSuccess(data);
+  }catch(e){ showLoginError("مشكلة في الاتصال بالسيرفر"); }
+  return false;
+}
+
+async function handleStudentLogin(ev){
+  ev.preventDefault();
+  hideLoginError();
+  const access_code = document.getElementById("loginAccessCode").value.trim();
+  try{
+    const res = await fetch(API + "/api/auth/login-code", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({access_code})
+    });
+    const data = await res.json();
+    if (!res.ok){ showLoginError(data.detail || "كود الدخول غلط"); return false; }
+    onLoginSuccess(data);
+  }catch(e){ showLoginError("مشكلة في الاتصال بالسيرفر"); }
+  return false;
+}
+
+function onLoginSuccess(data){
+  TOKEN = data.token;
+  SESSION = data;
+  localStorage.setItem("token", TOKEN);
+  localStorage.setItem("session", JSON.stringify(SESSION));
+  boot();
+}
+
+function doLogout(silent){
+  TOKEN = null; SESSION = null;
+  localStorage.removeItem("token"); localStorage.removeItem("session");
+  document.getElementById("app").classList.add("hidden");
+  document.getElementById("loginScreen").classList.remove("hidden");
+  const u = document.getElementById("loginUsername"); if (u) u.value = "";
+  const p = document.getElementById("loginPassword"); if (p) p.value = "";
+  if (!silent) showToast("تم تسجيل الخروج", "info");
+}
+
+async function logout(){
+  try{ await api("/api/auth/logout", {method:"POST"}); }catch(e){}
+  doLogout();
+}
+
+/* =====================================================================
+   حسابي - تغيير كلمة المرور / تسجيل الخروج
+===================================================================== */
+function openAccountModal(){
+  const isStudent = SESSION.role === "student";
+  openModal("حسابي", `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;">
+      <div class="avatar" style="width:42px;height:42px;font-size:16px;">${(SESSION.full_name||"?").trim()[0]||"?"}</div>
+      <div>
+        <div style="font-weight:700;font-size:14px;">${SESSION.full_name}</div>
+        <div style="font-size:12px;color:var(--text-3);">${ROLE_LABELS[SESSION.role]||""}</div>
+      </div>
+    </div>
+    ${isStudent ? `
+      <div class="form-hint" style="margin-bottom:16px;">بياناتك بتُدار من المشرف أو الأدمن. لو نسيت كود الدخول، كلم المشرف المسؤول عن مجموعتك.</div>
+    ` : `
+      <div class="form-label" style="margin-bottom:10px;">تغيير كلمة المرور</div>
+      <div id="changePwError" class="login-error" style="margin-bottom:10px;"></div>
+      <div class="form-group"><label class="form-label">كلمة المرور الحالية</label><input class="form-input" id="cp_current" type="password"></div>
+      <div class="form-group"><label class="form-label">كلمة المرور الجديدة</label><input class="form-input" id="cp_new" type="password" placeholder="6 حروف/أرقام على الأقل"></div>
+      <div class="form-group"><label class="form-label">تأكيد كلمة المرور الجديدة</label><input class="form-input" id="cp_confirm" type="password"></div>
+      <button class="btn btn-primary btn-sm" onclick="submitChangePassword()"><i data-lucide="key" style="width:14px;height:14px;"></i> حفظ كلمة المرور الجديدة</button>
+    `}
+  `, `
+    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>
+    <button class="btn btn-danger" onclick="closeOverlay('genericModal'); logout();"><i data-lucide="log-out" style="width:14px;height:14px;"></i> تسجيل الخروج</button>
+  `);
+}
+
+async function submitChangePassword(){
+  const current_password = document.getElementById("cp_current").value;
+  const new_password = document.getElementById("cp_new").value;
+  const confirm = document.getElementById("cp_confirm").value;
+  const errBox = document.getElementById("changePwError");
+  errBox.classList.remove("show");
+
+  if (!current_password || !new_password || !confirm){
+    errBox.textContent = "لازم تملأ كل الحقول"; errBox.classList.add("show"); return;
+  }
+  if (new_password.length < 6){
+    errBox.textContent = "كلمة المرور الجديدة لازم تكون 6 حروف/أرقام على الأقل"; errBox.classList.add("show"); return;
+  }
+  if (new_password !== confirm){
+    errBox.textContent = "كلمة المرور الجديدة وتأكيدها غير متطابقين"; errBox.classList.add("show"); return;
+  }
+
+  try{
+    await api("/api/auth/change-password", {method:"PUT", body: JSON.stringify({current_password, new_password})});
+    showToast("تم تغيير كلمة المرور بنجاح", "success");
+    closeOverlay("genericModal");
+  }catch(e){
+    errBox.textContent = e.message || "حصل خطأ"; errBox.classList.add("show");
+  }
+}
+
+/* =====================================================================
+   التنقل (Navigation) حسب الدور
+===================================================================== */
+const NAV_BY_ROLE = {
+  admin: [
+    {id:"dashboard", label:"لوحة التحكم", icon:"layout-dashboard"},
+    {id:"groups", label:"المجموعات", icon:"users"},
+    {id:"students", label:"الطلاب", icon:"user"},
+    {id:"supervisors", label:"المشرفين", icon:"shield-check"},
+    {id:"teachers", label:"المدرسين", icon:"presentation"},
+    {id:"schedule", label:"جدول المواعيد", icon:"calendar-clock"},
+    {id:"quizzes", label:"الكويزات", icon:"file-check-2"},
+    {id:"attendance", label:"الحضور والغياب", icon:"calendar-check"},
+  ],
+  teacher: [
+    {id:"dashboard", label:"لوحة التحكم", icon:"layout-dashboard"},
+    {id:"groups", label:"المجموعات", icon:"users"},
+    {id:"students", label:"الطلاب", icon:"user"},
+    {id:"schedule", label:"جدول مواعيدي", icon:"calendar-clock"},
+    {id:"quizzes", label:"الكويزات", icon:"file-check-2"},
+    {id:"attendance", label:"الحضور والغياب", icon:"calendar-check"},
+    {id:"boards", label:"سبورة الحصص", icon:"presentation"},
+  ],
+  supervisor: [
+    {id:"mygroup", label:"مجموعتي", icon:"users"},
+    {id:"boards", label:"سبورة الحصة", icon:"presentation"},
+    {id:"quizzes", label:"الكويزات", icon:"file-check-2"},
+    {id:"attendance", label:"الحضور والغياب", icon:"calendar-check"},
+    {id:"schedule", label:"جدول المواعيد", icon:"calendar-clock"},
+  ],
+  student: [
+    {id:"mydashboard", label:"لوحتي", icon:"layout-dashboard"},
+    {id:"myscores", label:"درجاتي", icon:"file-check-2"},
+    {id:"myattendance", label:"حضوري", icon:"calendar-check"},
+    {id:"myboard", label:"سبورة مجموعتي", icon:"presentation"},
+    {id:"schedule", label:"جدول المواعيد", icon:"calendar-clock"},
+  ],
+};
+
+const ROLE_LABELS = {admin:"الأدمن العام", teacher:"المدرس", supervisor:"مشرف مجموعة", student:"طالب"};
+
+function buildNav(){
+  const nav = NAV_BY_ROLE[SESSION.role] || [];
+  const container = document.getElementById("navContainer");
+  container.innerHTML = `<div class="nav-section">القائمة</div>` + nav.map(n=>`
+    <button class="nav-item" data-page="${n.id}" onclick="navigateTo('${n.id}')">
+      <i data-lucide="${n.icon}" class="nav-ic" style="width:16px;height:16px;"></i>
+      <span>${n.label}</span>
+    </button>
+  `).join("");
+  document.getElementById("brandRoleLabel").textContent = ROLE_LABELS[SESSION.role] || "";
+  document.getElementById("userNameLabel").textContent = SESSION.full_name || "";
+  document.getElementById("userRoleLabel").textContent = ROLE_LABELS[SESSION.role] || "";
+  document.getElementById("userAvatar").textContent = (SESSION.full_name || "?").trim()[0] || "?";
+}
+
+function navigateTo(page){
+  CURRENT_PAGE = page;
+  document.querySelectorAll(".nav-item").forEach(b=>b.classList.toggle("active", b.dataset.page===page));
+  renderPage(page);
+}
+
+/* =====================================================================
+   تشغيل التطبيق
+===================================================================== */
+async function boot(){
+  document.getElementById("loginScreen").classList.add("hidden");
+  document.getElementById("app").classList.remove("hidden");
+  document.getElementById("topbarDate").textContent = new Date().toLocaleDateString("ar-EG", {weekday:"long", year:"numeric", month:"long", day:"numeric"});
+  buildNav();
+  icons();
+  const first = (NAV_BY_ROLE[SESSION.role] || [{id:"dashboard"}])[0].id;
+  navigateTo(first);
+}
+
+window.addEventListener("DOMContentLoaded", ()=>{
+  icons();
+  if (TOKEN && SESSION){
+    boot();
+  }
+});
+
+/* =====================================================================
+   موجه الصفحات الرئيسي
+===================================================================== */
+const PAGE_TITLES = {
+  dashboard:"لوحة التحكم", groups:"المجموعات", students:"الطلاب",
+  supervisors:"المشرفين", teachers:"المدرسين", schedule:"جدول المواعيد",
+  quizzes:"الكويزات", attendance:"الحضور والغياب", boards:"سبورة الحصص",
+  mygroup:"مجموعتي", mydashboard:"لوحتي", myscores:"درجاتي",
+  myattendance:"حضوري", myboard:"سبورة مجموعتي",
+};
+
+async function renderPage(page){
+  document.getElementById("pageTitleBreadcrumb").textContent = PAGE_TITLES[page] || page;
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `<div class="empty-state"><div class="empty-icon"><i data-lucide="loader" style="width:26px;height:26px;"></i></div><div class="empty-title">بتحمّل...</div></div>`;
+  icons();
+  try{
+    const renderers = {
+      dashboard: renderDashboardPage,
+      groups: renderGroupsPage,
+      students: renderStudentsPage,
+      supervisors: ()=>renderUsersPage("supervisor"),
+      teachers: ()=>renderUsersPage("teacher"),
+      schedule: renderSchedulePage,
+      quizzes: renderQuizzesPage,
+      attendance: renderAttendancePage,
+      boards: renderBoardsPage,
+      mygroup: renderMyGroupPage,
+      mydashboard: renderStudentDashboardPage,
+      myscores: renderMyScoresPage,
+      myattendance: renderMyAttendancePage,
+      myboard: renderMyBoardPage,
+    };
+    const fn = renderers[page];
+    if (fn) await fn();
+    else c.innerHTML = `<div class="empty-state"><div class="empty-title">الصفحة غير موجودة</div></div>`;
+  }catch(e){
+    console.error(e);
+  }
+  icons();
+}
+
+/* =====================================================================
+   تحميل البيانات المشتركة (Stages / Governorates / Groups / Users)
+===================================================================== */
+async function loadStages(){ return await api("/api/stages"); }
+async function loadGovernorates(){ return await api("/api/governorates"); }
+async function loadGroups(params={}){
+  const qs = new URLSearchParams(params).toString();
+  return await api("/api/groups" + (qs?`?${qs}`:""));
+}
+async function loadStudents(params={}){
+  const qs = new URLSearchParams(params).toString();
+  return await api("/api/students" + (qs?`?${qs}`:""));
+}
+async function loadSupervisorsList(){ return await api("/api/users?role=supervisor"); }
+
+/* =====================================================================
+   لوحة التحكم (Dashboard) - أدمن / مدرس
+===================================================================== */
+async function renderDashboardPage(){
+  const [groups, students, quizzes] = await Promise.all([
+    loadGroups(), loadStudents(), api("/api/quizzes")
+  ]);
+  const supervisorsCount = SESSION.role === "admin" ? (await loadSupervisorsList()).length : null;
+
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>أهلاً، ${SESSION.full_name} 👋</h1><p>نظرة سريعة على حالة المنصة دلوقتي</p></div>
+    </div>
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon teal"><i data-lucide="users" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${groups.length}</div><div class="stat-label">عدد المجموعات</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon blue"><i data-lucide="user" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${students.length}</div><div class="stat-label">عدد الطلاب</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon amber"><i data-lucide="file-check-2" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${quizzes.length}</div><div class="stat-label">عدد الكويزات</div></div>
+      ${supervisorsCount!==null ? `
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon green"><i data-lucide="shield-check" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${supervisorsCount}</div><div class="stat-label">عدد المشرفين</div></div>` : ""}
+    </div>
+    <div class="table-card">
+      <div class="toolbar"><b style="font-size:14px;">آخر المجموعات</b></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>المجموعة</th><th>المرحلة</th><th>المحافظة</th><th>المشرف</th><th>عدد الطلاب</th></tr></thead>
+        <tbody>
+          ${groups.slice(0,8).map(g=>`
+            <tr>
+              <td class="td-name">${g.name}</td>
+              <td><span class="badge badge-teal">${g.stage_name}</span></td>
+              <td>${g.governorate_name}</td>
+              <td>${g.supervisor_name ? g.supervisor_name : `<span class="badge badge-gray">بدون مشرف</span>`}</td>
+              <td>${g.students_count}</td>
+            </tr>`).join("") || `<tr><td colspan="5" style="text-align:center;color:var(--text-3);">لا يوجد مجموعات بعد</td></tr>`}
+        </tbody>
+      </table></div>
+    </div>
+  `;
+}
+
+/* =====================================================================
+   المجموعات - Groups
+===================================================================== */
+async function renderGroupsPage(){
+  const canManage = SESSION.role === "admin";
+  const [groups, stages, govs, supervisors] = await Promise.all([
+    loadGroups(), loadStages(), loadGovernorates(), canManage ? loadSupervisorsList() : Promise.resolve([])
+  ]);
+  CACHE_STAGES = stages; CACHE_GOVS = govs; CACHE_SUPERVISORS = supervisors;
+
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>المجموعات</h1><p>كل المجموعات التعليمية ومشرفيها</p></div>
+      <div class="header-actions">
+        ${canManage ? `<button class="btn btn-ghost btn-sm" onclick="openGovernoratesModal()"><i data-lucide="map-pin" style="width:14px;height:14px;"></i> المحافظات</button>
+        <button class="btn btn-primary btn-sm" onclick="openAddGroupModal()"><i data-lucide="plus" style="width:14px;height:14px;"></i> إضافة مجموعة</button>` : ""}
+      </div>
+    </div>
+    <div class="table-card">
+      <div class="table-wrap"><table>
+        <thead><tr><th>المجموعة</th><th>المرحلة</th><th>المحافظة</th><th>المشرف المسؤول</th><th>عدد الطلاب</th><th>سعر الحصة</th>${canManage?'<th></th>':''}</tr></thead>
+        <tbody>
+          ${groups.map(g=>`
+            <tr>
+              <td class="td-name">${g.name}${g.notes?`<div class="td-sub">${g.notes}</div>`:""}</td>
+              <td><span class="badge badge-teal">${g.stage_name}</span></td>
+              <td>${g.governorate_name}</td>
+              <td>${g.supervisor_name ? `<span class="badge badge-amber">${g.supervisor_name}</span>` : `<span class="badge badge-gray">بدون مشرف</span>`}</td>
+              <td>${g.students_count}</td>
+              <td>${g.session_price ? g.session_price + " ج" : "—"}</td>
+              ${canManage ? `
+              <td class="td-actions">
+                <button class="action-btn" title="تعيين مشرف" onclick="openAssignSupervisorModal(${g.id}, ${g.supervisor_id||'null'})"><i data-lucide="shield-check" style="width:15px;height:15px;"></i></button>
+                <button class="action-btn edit" title="تعديل" onclick="openEditGroupModal(${g.id})"><i data-lucide="pencil" style="width:15px;height:15px;"></i></button>
+                <button class="action-btn del" title="حذف" onclick="deleteGroup(${g.id}, '${g.name.replace(/'/g,"")}')"><i data-lucide="trash-2" style="width:15px;height:15px;"></i></button>
+              </td>` : ""}
+            </tr>`).join("") || `<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:30px;">لا يوجد مجموعات بعد</td></tr>`}
+        </tbody>
+      </table></div>
+    </div>
+  `;
+}
+
+let CACHE_STAGES=[], CACHE_GOVS=[], CACHE_SUPERVISORS=[], CACHE_ALL_GROUPS=[];
+
+function stageOptions(selected){
+  return CACHE_STAGES.map(s=>`<option value="${s.id}" ${s.id==selected?"selected":""}>${s.name}</option>`).join("");
+}
+function govOptions(selected){
+  return CACHE_GOVS.map(g=>`<option value="${g.id}" ${g.id==selected?"selected":""}>${g.name}</option>`).join("");
+}
+function supervisorOptions(selected){
+  return `<option value="">بدون مشرف</option>` + CACHE_SUPERVISORS.map(s=>`<option value="${s.id}" ${s.id==selected?"selected":""}>${s.full_name}</option>`).join("");
+}
+
+function openAddGroupModal(){
+  openModal("إضافة مجموعة جديدة", `
+    <div class="form-group"><label class="form-label">اسم المجموعة <span class="req">*</span></label><input class="form-input" id="f_g_name" placeholder="مثال: مجموعة السبت 4 عصر"></div>
+    <div class="form-row-2">
+      <div class="form-group"><label class="form-label">المرحلة</label><select class="form-select" id="f_g_stage">${stageOptions()}</select></div>
+      <div class="form-group"><label class="form-label">المحافظة</label><select class="form-select" id="f_g_gov">${govOptions()}</select></div>
+    </div>
+    <div class="form-row-2">
+      <div class="form-group"><label class="form-label">سعر الحصة</label><input class="form-input" id="f_g_price" type="number" placeholder="جنيه"></div>
+      <div class="form-group"><label class="form-label">المشرف المسؤول</label><select class="form-select" id="f_g_sup">${supervisorOptions()}</select></div>
+    </div>
+    <div class="form-group"><label class="form-label">ملاحظات</label><textarea class="form-textarea" id="f_g_notes"></textarea></div>
+  `, `
+    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+    <button class="btn btn-primary" onclick="submitAddGroup()"><i data-lucide="check" style="width:14px;height:14px;"></i> إضافة</button>
+  `);
+}
+
+async function submitAddGroup(){
+  const name = document.getElementById("f_g_name").value.trim();
+  if (!name){ showToast("لازم تكتب اسم المجموعة", "error"); return; }
+  const body = {
+    name,
+    stage_id: parseInt(document.getElementById("f_g_stage").value),
+    governorate_id: parseInt(document.getElementById("f_g_gov").value),
+    session_price: parseFloat(document.getElementById("f_g_price").value) || null,
+    supervisor_id: document.getElementById("f_g_sup").value ? parseInt(document.getElementById("f_g_sup").value) : null,
+    notes: document.getElementById("f_g_notes").value.trim() || null,
+  };
+  await api("/api/groups", {method:"POST", body: JSON.stringify(body)});
+  showToast("تم إضافة المجموعة بنجاح", "success");
+  closeOverlay("genericModal");
+  renderGroupsPage();
+}
+
+async function openEditGroupModal(id){
+  const groups = await loadGroups();
+  const g = groups.find(x=>x.id===id);
+  if (!g) return;
+  openModal("تعديل المجموعة", `
+    <div class="form-group"><label class="form-label">اسم المجموعة</label><input class="form-input" id="f_g_name" value="${g.name}"></div>
+    <div class="form-row-2">
+      <div class="form-group"><label class="form-label">المرحلة</label><select class="form-select" id="f_g_stage">${stageOptions(g.stage_id)}</select></div>
+      <div class="form-group"><label class="form-label">المحافظة</label><select class="form-select" id="f_g_gov">${govOptions(g.governorate_id)}</select></div>
+    </div>
+    <div class="form-row-2">
+      <div class="form-group"><label class="form-label">سعر الحصة</label><input class="form-input" id="f_g_price" type="number" value="${g.session_price||''}"></div>
+      <div class="form-group"><label class="form-label">المشرف المسؤول</label><select class="form-select" id="f_g_sup">${supervisorOptions(g.supervisor_id)}</select></div>
+    </div>
+    <div class="form-group"><label class="form-label">ملاحظات</label><textarea class="form-textarea" id="f_g_notes">${g.notes||''}</textarea></div>
+  `, `
+    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+    <button class="btn btn-primary" onclick="submitEditGroup(${id})"><i data-lucide="check" style="width:14px;height:14px;"></i> حفظ التغييرات</button>
+  `);
+}
+
+async function submitEditGroup(id){
+  const body = {
+    name: document.getElementById("f_g_name").value.trim(),
+    stage_id: parseInt(document.getElementById("f_g_stage").value),
+    governorate_id: parseInt(document.getElementById("f_g_gov").value),
+    session_price: parseFloat(document.getElementById("f_g_price").value) || null,
+    supervisor_id: document.getElementById("f_g_sup").value ? parseInt(document.getElementById("f_g_sup").value) : null,
+    notes: document.getElementById("f_g_notes").value.trim() || null,
+  };
+  await api(`/api/groups/${id}`, {method:"PUT", body: JSON.stringify(body)});
+  showToast("تم حفظ التعديلات", "success");
+  closeOverlay("genericModal");
+  renderGroupsPage();
+}
+
+function openAssignSupervisorModal(groupId, currentSupId){
+  openModal("تعيين المشرف المسؤول", `
+    <div class="form-group">
+      <label class="form-label">اختار المشرف المسؤول عن المجموعة دي</label>
+      <select class="form-select" id="f_assign_sup">${supervisorOptions(currentSupId)}</select>
+      <div class="form-hint">المشرف هيقدر بس يشوف ويتعامل مع المجموعة دي ومش هيقدر يشوف أي مجموعة تانية.</div>
+    </div>
+  `, `
+    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+    <button class="btn btn-primary" onclick="submitAssignSupervisor(${groupId})"><i data-lucide="check" style="width:14px;height:14px;"></i> حفظ</button>
+  `);
+}
+
+async function submitAssignSupervisor(groupId){
+  const val = document.getElementById("f_assign_sup").value;
+  await api(`/api/groups/${groupId}/supervisor`, {method:"PUT", body: JSON.stringify({supervisor_id: val?parseInt(val):null})});
+  showToast("تم تحديث المشرف المسؤول", "success");
+  closeOverlay("genericModal");
+  renderGroupsPage();
+}
+
+function deleteGroup(id, name){
+  confirmAction("حذف المجموعة", `متأكد إنك عايز تحذف "${name}"؟ هيتم حذف كل طلابها كمان.`, async ()=>{
+    await api(`/api/groups/${id}`, {method:"DELETE"});
+    showToast("تم حذف المجموعة", "success");
+    renderGroupsPage();
+  });
+}
+
+function openGovernoratesModal(){
+  loadGovernorates().then(govs=>{
+    openModal("إدارة المحافظات", `
+      <div style="display:flex;gap:8px;margin-bottom:14px;">
+        <input class="form-input" id="f_new_gov" placeholder="اسم محافظة جديدة">
+        <button class="btn btn-primary" onclick="submitAddGovernorate()"><i data-lucide="plus" style="width:14px;height:14px;"></i></button>
+      </div>
+      <div id="govListWrap">${renderGovList(govs)}</div>
+    `, `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`);
+  });
+}
+function renderGovList(govs){
+  return govs.map(g=>`
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 4px;border-bottom:1px solid var(--border);">
+      <span>${g.name}</span>
+      <button class="action-btn del" onclick="deleteGovernorate(${g.id})"><i data-lucide="trash-2" style="width:14px;height:14px;"></i></button>
+    </div>`).join("") || `<div class="form-hint">لا يوجد محافظات</div>`;
+}
+async function submitAddGovernorate(){
+  const name = document.getElementById("f_new_gov").value.trim();
+  if (!name) return;
+  await api("/api/governorates", {method:"POST", body:JSON.stringify({name})});
+  document.getElementById("f_new_gov").value = "";
+  const govs = await loadGovernorates();
+  document.getElementById("govListWrap").innerHTML = renderGovList(govs);
+  icons();
+}
+async function deleteGovernorate(id){
+  await api(`/api/governorates/${id}`, {method:"DELETE"});
+  const govs = await loadGovernorates();
+  document.getElementById("govListWrap").innerHTML = renderGovList(govs);
+  icons();
+}
+
+/* =====================================================================
+   الطلاب - Students
+===================================================================== */
+async function renderStudentsPage(){
+  const canManage = SESSION.role === "admin";
+  const [students, groups] = await Promise.all([loadStudents(), loadGroups()]);
+  CACHE_ALL_GROUPS = groups;
+  const canViewExtra = SESSION.role === "admin" || SESSION.role === "teacher";
+
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>الطلاب</h1><p>${students.length} طالب مسجل في النظام</p></div>
+      <div class="header-actions">
+        ${canManage ? `<button class="btn btn-primary btn-sm" onclick="openAddStudentModal()"><i data-lucide="user-plus" style="width:14px;height:14px;"></i> إضافة طالب</button>`:""}
+      </div>
+    </div>
+    <div class="table-card">
+      <div class="table-wrap"><table>
+        <thead><tr><th>الطالب</th><th>المجموعة</th><th>رقم الهاتف</th><th>ولي الأمر</th>${canManage?'<th>كود الدخول</th><th>الحالة</th>':''}<th></th></tr></thead>
+        <tbody>
+          ${students.map(s=>`
+            <tr>
+              <td class="td-name">${s.full_name}</td>
+              <td><span class="badge badge-teal">${s.group_name}</span></td>
+              <td>${s.phone||"—"}</td>
+              <td>${s.parent_phone||"—"}</td>
+              ${canManage ? `
+              <td><code style="font-size:12px;background:var(--surface-3);padding:3px 8px;border-radius:6px;">${s.access_code||"—"}</code></td>
+              <td>${s.is_active ? `<span class="badge badge-green">مفعّل</span>` : `<span class="badge badge-red">موقوف</span>`}</td>` : ""}
+              <td class="td-actions">
+                ${canViewExtra ? `
+                <button class="action-btn" title="ملاحظات سلوكية" onclick="openBehaviorNotesModal(${s.id}, '${s.full_name.replace(/'/g,"")}')"><i data-lucide="message-square-text" style="width:15px;height:15px;"></i></button>
+                <button class="action-btn" title="تقرير شهري" onclick="openMonthlyReportModal(${s.id}, '${s.full_name.replace(/'/g,"")}')"><i data-lucide="file-bar-chart" style="width:15px;height:15px;"></i></button>` : ""}
+                ${canManage ? `
+                <button class="action-btn" title="كود جديد" onclick="resetStudentCode(${s.id})"><i data-lucide="refresh-cw" style="width:15px;height:15px;"></i></button>
+                <button class="action-btn" title="${s.is_active?'إيقاف':'تفعيل'}" onclick="toggleStudentActive(${s.id})"><i data-lucide="${s.is_active?'pause':'play'}" style="width:15px;height:15px;"></i></button>
+                <button class="action-btn edit" title="تعديل" onclick="openEditStudentModal(${s.id})"><i data-lucide="pencil" style="width:15px;height:15px;"></i></button>
+                <button class="action-btn del" title="حذف" onclick="deleteStudent(${s.id}, '${s.full_name.replace(/'/g,"")}')"><i data-lucide="trash-2" style="width:15px;height:15px;"></i></button>` : ""}
+              </td>
+            </tr>`).join("") || `<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:30px;">لا يوجد طلاب بعد</td></tr>`}
+        </tbody>
+      </table></div>
+    </div>
+  `;
+}
+
+function groupOptionsAll(selected){
+  return CACHE_ALL_GROUPS.map(g=>`<option value="${g.id}" ${g.id==selected?"selected":""}>${g.name} (${g.stage_name} - ${g.governorate_name})</option>`).join("");
+}
+
+function openAddStudentModal(){
+  openModal("إضافة طالب جديد", `
+    <div class="form-group"><label class="form-label">اسم الطالب <span class="req">*</span></label><input class="form-input" id="f_s_name" placeholder="الاسم بالكامل"></div>
+    <div class="form-group"><label class="form-label">المجموعة</label><select class="form-select" id="f_s_group">${groupOptionsAll()}</select></div>
+    <div class="form-row-2">
+      <div class="form-group"><label class="form-label">رقم هاتف الطالب</label><input class="form-input" id="f_s_phone"></div>
+      <div class="form-group"><label class="form-label">رقم هاتف ولي الأمر</label><input class="form-input" id="f_s_pphone"></div>
+    </div>
+    <div class="form-group"><label class="form-label">ملاحظات</label><textarea class="form-textarea" id="f_s_notes"></textarea></div>
+  `, `
+    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+    <button class="btn btn-primary" onclick="submitAddStudent()"><i data-lucide="check" style="width:14px;height:14px;"></i> إضافة الطالب</button>
+  `);
+}
+
+async function submitAddStudent(){
+  const full_name = document.getElementById("f_s_name").value.trim();
+  if (!full_name){ showToast("لازم تكتب اسم الطالب", "error"); return; }
+  const body = {
+    full_name,
+    group_id: parseInt(document.getElementById("f_s_group").value),
+    phone: document.getElementById("f_s_phone").value.trim() || null,
+    parent_phone: document.getElementById("f_s_pphone").value.trim() || null,
+    notes: document.getElementById("f_s_notes").value.trim() || null,
+  };
+  const res = await api("/api/students", {method:"POST", body: JSON.stringify(body)});
+  closeOverlay("genericModal");
+  renderStudentsPage();
+  openModal("تم إضافة الطالب بنجاح ✅", `
+    <p style="margin-bottom:10px;font-size:13.5px;color:var(--text-2);">ده كود دخول الطالب، اعطيه له عشان يسجل دخول بيه على المنصة:</p>
+    <div class="access-code-box">${res.access_code} <button class="action-btn" onclick="navigator.clipboard.writeText('${res.access_code}');showToast('تم نسخ الكود','success')" style="margin-right:auto;"><i data-lucide="copy" style="width:14px;height:14px;"></i></button></div>
+  `, `<button class="btn btn-primary" onclick="closeOverlay('genericModal')">تمام</button>`);
+}
+
+async function openEditStudentModal(id){
+  const students = await loadStudents();
+  const s = students.find(x=>x.id===id);
+  if (!s) return;
+  openModal("تعديل بيانات الطالب", `
+    <div class="form-group"><label class="form-label">اسم الطالب</label><input class="form-input" id="f_s_name" value="${s.full_name}"></div>
+    <div class="form-group"><label class="form-label">المجموعة</label><select class="form-select" id="f_s_group">${groupOptionsAll(s.group_id)}</select></div>
+    <div class="form-row-2">
+      <div class="form-group"><label class="form-label">رقم هاتف الطالب</label><input class="form-input" id="f_s_phone" value="${s.phone||''}"></div>
+      <div class="form-group"><label class="form-label">رقم هاتف ولي الأمر</label><input class="form-input" id="f_s_pphone" value="${s.parent_phone||''}"></div>
+    </div>
+    <div class="form-group"><label class="form-label">ملاحظات</label><textarea class="form-textarea" id="f_s_notes">${s.notes||''}</textarea></div>
+  `, `
+    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+    <button class="btn btn-primary" onclick="submitEditStudent(${id})"><i data-lucide="check" style="width:14px;height:14px;"></i> حفظ التغييرات</button>
+  `);
+}
+
+async function submitEditStudent(id){
+  const body = {
+    full_name: document.getElementById("f_s_name").value.trim(),
+    group_id: parseInt(document.getElementById("f_s_group").value),
+    phone: document.getElementById("f_s_phone").value.trim() || null,
+    parent_phone: document.getElementById("f_s_pphone").value.trim() || null,
+    notes: document.getElementById("f_s_notes").value.trim() || null,
+  };
+  await api(`/api/students/${id}`, {method:"PUT", body: JSON.stringify(body)});
+  showToast("تم حفظ التعديلات", "success");
+  closeOverlay("genericModal");
+  renderStudentsPage();
+}
+
+async function resetStudentCode(id){
+  const res = await api(`/api/students/${id}/reset-code`, {method:"PUT"});
+  openModal("تم توليد كود جديد", `
+    <div class="access-code-box">${res.access_code} <button class="action-btn" onclick="navigator.clipboard.writeText('${res.access_code}');showToast('تم نسخ الكود','success')" style="margin-right:auto;"><i data-lucide="copy" style="width:14px;height:14px;"></i></button></div>
+  `, `<button class="btn btn-primary" onclick="closeOverlay('genericModal')">تمام</button>`);
+  renderStudentsPage();
+}
+
+async function toggleStudentActive(id){
+  await api(`/api/students/${id}/toggle-active`, {method:"PUT"});
+  showToast("تم تحديث حالة الحساب", "success");
+  renderStudentsPage();
+}
+
+function deleteStudent(id, name){
+  confirmAction("حذف الطالب", `متأكد إنك عايز تحذف "${name}"؟`, async ()=>{
+    await api(`/api/students/${id}`, {method:"DELETE"});
+    showToast("تم حذف الطالب", "success");
+    renderStudentsPage();
+  });
+}
+
+/* =====================================================================
+   المشرفين والمدرسين - Users Management (أدمن فقط)
+===================================================================== */
+async function renderUsersPage(role){
+  const users = await api(`/api/users?role=${role}`);
+  const roleLabel = role === "supervisor" ? "المشرف" : "المدرس";
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>${role==="supervisor"?"المشرفين":"المدرسين"}</h1><p>إدارة حسابات ${role==="supervisor"?"المشرفين المسؤولين عن المجموعات":"المدرسين"}</p></div>
+      <div class="header-actions">
+        <button class="btn btn-primary btn-sm" onclick="openAddUserModal('${role}')"><i data-lucide="user-plus" style="width:14px;height:14px;"></i> إضافة ${roleLabel}</button>
+      </div>
+    </div>
+    <div class="table-card">
+      <div class="table-wrap"><table>
+        <thead><tr><th>الاسم</th><th>اسم المستخدم</th><th>الهاتف</th>${role==='supervisor'?'<th>المجموعات المسؤول عنها</th>':''}<th>الحالة</th><th></th></tr></thead>
+        <tbody>
+          ${users.map(u=>`
+            <tr>
+              <td class="td-name">${u.full_name}</td>
+              <td><code style="font-size:12.5px;">${u.username}</code></td>
+              <td>${u.phone||"—"}</td>
+              ${role==='supervisor' ? `<td>${(u.groups&&u.groups.length) ? u.groups.map(g=>`<span class="badge badge-teal" style="margin:2px;">${g.name}</span>`).join("") : `<span class="badge badge-gray">بدون مجموعة</span>`}</td>` : ''}
+              <td>${u.is_active ? `<span class="badge badge-green">مفعّل</span>` : `<span class="badge badge-red">موقوف</span>`}</td>
+              <td class="td-actions">
+                <button class="action-btn" title="${u.is_active?'إيقاف':'تفعيل'}" onclick="toggleUserActive(${u.id}, ${u.is_active}, '${role}')"><i data-lucide="${u.is_active?'pause':'play'}" style="width:15px;height:15px;"></i></button>
+                <button class="action-btn edit" title="تعديل" onclick="openEditUserModal(${u.id}, '${role}')"><i data-lucide="pencil" style="width:15px;height:15px;"></i></button>
+                <button class="action-btn del" title="حذف" onclick="deleteUser(${u.id}, '${u.full_name.replace(/'/g,"")}', '${role}')"><i data-lucide="trash-2" style="width:15px;height:15px;"></i></button>
+              </td>
+            </tr>`).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:30px;">لا يوجد ${roleLabel.replace('ال','')}ين بعد</td></tr>`}
+        </tbody>
+      </table></div>
+    </div>
+  `;
+}
+
+function openAddUserModal(role){
+  const roleLabel = role === "supervisor" ? "مشرف" : "مدرس";
+  openModal(`إضافة ${roleLabel} جديد`, `
+    <div class="form-group"><label class="form-label">الاسم بالكامل <span class="req">*</span></label><input class="form-input" id="f_u_name"></div>
+    <div class="form-row-2">
+      <div class="form-group"><label class="form-label">اسم المستخدم <span class="req">*</span></label><input class="form-input" id="f_u_username"></div>
+      <div class="form-group"><label class="form-label">كلمة المرور</label><input class="form-input" id="f_u_password" type="text" placeholder="سيبها فاضية ليتولّد باسورد تلقائي"></div>
+    </div>
+    <div class="form-group"><label class="form-label">رقم الهاتف</label><input class="form-input" id="f_u_phone"></div>
+    <div class="form-hint">${roleLabel} هيقدر كمان يسجل دخول بكود سريع بدل اليوزر/الباسورد - هيتولّد تلقائي وتقدر تعطيه له بعد الإضافة.</div>
+  `, `
+    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+    <button class="btn btn-primary" onclick="submitAddUser('${role}')"><i data-lucide="check" style="width:14px;height:14px;"></i> إضافة</button>
+  `);
+}
+
+async function submitAddUser(role){
+  const full_name = document.getElementById("f_u_name").value.trim();
+  const username = document.getElementById("f_u_username").value.trim();
+  const password = document.getElementById("f_u_password").value.trim();
+  if (!full_name || !username){ showToast("لازم تملأ الاسم واسم المستخدم", "error"); return; }
+  const res = await api("/api/users", {method:"POST", body: JSON.stringify({
+    full_name, username, password: password || null, role,
+    phone: document.getElementById("f_u_phone").value.trim() || null
+  })});
+  closeOverlay("genericModal");
+  renderUsersPage(role);
+  const roleLabel = role === "supervisor" ? "المشرف" : "المدرس";
+  openModal(`تم إضافة ${roleLabel} بنجاح ✅`, `
+    <p style="margin-bottom:10px;font-size:13.5px;color:var(--text-2);">دي بيانات الدخول، اعطيها له:</p>
+    <div class="form-group">
+      <label class="form-label">اسم المستخدم</label>
+      <div class="access-code-box">${username}</div>
+    </div>
+    ${res.generated_password ? `
+    <div class="form-group">
+      <label class="form-label">كلمة المرور (متولّدة تلقائيًا)</label>
+      <div class="access-code-box">${res.generated_password} <button class="action-btn" onclick="navigator.clipboard.writeText('${res.generated_password}');showToast('تم النسخ','success')" style="margin-right:auto;"><i data-lucide="copy" style="width:14px;height:14px;"></i></button></div>
+    </div>` : ""}
+    <div class="form-group">
+      <label class="form-label">أو كود دخول سريع (بدون يوزر/باسورد)</label>
+      <div class="access-code-box">${res.access_code} <button class="action-btn" onclick="navigator.clipboard.writeText('${res.access_code}');showToast('تم النسخ','success')" style="margin-right:auto;"><i data-lucide="copy" style="width:14px;height:14px;"></i></button></div>
+    </div>
+  `, `<button class="btn btn-primary" onclick="closeOverlay('genericModal')">تمام</button>`);
+}
+
+async function openEditUserModal(id, role){
+  const users = await api(`/api/users?role=${role}`);
+  const u = users.find(x=>x.id===id);
+  if (!u) return;
+  openModal("تعديل البيانات", `
+    <div class="form-group"><label class="form-label">الاسم بالكامل</label><input class="form-input" id="f_u_name" value="${u.full_name}"></div>
+    <div class="form-group"><label class="form-label">رقم الهاتف</label><input class="form-input" id="f_u_phone" value="${u.phone||''}"></div>
+    <div class="form-group"><label class="form-label">كلمة مرور جديدة (اختياري)</label><input class="form-input" id="f_u_password" placeholder="سيبه فاضي لو مش هتغيّرها"></div>
+  `, `
+    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+    <button class="btn btn-primary" onclick="submitEditUser(${id}, '${role}')"><i data-lucide="check" style="width:14px;height:14px;"></i> حفظ التغييرات</button>
+  `);
+}
+
+async function submitEditUser(id, role){
+  const body = {
+    full_name: document.getElementById("f_u_name").value.trim(),
+    phone: document.getElementById("f_u_phone").value.trim() || null,
+  };
+  const pass = document.getElementById("f_u_password").value;
+  if (pass) body.password = pass;
+  await api(`/api/users/${id}`, {method:"PUT", body: JSON.stringify(body)});
+  showToast("تم حفظ التعديلات", "success");
+  closeOverlay("genericModal");
+  renderUsersPage(role);
+}
+
+async function toggleUserActive(id, isActive, role){
+  await api(`/api/users/${id}`, {method:"PUT", body: JSON.stringify({is_active: !isActive})});
+  showToast("تم تحديث حالة الحساب", "success");
+  renderUsersPage(role);
+}
+
+function deleteUser(id, name, role){
+  confirmAction("حذف الحساب", `متأكد إنك عايز تحذف "${name}"؟ ${role==='supervisor'?'هتشيل تعيينه من أي مجموعة كان مسؤول عنها.':''}`, async ()=>{
+    await api(`/api/users/${id}`, {method:"DELETE"});
+    showToast("تم الحذف", "success");
+    renderUsersPage(role);
+  });
+}
+
+/* =====================================================================
+   جدول المواعيد - Teacher Schedule
+===================================================================== */
+const DAYS_ORDER = ["السبت","الأحد","الإثنين","الثلاثاء","الأربعاء","الخميس","الجمعة"];
+
+async function renderSchedulePage(){
+  const canManage = SESSION.role === "admin" || SESSION.role === "teacher";
+  const [items, groups] = await Promise.all([api("/api/schedule"), loadGroups()]);
+  CACHE_ALL_GROUPS = groups;
+
+  const byDay = {};
+  DAYS_ORDER.forEach(d=>byDay[d]=[]);
+  items.forEach(i=>{ if (!byDay[i.day_of_week]) byDay[i.day_of_week]=[]; byDay[i.day_of_week].push(i); });
+
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>جدول المواعيد</h1><p>جدول حصص المدرس الأسبوعي</p></div>
+      <div class="header-actions">
+        ${canManage ? `<button class="btn btn-primary btn-sm" onclick="openAddScheduleModal()"><i data-lucide="plus" style="width:14px;height:14px;"></i> إضافة موعد</button>` : ""}
+      </div>
+    </div>
+    ${DAYS_ORDER.map(day=>{
+      const dayItems = byDay[day]||[];
+      if (!dayItems.length) return "";
+      return `
+        <div class="day-col-title"><i data-lucide="calendar" style="width:14px;height:14px;"></i> ${day}</div>
+        ${dayItems.map(it=>`
+          <div class="schedule-item">
+            <div class="schedule-time">${it.start_time}${it.end_time?` - ${it.end_time}`:""}</div>
+            <div class="schedule-body">
+              <b>${it.title || "حصة"}</b>
+              <div class="sub">${it.group_name ? `مجموعة: ${it.group_name}` : "موعد عام"} ${it.notes?(' • '+it.notes):''}</div>
+            </div>
+            ${canManage ? `
+            <div class="td-actions">
+              <button class="action-btn edit" onclick="openEditScheduleModal(${it.id})"><i data-lucide="pencil" style="width:15px;height:15px;"></i></button>
+              <button class="action-btn del" onclick="deleteScheduleItem(${it.id})"><i data-lucide="trash-2" style="width:15px;height:15px;"></i></button>
+            </div>` : ""}
+          </div>
+        `).join("")}
+      `;
+    }).join("") || `<div class="empty-state"><div class="empty-icon"><i data-lucide="calendar-x" style="width:26px;height:26px;"></i></div><div class="empty-title">الجدول فاضي</div><div class="empty-desc">لسه مفيش مواعيد متضافة.</div></div>`}
+  `;
+}
+
+function dayOptions(selected){
+  return DAYS_ORDER.map(d=>`<option value="${d}" ${d===selected?"selected":""}>${d}</option>`).join("");
+}
+
+function openAddScheduleModal(){
+  openModal("إضافة موعد جديد", `
+    <div class="form-row-2">
+      <div class="form-group"><label class="form-label">اليوم</label><select class="form-select" id="f_sc_day">${dayOptions()}</select></div>
+      <div class="form-group"><label class="form-label">المجموعة (اختياري)</label><select class="form-select" id="f_sc_group"><option value="">موعد عام</option>${groupOptionsAll()}</select></div>
+    </div>
+    <div class="form-row-2">
+      <div class="form-group"><label class="form-label">من الساعة</label><input class="form-input" id="f_sc_start" type="time"></div>
+      <div class="form-group"><label class="form-label">إلى الساعة</label><input class="form-input" id="f_sc_end" type="time"></div>
+    </div>
+    <div class="form-group"><label class="form-label">عنوان الحصة</label><input class="form-input" id="f_sc_title" placeholder="مثال: حصة كيمياء - ثانوي"></div>
+    <div class="form-group"><label class="form-label">ملاحظات</label><textarea class="form-textarea" id="f_sc_notes"></textarea></div>
+  `, `
+    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+    <button class="btn btn-primary" onclick="submitAddSchedule()"><i data-lucide="check" style="width:14px;height:14px;"></i> إضافة</button>
+  `);
+}
+
+async function submitAddSchedule(){
+  const body = {
+    day_of_week: document.getElementById("f_sc_day").value,
+    start_time: document.getElementById("f_sc_start").value,
+    end_time: document.getElementById("f_sc_end").value || null,
+    group_id: document.getElementById("f_sc_group").value ? parseInt(document.getElementById("f_sc_group").value) : null,
+    title: document.getElementById("f_sc_title").value.trim() || null,
+    notes: document.getElementById("f_sc_notes").value.trim() || null,
+  };
+  if (!body.start_time){ showToast("لازم تحدد وقت الحصة", "error"); return; }
+  await api("/api/schedule", {method:"POST", body: JSON.stringify(body)});
+  showToast("تم إضافة الموعد", "success");
+  closeOverlay("genericModal");
+  renderSchedulePage();
+}
+
+async function openEditScheduleModal(id){
+  const items = await api("/api/schedule");
+  const it = items.find(x=>x.id===id);
+  if (!it) return;
+  openModal("تعديل الموعد", `
+    <div class="form-row-2">
+      <div class="form-group"><label class="form-label">اليوم</label><select class="form-select" id="f_sc_day">${dayOptions(it.day_of_week)}</select></div>
+      <div class="form-group"><label class="form-label">المجموعة</label><select class="form-select" id="f_sc_group"><option value="">موعد عام</option>${groupOptionsAll(it.group_id)}</select></div>
+    </div>
+    <div class="form-row-2">
+      <div class="form-group"><label class="form-label">من الساعة</label><input class="form-input" id="f_sc_start" type="time" value="${it.start_time}"></div>
+      <div class="form-group"><label class="form-label">إلى الساعة</label><input class="form-input" id="f_sc_end" type="time" value="${it.end_time||''}"></div>
+    </div>
+    <div class="form-group"><label class="form-label">عنوان الحصة</label><input class="form-input" id="f_sc_title" value="${it.title||''}"></div>
+    <div class="form-group"><label class="form-label">ملاحظات</label><textarea class="form-textarea" id="f_sc_notes">${it.notes||''}</textarea></div>
+  `, `
+    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+    <button class="btn btn-primary" onclick="submitEditSchedule(${id})"><i data-lucide="check" style="width:14px;height:14px;"></i> حفظ</button>
+  `);
+}
+
+async function submitEditSchedule(id){
+  const body = {
+    day_of_week: document.getElementById("f_sc_day").value,
+    start_time: document.getElementById("f_sc_start").value,
+    end_time: document.getElementById("f_sc_end").value || null,
+    group_id: document.getElementById("f_sc_group").value ? parseInt(document.getElementById("f_sc_group").value) : null,
+    title: document.getElementById("f_sc_title").value.trim() || null,
+    notes: document.getElementById("f_sc_notes").value.trim() || null,
+  };
+  await api(`/api/schedule/${id}`, {method:"PUT", body: JSON.stringify(body)});
+  showToast("تم حفظ التعديلات", "success");
+  closeOverlay("genericModal");
+  renderSchedulePage();
+}
+
+function deleteScheduleItem(id){
+  confirmAction("حذف الموعد", "متأكد إنك عايز تحذف الموعد ده من الجدول؟", async ()=>{
+    await api(`/api/schedule/${id}`, {method:"DELETE"});
+    showToast("تم الحذف", "success");
+    renderSchedulePage();
+  });
+}
+
+/* =====================================================================
+   الكويزات - Quizzes
+===================================================================== */
+async function renderQuizzesPage(){
+  const canManage = SESSION.role !== "student";
+  const [quizzes, groups] = await Promise.all([api("/api/quizzes"), loadGroups()]);
+  CACHE_ALL_GROUPS = groups;
+
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>الكويزات</h1><p>كويزات المجموعات ودرجات الطلاب</p></div>
+      <div class="header-actions">
+        ${canManage ? `<button class="btn btn-primary btn-sm" onclick="openAddQuizModal()"><i data-lucide="plus" style="width:14px;height:14px;"></i> إنشاء كويز</button>` : ""}
+      </div>
+    </div>
+    <div class="table-card">
+      <div class="table-wrap"><table>
+        <thead><tr><th>الكويز</th><th>المجموعة</th><th>التاريخ</th><th>الدرجة القصوى</th><th></th></tr></thead>
+        <tbody>
+          ${quizzes.map(q=>`
+            <tr>
+              <td class="td-name">${q.title}${q.description?`<div class="td-sub">${q.description}</div>`:""}</td>
+              <td>${q.group_name ? `<span class="badge badge-teal">${q.group_name}</span>` : `<span class="badge badge-gray">عام لكل المجموعات</span>`}</td>
+              <td>${q.quiz_date||"—"}</td>
+              <td>${q.max_score}</td>
+              <td class="td-actions">
+                <button class="btn btn-ghost btn-sm" onclick="openQuizScoresModal(${q.id}, '${q.title.replace(/'/g,"")}', ${q.max_score})"><i data-lucide="list-checks" style="width:14px;height:14px;"></i> الدرجات</button>
+                ${canManage ? `<button class="action-btn del" onclick="deleteQuiz(${q.id})"><i data-lucide="trash-2" style="width:15px;height:15px;"></i></button>` : ""}
+              </td>
+            </tr>`).join("") || `<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:30px;">لا يوجد كويزات بعد</td></tr>`}
+        </tbody>
+      </table></div>
+    </div>
+  `;
+}
+
+function openAddQuizModal(){
+  const isSupervisor = SESSION.role === "supervisor";
+  openModal("إنشاء كويز جديد", `
+    <div class="form-group"><label class="form-label">عنوان الكويز <span class="req">*</span></label><input class="form-input" id="f_q_title"></div>
+    <div class="form-row-2">
+      <div class="form-group"><label class="form-label">التاريخ</label><input class="form-input" id="f_q_date" type="date" value="${todayStr()}"></div>
+      <div class="form-group"><label class="form-label">الدرجة القصوى</label><input class="form-input" id="f_q_max" type="number" value="100"></div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">المجموعة ${isSupervisor?'<span class="req">*</span>':'(اختياري - سيبه فاضي ليبقى عام)'}</label>
+      <select class="form-select" id="f_q_group">${isSupervisor?'':'<option value="">عام لكل المجموعات</option>'}${groupOptionsAll()}</select>
+    </div>
+    <div class="form-group"><label class="form-label">وصف الكويز</label><textarea class="form-textarea" id="f_q_desc"></textarea></div>
+  `, `
+    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+    <button class="btn btn-primary" onclick="submitAddQuiz()"><i data-lucide="check" style="width:14px;height:14px;"></i> إنشاء</button>
+  `);
+}
+
+async function submitAddQuiz(){
+  const title = document.getElementById("f_q_title").value.trim();
+  if (!title){ showToast("لازم تكتب عنوان الكويز", "error"); return; }
+  const body = {
+    title,
+    quiz_date: document.getElementById("f_q_date").value || null,
+    max_score: parseFloat(document.getElementById("f_q_max").value) || 100,
+    group_id: document.getElementById("f_q_group").value ? parseInt(document.getElementById("f_q_group").value) : null,
+    description: document.getElementById("f_q_desc").value.trim() || null,
+  };
+  await api("/api/quizzes", {method:"POST", body: JSON.stringify(body)});
+  showToast("تم إنشاء الكويز", "success");
+  closeOverlay("genericModal");
+  renderQuizzesPage();
+}
+
+function deleteQuiz(id){
+  confirmAction("حذف الكويز", "متأكد إنك عايز تحذف الكويز ده وكل درجاته؟", async ()=>{
+    await api(`/api/quizzes/${id}`, {method:"DELETE"});
+    showToast("تم الحذف", "success");
+    renderQuizzesPage();
+  });
+}
+
+async function openQuizScoresModal(quizId, title, maxScore){
+  const rows = await api(`/api/quizzes/${quizId}/scores`);
+  const canEdit = SESSION.role !== "student";
+  openModal(`درجات: ${title}`, `
+    <div class="table-wrap" style="margin:-10px -10px;"><table>
+      <thead><tr><th>الطالب</th><th>الدرجة (من ${maxScore})</th></tr></thead>
+      <tbody>
+        ${rows.map(r=>`
+          <tr>
+            <td class="td-name">${r.full_name}</td>
+            <td>${canEdit ? `<input class="form-input" style="width:90px;display:inline-block;" type="number" max="${maxScore}" min="0" value="${r.score??''}" onchange="saveQuizScore(${quizId}, ${r.student_id}, this.value)">` : (r.score ?? "—")}</td>
+          </tr>`).join("") || `<tr><td colspan="2" style="text-align:center;color:var(--text-3);">لا يوجد طلاب</td></tr>`}
+      </tbody>
+    </table></div>
+  `, `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`);
+}
+
+async function saveQuizScore(quizId, studentId, value){
+  if (value === "") return;
+  await api("/api/scores", {method:"POST", body: JSON.stringify({quiz_id: quizId, student_id: studentId, score: parseFloat(value)})});
+  showToast("تم حفظ الدرجة", "success");
+}
+
+/* =====================================================================
+   الحضور والغياب - Attendance
+===================================================================== */
+const ATT_LABELS = {present:"حاضر", absent:"غايب", late:"متأخر", excused:"بإذن"};
+const ATT_BADGE = {present:"badge-green", absent:"badge-red", late:"badge-amber", excused:"badge-blue"};
+
+async function renderAttendancePage(){
+  const canEdit = SESSION.role !== "student";
+  const groups = await loadGroups();
+  CACHE_ALL_GROUPS = groups;
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>الحضور والغياب</h1><p>سجل حضور الطلاب يوم بيوم</p></div>
+      <div class="header-actions">
+        <input class="form-input" id="att_date" type="date" value="${todayStr()}" style="width:160px;" onchange="loadAttendanceTable()">
+        ${groups.length>1 ? `<select class="filter-select" id="att_group" onchange="loadAttendanceTable()"><option value="">كل المجموعات</option>${groupOptionsAll()}</select>` : ""}
+      </div>
+    </div>
+    <div class="table-card">
+      <div class="table-wrap"><table>
+        <thead><tr><th>الطالب</th><th>الحالة</th></tr></thead>
+        <tbody id="attTableBody"><tr><td colspan="2" style="text-align:center;color:var(--text-3);padding:30px;">بتحمّل...</td></tr></tbody>
+      </table></div>
+    </div>
+  `;
+  window.ATT_CAN_EDIT = canEdit;
+  await loadAttendanceTable();
+}
+
+async function loadAttendanceTable(){
+  const date = document.getElementById("att_date").value || todayStr();
+  const groupSel = document.getElementById("att_group");
+  const group_id = groupSel ? groupSel.value : "";
+  const params = group_id ? {group_id} : {};
+  const rows = await api(`/api/attendance/${date}` + (group_id?`?group_id=${group_id}`:""));
+  const canEdit = window.ATT_CAN_EDIT;
+  document.getElementById("attTableBody").innerHTML = rows.map(r=>`
+    <tr>
+      <td class="td-name">${r.full_name}</td>
+      <td>
+        ${canEdit ? `
+        <select class="filter-select" style="min-width:110px;" onchange="saveAttendance('${date}', ${r.student_id}, this.value)">
+          <option value="">— اختر —</option>
+          ${Object.keys(ATT_LABELS).map(k=>`<option value="${k}" ${r.status===k?'selected':''}>${ATT_LABELS[k]}</option>`).join("")}
+        </select>` : (r.status ? `<span class="badge ${ATT_BADGE[r.status]}">${ATT_LABELS[r.status]}</span>` : `<span class="badge badge-gray">لسه ملوش حضور</span>`)}
+      </td>
+    </tr>`).join("") || `<tr><td colspan="2" style="text-align:center;color:var(--text-3);padding:30px;">لا يوجد طلاب</td></tr>`;
+}
+
+async function saveAttendance(date, studentId, status){
+  if (!status) return;
+  await api("/api/attendance", {method:"POST", body: JSON.stringify({student_id: studentId, session_date: date, status})});
+  showToast("تم حفظ الحضور", "success");
+}
+
+/* =====================================================================
+   سبورة الحصة - Board Images
+===================================================================== */
+async function renderBoardsPage(){
+  const groups = await loadGroups();
+  CACHE_ALL_GROUPS = groups;
+  if (!groups.length){
+    document.getElementById("pageContainer").innerHTML = `<div class="empty-state"><div class="empty-icon"><i data-lucide="image-off" style="width:26px;height:26px;"></i></div><div class="empty-title">مفيش مجموعات</div></div>`;
+    return;
+  }
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>سبورة الحصص</h1><p>صور شرح كل حصة، خاصة بكل مجموعة لوحدها</p></div>
+      <div class="header-actions">
+        <select class="filter-select" id="board_group" onchange="loadBoardImages()">${groupOptionsAll()}</select>
+        ${SESSION.role==='supervisor'||SESSION.role==='admin' ? `<button class="btn btn-primary btn-sm" onclick="openUploadBoardModal()"><i data-lucide="upload" style="width:14px;height:14px;"></i> رفع صورة سبورة</button>` : ""}
+      </div>
+    </div>
+    <div id="boardCardsWrap"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>
+  `;
+  await loadBoardImages();
+}
+
+async function loadBoardImages(){
+  const groupId = document.getElementById("board_group").value;
+  const imgs = await api(`/api/board-images?group_id=${groupId}`);
+  const canDelete = SESSION.role === "supervisor" || SESSION.role === "admin";
+  const bySession = {};
+  imgs.forEach(im=>{ (bySession[im.session_number] = bySession[im.session_number] || []).push(im); });
+  const sessions = Object.keys(bySession).sort((a,b)=>b-a);
+  document.getElementById("boardCardsWrap").innerHTML = sessions.length ? sessions.map(sn=>`
+    <div style="margin-bottom:22px;">
+      <div class="day-col-title"><i data-lucide="presentation" style="width:14px;height:14px;"></i> الحصة رقم ${sn}</div>
+      <div class="cards-grid">
+        ${bySession[sn].map(im=>`
+          <div class="session-card">
+            <img class="thumb" src="${im.image_data}" onclick="showImageLightbox('${im.image_data}')">
+            <div class="info">
+              <div>
+                <b>${im.session_date || ''}</b>
+                <div style="font-size:11px;color:var(--text-3);">${im.uploaded_by_name||''}</div>
+              </div>
+              ${canDelete ? `<button class="action-btn del" onclick="deleteBoardImage(${im.id})"><i data-lucide="trash-2" style="width:14px;height:14px;"></i></button>` : ""}
+            </div>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `).join("") : `<div class="empty-state"><div class="empty-icon"><i data-lucide="image-off" style="width:26px;height:26px;"></i></div><div class="empty-title">لا يوجد صور سبورة لسه</div><div class="empty-desc">المشرف المسؤول عن المجموعة هو اللي يقدر يرفع صور السبورة بعد كل حصة.</div></div>`;
+  icons();
+}
+
+function openUploadBoardModal(){
+  openModal("رفع صورة سبورة الحصة", `
+    <div class="form-row-2">
+      <div class="form-group"><label class="form-label">المجموعة</label><select class="form-select" id="f_b_group">${groupOptionsAll(document.getElementById("board_group")?.value)}</select></div>
+      <div class="form-group"><label class="form-label">رقم الحصة <span class="req">*</span></label><input class="form-input" id="f_b_session" type="number" min="1" placeholder="مثال: 1"></div>
+    </div>
+    <div class="form-group"><label class="form-label">تاريخ الحصة</label><input class="form-input" id="f_b_date" type="date" value="${todayStr()}"></div>
+    <div class="form-group"><label class="form-label">الصورة <span class="req">*</span></label><input class="form-input" id="f_b_file" type="file" accept="image/*"></div>
+    <div class="form-group"><label class="form-label">ملاحظة (اختياري)</label><input class="form-input" id="f_b_caption"></div>
+  `, `
+    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+    <button class="btn btn-primary" onclick="submitUploadBoard()"><i data-lucide="upload" style="width:14px;height:14px;"></i> رفع</button>
+  `);
+}
+
+function submitUploadBoard(){
+  const fileInput = document.getElementById("f_b_file");
+  const sessionNum = parseInt(document.getElementById("f_b_session").value);
+  const groupId = parseInt(document.getElementById("f_b_group").value);
+  if (!fileInput.files.length){ showToast("لازم تختار صورة", "error"); return; }
+  if (!sessionNum){ showToast("لازم تكتب رقم الحصة", "error"); return; }
+  const reader = new FileReader();
+  reader.onload = async ()=>{
+    await api("/api/board-images", {method:"POST", body: JSON.stringify({
+      group_id: groupId, session_number: sessionNum,
+      session_date: document.getElementById("f_b_date").value || null,
+      image_data: reader.result,
+      caption: document.getElementById("f_b_caption").value.trim() || null,
+    })});
+    showToast("تم رفع الصورة بنجاح", "success");
+    closeOverlay("genericModal");
+    document.getElementById("board_group").value = groupId;
+    loadBoardImages();
+  };
+  reader.readAsDataURL(fileInput.files[0]);
+}
+
+function deleteBoardImage(id){
+  confirmAction("حذف الصورة", "متأكد إنك عايز تحذف صورة السبورة دي؟", async ()=>{
+    await api(`/api/board-images/${id}`, {method:"DELETE"});
+    showToast("تم الحذف", "success");
+    loadBoardImages();
+  });
+}
+
+/* =====================================================================
+   مجموعتي - صفحة المشرف
+===================================================================== */
+async function renderMyGroupPage(){
+  const groups = await loadGroups();
+  const c = document.getElementById("pageContainer");
+  if (!groups.length){
+    c.innerHTML = `<div class="empty-state"><div class="empty-icon"><i data-lucide="users" style="width:26px;height:26px;"></i></div><div class="empty-title">معندك مجموعة لسه</div><div class="empty-desc">كلم الأدمن عشان يعينك على مجموعة.</div></div>`;
+    return;
+  }
+  const groupIds = groups.map(g=>g.id);
+  const allStudents = await loadStudents();
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>مجموعاتي</h1><p>المجموعات اللي أنت مسؤول عنها</p></div>
+    </div>
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon teal"><i data-lucide="users" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${groups.length}</div><div class="stat-label">عدد المجموعات</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon blue"><i data-lucide="user" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${allStudents.length}</div><div class="stat-label">عدد الطلاب</div></div>
+    </div>
+    ${groups.map(g=>`
+      <div class="table-card">
+        <div class="toolbar"><b style="font-size:14px;">${g.name}</b><span class="badge badge-teal" style="margin-right:6px;">${g.stage_name}</span><span class="badge badge-gray">${g.governorate_name}</span></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>الطالب</th><th>رقم الهاتف</th><th>ولي الأمر</th><th></th></tr></thead>
+          <tbody>
+            ${allStudents.filter(s=>s.group_id===g.id).map(s=>`
+              <tr>
+                <td class="td-name">${s.full_name}</td><td>${s.phone||"—"}</td><td>${s.parent_phone||"—"}</td>
+                <td class="td-actions">
+                  <button class="action-btn" title="ملاحظات سلوكية" onclick="openBehaviorNotesModal(${s.id}, '${s.full_name.replace(/'/g,"")}')"><i data-lucide="message-square-text" style="width:15px;height:15px;"></i></button>
+                  <button class="action-btn" title="تقرير شهري" onclick="openMonthlyReportModal(${s.id}, '${s.full_name.replace(/'/g,"")}')"><i data-lucide="file-bar-chart" style="width:15px;height:15px;"></i></button>
+                </td>
+              </tr>
+            `).join("") || `<tr><td colspan="4" style="text-align:center;color:var(--text-3);padding:20px;">لا يوجد طلاب في المجموعة دي بعد</td></tr>`}
+          </tbody>
+        </table></div>
+      </div>
+    `).join("")}
+  `;
+}
+
+/* =====================================================================
+   صفحات الطالب
+===================================================================== */
+async function renderStudentDashboardPage(){
+  const [scores, attendance, groups] = await Promise.all([
+    api(`/api/students/${SESSION.id}/scores`),
+    api(`/api/students/${SESSION.id}/attendance`),
+    loadGroups()
+  ]);
+  const present = attendance.filter(a=>a.status==='present').length;
+  const avg = scores.length ? (scores.reduce((s,x)=>s+(x.score||0)/x.max_score*100,0)/scores.length).toFixed(0) : "—";
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>أهلاً، ${SESSION.full_name} 👋</h1><p>مجموعتك: ${groups[0]?.name || '—'}</p></div>
+      <div class="header-actions"><button class="btn btn-ghost btn-sm" onclick="openMonthlyReportModal(${SESSION.id}, '${SESSION.full_name.replace(/'/g,"")}')"><i data-lucide="file-bar-chart" style="width:14px;height:14px;"></i> تقريري الشهري</button></div>
+    </div>
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon teal"><i data-lucide="file-check-2" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${scores.length}</div><div class="stat-label">عدد الكويزات</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon blue"><i data-lucide="percent" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${avg}${avg!=='—'?'%':''}</div><div class="stat-label">متوسط الدرجات</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon green"><i data-lucide="calendar-check" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${present}</div><div class="stat-label">أيام الحضور</div></div>
+    </div>
+    <div class="table-card">
+      <div class="toolbar"><b style="font-size:14px;">آخر الدرجات</b></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>الكويز</th><th>التاريخ</th><th>الدرجة</th></tr></thead>
+        <tbody>
+          ${scores.slice(0,6).map(s=>`<tr><td class="td-name">${s.title}</td><td>${s.quiz_date||"—"}</td><td>${s.score??"—"} / ${s.max_score}</td></tr>`).join("") || `<tr><td colspan="3" style="text-align:center;color:var(--text-3);padding:20px;">لا يوجد درجات بعد</td></tr>`}
+        </tbody>
+      </table></div>
+    </div>
+  `;
+}
+
+async function renderMyScoresPage(){
+  const scores = await api(`/api/students/${SESSION.id}/scores`);
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header"><div><h1>درجاتي</h1><p>كل درجات الكويزات اللي خدتها</p></div></div>
+    <div class="table-card">
+      <div class="table-wrap"><table>
+        <thead><tr><th>الكويز</th><th>التاريخ</th><th>الدرجة</th><th>النسبة</th></tr></thead>
+        <tbody>
+          ${scores.map(s=>{
+            const pct = s.score!=null ? Math.round((s.score/s.max_score)*100) : null;
+            return `<tr>
+              <td class="td-name">${s.title}</td><td>${s.quiz_date||"—"}</td>
+              <td>${s.score??"—"} / ${s.max_score}</td>
+              <td>${pct!=null ? `<span class="badge ${pct>=50?'badge-green':'badge-red'}">${pct}%</span>` : "—"}</td>
+            </tr>`;
+          }).join("") || `<tr><td colspan="4" style="text-align:center;color:var(--text-3);padding:30px;">لا يوجد درجات بعد</td></tr>`}
+        </tbody>
+      </table></div>
+    </div>
+  `;
+}
+
+async function renderMyAttendancePage(){
+  const attendance = await api(`/api/students/${SESSION.id}/attendance`);
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header"><div><h1>حضوري</h1><p>سجل حضورك وغيابك</p></div></div>
+    <div class="table-card">
+      <div class="table-wrap"><table>
+        <thead><tr><th>التاريخ</th><th>الحالة</th><th>ملاحظات</th></tr></thead>
+        <tbody>
+          ${attendance.map(a=>`
+            <tr><td class="td-name">${a.session_date}</td><td><span class="badge ${ATT_BADGE[a.status]}">${ATT_LABELS[a.status]}</span></td><td>${a.notes||"—"}</td></tr>
+          `).join("") || `<tr><td colspan="3" style="text-align:center;color:var(--text-3);padding:30px;">لا يوجد سجل حضور بعد</td></tr>`}
+        </tbody>
+      </table></div>
+    </div>
+  `;
+}
+
+async function renderMyBoardPage(){
+  const groupId = SESSION.group_id;
+  const imgs = await api(`/api/board-images?group_id=${groupId}`);
+  const bySession = {};
+  imgs.forEach(im=>{ (bySession[im.session_number] = bySession[im.session_number] || []).push(im); });
+  const sessions = Object.keys(bySession).sort((a,b)=>b-a);
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header"><div><h1>سبورة مجموعتي</h1><p>صور شرح كل حصة في مجموعتك: ${SESSION.group_name||''}</p></div></div>
+    <div id="myBoardWrap">
+      ${sessions.length ? sessions.map(sn=>`
+        <div style="margin-bottom:22px;">
+          <div class="day-col-title"><i data-lucide="presentation" style="width:14px;height:14px;"></i> الحصة رقم ${sn}</div>
+          <div class="cards-grid">
+            ${bySession[sn].map(im=>`
+              <div class="session-card">
+                <img class="thumb" src="${im.image_data}" onclick="showImageLightbox('${im.image_data}')">
+                <div class="info"><b>${im.session_date||''}</b></div>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+      `).join("") : `<div class="empty-state"><div class="empty-icon"><i data-lucide="image-off" style="width:26px;height:26px;"></i></div><div class="empty-title">لا يوجد صور سبورة لسه</div></div>`}
+    </div>
+  `;
+}
+
+/* =====================================================================
+   الملاحظات السلوكية - Behavior Notes (المشرف بيكتبها - تظهر للمدرس والأدمن)
+===================================================================== */
+const NOTE_TYPE_LABELS = {positive:"إيجابية", negative:"سلبية", neutral:"عادية"};
+const NOTE_TYPE_BADGE = {positive:"badge-green", negative:"badge-red", neutral:"badge-gray"};
+
+async function openBehaviorNotesModal(studentId, studentName){
+  openModal(`الملاحظات السلوكية: ${studentName}`, `
+    <div class="form-group">
+      <label class="form-label">إضافة ملاحظة جديدة</label>
+      <select class="form-select" id="bn_type" style="margin-bottom:8px;">
+        <option value="positive">إيجابية</option>
+        <option value="neutral" selected>عادية</option>
+        <option value="negative">سلبية</option>
+      </select>
+      <textarea class="form-textarea" id="bn_text" placeholder="اكتب ملاحظتك عن الطالب..."></textarea>
+      <button class="btn btn-primary btn-sm" style="margin-top:8px;" onclick="submitBehaviorNote(${studentId}, '${studentName.replace(/'/g,"")}')"><i data-lucide="plus" style="width:14px;height:14px;"></i> إضافة الملاحظة</button>
+    </div>
+    <div class="form-label" style="margin-top:18px;">الملاحظات السابقة</div>
+    <div id="bnListWrap" style="margin-top:8px;"><div class="form-hint">بتحمّل...</div></div>
+  `, `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`);
+  await loadBehaviorNotes(studentId);
+}
+
+async function loadBehaviorNotes(studentId){
+  const notes = await api(`/api/students/${studentId}/behavior-notes`);
+  const canDelete = SESSION.role === "admin" || SESSION.role === "supervisor" || SESSION.role === "teacher";
+  document.getElementById("bnListWrap").innerHTML = notes.length ? notes.map(n=>`
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">
+      <div>
+        <span class="badge ${NOTE_TYPE_BADGE[n.note_type]}" style="margin-bottom:5px;">${NOTE_TYPE_LABELS[n.note_type]}</span>
+        <div style="font-size:13.5px;margin-top:4px;">${n.note}</div>
+        <div class="td-sub">${n.author_name||'—'} • ${n.created_at}</div>
+      </div>
+      ${canDelete ? `<button class="action-btn del" onclick="deleteBehaviorNote(${n.id}, ${studentId})"><i data-lucide="trash-2" style="width:14px;height:14px;"></i></button>` : ""}
+    </div>
+  `).join("") : `<div class="form-hint">لا يوجد ملاحظات بعد</div>`;
+  icons();
+}
+
+async function submitBehaviorNote(studentId, studentName){
+  const note = document.getElementById("bn_text").value.trim();
+  if (!note){ showToast("لازم تكتب نص الملاحظة", "error"); return; }
+  const note_type = document.getElementById("bn_type").value;
+  await api("/api/behavior-notes", {method:"POST", body: JSON.stringify({student_id: studentId, note, note_type})});
+  showToast("تم إضافة الملاحظة", "success");
+  document.getElementById("bn_text").value = "";
+  await loadBehaviorNotes(studentId);
+}
+
+async function deleteBehaviorNote(noteId, studentId){
+  await api(`/api/behavior-notes/${noteId}`, {method:"DELETE"});
+  showToast("تم حذف الملاحظة", "success");
+  await loadBehaviorNotes(studentId);
+}
+
+/* =====================================================================
+   التقرير الشهري - Monthly Report (حضور + درجات + مدفوعات) + طباعة/PDF
+===================================================================== */
+function currentMonthStr(){ return new Date().toISOString().slice(0,7); }
+
+function openMonthlyReportModal(studentId, studentName){
+  const canEditPayment = SESSION.role === "admin" || SESSION.role === "supervisor" || SESSION.role === "teacher";
+  openModal(`التقرير الشهري: ${studentName}`, `
+    <div class="form-group">
+      <label class="form-label">اختار الشهر</label>
+      <input class="form-input" id="mr_month" type="month" value="${currentMonthStr()}" onchange="loadMonthlyReport(${studentId})">
+    </div>
+    <div id="mrWrap"><div class="form-hint">بتحمّل...</div></div>
+  `, `
+    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>
+    <button class="btn btn-primary" onclick="printMonthlyReport(${studentId}, '${studentName.replace(/'/g,"")}')"><i data-lucide="printer" style="width:14px;height:14px;"></i> طباعة / حفظ PDF</button>
+  `);
+  loadMonthlyReport(studentId, canEditPayment);
+}
+
+let LAST_REPORT_DATA = null;
+
+async function loadMonthlyReport(studentId, canEditPayment){
+  if (canEditPayment === undefined) canEditPayment = SESSION.role === "admin" || SESSION.role === "supervisor" || SESSION.role === "teacher";
+  const month = document.getElementById("mr_month").value;
+  const data = await api(`/api/students/${studentId}/monthly-report?month=${month}`);
+  LAST_REPORT_DATA = data;
+  const a = data.attendance_summary;
+  const pay = data.payment;
+  document.getElementById("mrWrap").innerHTML = `
+    <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px;">
+      <div class="stat-card" style="padding:12px;"><div class="stat-value" style="font-size:20px;">${a.present}</div><div class="stat-label">حاضر</div></div>
+      <div class="stat-card" style="padding:12px;"><div class="stat-value" style="font-size:20px;">${a.absent}</div><div class="stat-label">غايب</div></div>
+      <div class="stat-card" style="padding:12px;"><div class="stat-value" style="font-size:20px;">${a.late}</div><div class="stat-label">متأخر</div></div>
+      <div class="stat-card" style="padding:12px;"><div class="stat-value" style="font-size:20px;">${data.average_percentage??'—'}${data.average_percentage!=null?'%':''}</div><div class="stat-label">متوسط الدرجات</div></div>
+    </div>
+    <div class="form-label">الكويزات في الشهر ده</div>
+    <div class="table-wrap" style="margin:8px 0 14px;"><table>
+      <thead><tr><th>الكويز</th><th>التاريخ</th><th>الدرجة</th></tr></thead>
+      <tbody>${data.scores.map(s=>`<tr><td>${s.title}</td><td>${s.quiz_date||'—'}</td><td>${s.score??'—'} / ${s.max_score}</td></tr>`).join("") || `<tr><td colspan="3" style="text-align:center;color:var(--text-3);">لا يوجد كويزات</td></tr>`}</tbody>
+    </table></div>
+    <div class="form-label">حالة الدفع</div>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap;">
+      <span class="badge ${pay&&pay.is_paid?'badge-green':'badge-red'}">${pay&&pay.is_paid?'مدفوع':'غير مدفوع'}</span>
+      ${pay&&pay.amount ? `<span style="font-size:13px;color:var(--text-2);">المبلغ: ${pay.amount} ج</span>` : ""}
+      ${pay&&pay.paid_date ? `<span style="font-size:13px;color:var(--text-2);">تاريخ الدفع: ${pay.paid_date}</span>` : ""}
+      ${canEditPayment ? `<button class="btn btn-ghost btn-sm" onclick="quickTogglePayment(${studentId}, '${month}', ${pay&&pay.is_paid?'true':'false'})">${pay&&pay.is_paid?'تعليم كغير مدفوع':'تعليم كمدفوع'}</button>` : ""}
+    </div>
+  `;
+}
+
+async function quickTogglePayment(studentId, month, currentlyPaid){
+  await api("/api/payments", {method:"POST", body: JSON.stringify({student_id: studentId, month, is_paid: !currentlyPaid})});
+  showToast("تم تحديث حالة الدفع", "success");
+  await loadMonthlyReport(studentId);
+}
+
+function printMonthlyReport(studentId, studentName){
+  if (!LAST_REPORT_DATA){ showToast("لسه البيانات مبتحمّلتش", "error"); return; }
+  const d = LAST_REPORT_DATA;
+  const a = d.attendance_summary;
+  const win = window.open("", "_blank");
+  win.document.write(`
+    <!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
+    <title>تقرير ${studentName} - ${d.month}</title>
+    <style>
+      body{font-family:'Cairo',sans-serif;padding:30px;color:#0F172A;}
+      h1{font-size:20px;margin-bottom:4px;}
+      .sub{color:#64748B;font-size:13px;margin-bottom:20px;}
+      table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13px;}
+      th,td{border:1px solid #E2E8F0;padding:8px 10px;text-align:right;}
+      th{background:#F8FAFC;}
+      .stats{display:flex;gap:14px;margin:16px 0;}
+      .stat{border:1px solid #E2E8F0;border-radius:10px;padding:10px 16px;text-align:center;flex:1;}
+      .stat b{display:block;font-size:20px;}
+      .badge{padding:3px 10px;border-radius:99px;font-size:12px;font-weight:700;}
+      .paid{background:#ECFDF5;color:#065F46;} .unpaid{background:#FEF2F2;color:#991B1B;}
+      @media print{ body{padding:10px;} }
+    </style></head><body>
+    <h1>تقرير ${studentName}</h1>
+    <div class="sub">المجموعة: ${d.student.group_name} — الشهر: ${d.month}</div>
+    <div class="stats">
+      <div class="stat"><b>${a.present}</b>حاضر</div>
+      <div class="stat"><b>${a.absent}</b>غايب</div>
+      <div class="stat"><b>${a.late}</b>متأخر</div>
+      <div class="stat"><b>${d.average_percentage??'—'}${d.average_percentage!=null?'%':''}</b>متوسط الدرجات</div>
+    </div>
+    <h3>الكويزات</h3>
+    <table><thead><tr><th>الكويز</th><th>التاريخ</th><th>الدرجة</th></tr></thead>
+    <tbody>${d.scores.map(s=>`<tr><td>${s.title}</td><td>${s.quiz_date||'—'}</td><td>${s.score??'—'} / ${s.max_score}</td></tr>`).join("") || `<tr><td colspan="3">لا يوجد كويزات</td></tr>`}</tbody></table>
+    <h3>الحضور التفصيلي</h3>
+    <table><thead><tr><th>التاريخ</th><th>الحالة</th></tr></thead>
+    <tbody>${d.attendance.map(x=>`<tr><td>${x.session_date}</td><td>${ATT_LABELS[x.status]||x.status}</td></tr>`).join("") || `<tr><td colspan="2">لا يوجد سجل حضور</td></tr>`}</tbody></table>
+    <h3>حالة الدفع</h3>
+    <p><span class="badge ${d.payment&&d.payment.is_paid?'paid':'unpaid'}">${d.payment&&d.payment.is_paid?'مدفوع':'غير مدفوع'}</span>
+    ${d.payment&&d.payment.amount?` — المبلغ: ${d.payment.amount} ج`:''}
+    ${d.payment&&d.payment.paid_date?` — تاريخ الدفع: ${d.payment.paid_date}`:''}</p>
+    <script>window.onload=()=>window.print();<\/script>
+    </body></html>
+  `);
+  win.document.close();
+}
+
+
+
+
+
+
+</script>
+
+</body>
+</html>
