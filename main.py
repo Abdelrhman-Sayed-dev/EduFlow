@@ -240,7 +240,7 @@ def assert_supervisor_owns_group(conn, session, group_id):
 
 @app.get("/")
 def serve_frontend():
-    return FileResponse("frontend.html")
+    return FileResponse("index.html")
 
 
 # ---------------------------------------------------------------------------
