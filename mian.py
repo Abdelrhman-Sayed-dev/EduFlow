@@ -22,7 +22,7 @@ from typing import Optional
 
 from database import (
     get_connection, init_db, hash_password, verify_password, gen_token,
-    gen_access_code, session_expiry, cleanup_expired_sessions
+    gen_access_code, gen_temp_password, session_expiry, cleanup_expired_sessions
 )
 
 app = FastAPI(title="منصة المدرس - نظام إدارة الطلاب والمجموعات")
@@ -106,16 +106,31 @@ class LoginIn(BaseModel):
     password: str
 
 
+class ChangePasswordIn(BaseModel):
+    current_password: str
+    new_password: str
+
+
 class StudentLoginIn(BaseModel):
+    access_code: str
+
+
+class CodeLoginIn(BaseModel):
+    """تسجيل دخول موحّد بالكود - يصلح للطالب أو المشرف أو المدرس"""
     access_code: str
 
 
 class UserIn(BaseModel):
     username: str
-    password: str
+    password: Optional[str] = None  # لو فاضي، النظام يولّد كلمة مرور تلقائية ويرجّعها
     full_name: str
     phone: Optional[str] = None
     role: str = "supervisor"  # supervisor أو teacher (الأدمن مينضافش من هنا)
+
+
+class ChangePasswordIn(BaseModel):
+    current_password: str
+    new_password: str
 
 
 class UserUpdateIn(BaseModel):
@@ -225,7 +240,7 @@ def assert_supervisor_owns_group(conn, session, group_id):
 
 @app.get("/")
 def serve_frontend():
-    return FileResponse("index.html")
+    return FileResponse("frontend.html")
 
 
 # ---------------------------------------------------------------------------
@@ -268,33 +283,74 @@ def login(data: LoginIn):
         }
 
 
-@app.post("/api/auth/student-login")
-def student_login(data: StudentLoginIn):
-    """تسجيل دخول الطالب بكود الدخول الخاص بيه"""
+@app.post("/api/auth/login-code")
+def login_with_code(data: CodeLoginIn):
+    """
+    تسجيل دخول موحّد بالكود - يصلح للطالب أو المشرف أو المدرس.
+    بيدور على الكود في جدول الطلاب الأول، ولو مش موجود يدور في جدول المستخدمين (مشرف/مدرس).
+    """
+    code = data.access_code.strip()
     with get_connection() as conn:
         cleanup_expired_sessions(conn)
-        student = conn.execute(
-            "SELECT * FROM students WHERE access_code=?", (data.access_code.strip(),)
-        ).fetchone()
-        if not student:
-            raise HTTPException(status_code=401, detail="كود الدخول غلط")
-        if not student["is_active"]:
-            raise HTTPException(status_code=403, detail="الحساب موقوف، كلم المشرف")
 
-        token = gen_token()
+        student = conn.execute("SELECT * FROM students WHERE access_code=?", (code,)).fetchone()
+        if student:
+            if not student["is_active"]:
+                raise HTTPException(status_code=403, detail="الحساب موقوف، كلم المشرف")
+            token = gen_token()
+            conn.execute(
+                "INSERT INTO sessions (token, user_type, user_id, expires_at) VALUES (?, 'student', ?, ?)",
+                (token, student["id"], session_expiry())
+            )
+            group = conn.execute("SELECT * FROM groups WHERE id=?", (student["group_id"],)).fetchone()
+            return {
+                "token": token, "role": "student", "full_name": student["full_name"],
+                "id": student["id"], "group_id": student["group_id"],
+                "group_name": group["name"] if group else None
+            }
+
+        user = conn.execute("SELECT * FROM users WHERE access_code=?", (code,)).fetchone()
+        if user:
+            if not user["is_active"]:
+                raise HTTPException(status_code=403, detail="الحساب موقوف، كلم الأدمن")
+            token = gen_token()
+            conn.execute(
+                "INSERT INTO sessions (token, user_type, user_id, expires_at) VALUES (?, 'user', ?, ?)",
+                (token, user["id"], session_expiry())
+            )
+            return {
+                "token": token, "role": user["role"], "full_name": user["full_name"],
+                "username": user["username"], "id": user["id"]
+            }
+
+        raise HTTPException(status_code=401, detail="كود الدخول غلط")
+
+
+@app.post("/api/auth/student-login")
+def student_login(data: StudentLoginIn):
+    """تسجيل دخول الطالب بكود الدخول الخاص بيه (للتوافق مع نسخ قديمة - استخدم /login-code الأحدث)"""
+    return login_with_code(CodeLoginIn(access_code=data.access_code))
+
+
+@app.put("/api/auth/change-password")
+def change_password(data: ChangePasswordIn, session=Depends(get_current_session)):
+    """يسمح للمستخدم (أدمن/مدرس/مشرف) يغيّر كلمة مروره بنفسه"""
+    if session["type"] != "user":
+        raise HTTPException(status_code=403, detail="الطلاب مش معاهم كلمة مرور، بيدخلوا بالكود بس")
+    with get_connection() as conn:
+        user = conn.execute("SELECT * FROM users WHERE id=?", (session["id"],)).fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="المستخدم غير موجود")
+        ok, _ = verify_password(data.current_password, user["password_hash"])
+        if not ok:
+            raise HTTPException(status_code=401, detail="كلمة المرور الحالية غلط")
+        if len(data.new_password) < 4:
+            raise HTTPException(status_code=400, detail="كلمة المرور الجديدة قصيرة جدًا")
         conn.execute(
-            "INSERT INTO sessions (token, user_type, user_id, expires_at) VALUES (?, 'student', ?, ?)",
-            (token, student["id"], session_expiry())
+            "UPDATE users SET password_hash=? WHERE id=?",
+            (hash_password(data.new_password), session["id"])
         )
-        group = conn.execute("SELECT * FROM groups WHERE id=?", (student["group_id"],)).fetchone()
-        return {
-            "token": token,
-            "role": "student",
-            "full_name": student["full_name"],
-            "id": student["id"],
-            "group_id": student["group_id"],
-            "group_name": group["name"] if group else None
-        }
+        return {"message": "تم تغيير كلمة المرور بنجاح"}
 
 
 @app.post("/api/auth/logout")
@@ -309,6 +365,34 @@ def logout(authorization: Optional[str] = Header(None)):
 @app.get("/api/auth/me")
 def me(session=Depends(get_current_session)):
     return session
+
+
+@app.put("/api/auth/change-password")
+def change_my_password(data: ChangePasswordIn, session=Depends(get_current_session)):
+    """
+    يسمح للمستخدم (أدمن/مدرس/مشرف) بتغيير كلمة مروره بنفسه.
+    الطالب مش له كلمة مرور (بيدخل بكود)، فمينفعش يستخدم ده.
+    """
+    if session["type"] != "user":
+        raise HTTPException(status_code=403, detail="الطالب بيدخل بكود مش بكلمة مرور")
+
+    with get_connection() as conn:
+        user = conn.execute("SELECT * FROM users WHERE id=?", (session["id"],)).fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="المستخدم غير موجود")
+
+        ok, _ = verify_password(data.current_password, user["password_hash"])
+        if not ok:
+            raise HTTPException(status_code=401, detail="كلمة المرور الحالية غلط")
+
+        if len(data.new_password) < 6:
+            raise HTTPException(status_code=400, detail="كلمة المرور الجديدة لازم تكون 6 حروف/أرقام على الأقل")
+
+        conn.execute(
+            "UPDATE users SET password_hash=? WHERE id=?",
+            (hash_password(data.new_password), session["id"])
+        )
+        return {"message": "تم تغيير كلمة المرور بنجاح"}
 
 
 # ---------------------------------------------------------------------------
@@ -564,7 +648,7 @@ def delete_student(student_id: int, session=Depends(require_roles("admin"))):
 
 @app.get("/api/users")
 def get_users(role: Optional[str] = None, session=Depends(require_roles("admin"))):
-    query = "SELECT id, username, full_name, phone, role, is_active, created_at FROM users WHERE role != 'admin'"
+    query = "SELECT id, username, full_name, phone, role, access_code, is_active, created_at FROM users WHERE role != 'admin'"
     params = []
     if role:
         query += " AND role = ?"
@@ -592,12 +676,44 @@ def add_user(user: UserIn, session=Depends(require_roles("admin"))):
         existing = conn.execute("SELECT id FROM users WHERE username=?", (user.username,)).fetchone()
         if existing:
             raise HTTPException(status_code=400, detail="اسم المستخدم ده مستخدم قبل كده")
+
+        # لو الأدمن سايب خانة كلمة المرور فاضية، نولّد كلمة مرور تلقائية ونرجّعها
+        generated_password = None
+        password = user.password
+        if not password:
+            generated_password = gen_temp_password()
+            password = generated_password
+
+        # كود دخول سريع (بديل ليوزر وباسورد) - مفيد للمشرفين اللي مش مرتاحين للتعامل مع باسورد
+        prefix = "SUP" if user.role == "supervisor" else "TCH"
+        code = gen_access_code(prefix)
+        while conn.execute("SELECT id FROM users WHERE access_code=?", (code,)).fetchone():
+            code = gen_access_code(prefix)
+
         cur = conn.execute(
-            "INSERT INTO users (username, password_hash, role, full_name, phone) VALUES (?, ?, ?, ?, ?)",
-            (user.username, hash_password(user.password), user.role, user.full_name, user.phone)
+            "INSERT INTO users (username, password_hash, role, full_name, phone, access_code) VALUES (?, ?, ?, ?, ?, ?)",
+            (user.username, hash_password(password), user.role, user.full_name, user.phone, code)
         )
         role_label = "المشرف" if user.role == "supervisor" else "المدرس"
-        return {"id": cur.lastrowid, "message": f"تم إضافة {role_label} بنجاح"}
+        response = {"id": cur.lastrowid, "access_code": code, "message": f"تم إضافة {role_label} بنجاح"}
+        if generated_password:
+            response["generated_password"] = generated_password
+        return response
+
+
+@app.put("/api/users/{user_id}/reset-code")
+def reset_user_code(user_id: int, session=Depends(require_roles("admin"))):
+    """توليد كود دخول جديد للمشرف/المدرس (لو الكود ضاع منه مثلاً)"""
+    with get_connection() as conn:
+        user = conn.execute("SELECT role FROM users WHERE id=? AND role != 'admin'", (user_id,)).fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="المستخدم غير موجود")
+        prefix = "SUP" if user["role"] == "supervisor" else "TCH"
+        code = gen_access_code(prefix)
+        while conn.execute("SELECT id FROM users WHERE access_code=?", (code,)).fetchone():
+            code = gen_access_code(prefix)
+        conn.execute("UPDATE users SET access_code=? WHERE id=?", (code, user_id))
+        return {"access_code": code, "message": "تم توليد كود جديد"}
 
 
 @app.put("/api/users/{user_id}")
