@@ -156,6 +156,7 @@ def init_db():
         )
         """)
         _safe_alter(cur, "ALTER TABLE users ADD COLUMN access_code TEXT")
+        _safe_alter(cur, "ALTER TABLE users ADD COLUMN governorate_id INTEGER REFERENCES governorates(id)")
 
         # جلسات الدخول (توكنات بسيطة) - كل توكن له تاريخ انتهاء صلاحية
         cur.execute("""
