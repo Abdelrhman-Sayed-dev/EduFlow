@@ -139,6 +139,7 @@ class UserIn(BaseModel):
     full_name: str
     phone: Optional[str] = None
     role: str = "supervisor"  # supervisor أو teacher (الأدمن مينضافش من هنا)
+    governorate_id: Optional[int] = None  # للمشرف بس - المحافظة المسؤول عنها
 
 
 class ChangePasswordIn(BaseModel):
@@ -151,6 +152,7 @@ class UserUpdateIn(BaseModel):
     phone: Optional[str] = None
     password: Optional[str] = None
     is_active: Optional[bool] = None
+    governorate_id: Optional[int] = None
 
 
 class ScheduleIn(BaseModel):
@@ -652,12 +654,18 @@ def delete_student(student_id: int, session=Depends(require_roles("admin"))):
 
 @app.get("/api/users")
 def get_users(role: Optional[str] = None, session=Depends(require_roles("admin"))):
-    query = "SELECT id, username, full_name, phone, role, access_code, is_active, created_at FROM users WHERE role != 'admin'"
+    query = """
+        SELECT u.id, u.username, u.full_name, u.phone, u.role, u.access_code, u.is_active, u.created_at,
+               u.governorate_id, gov.name as governorate_name
+        FROM users u
+        LEFT JOIN governorates gov ON gov.id = u.governorate_id
+        WHERE u.role != 'admin'
+    """
     params = []
     if role:
-        query += " AND role = ?"
+        query += " AND u.role = ?"
         params.append(role)
-    query += " ORDER BY full_name"
+    query += " ORDER BY u.full_name"
     with get_connection() as conn:
         rows = conn.execute(query, params).fetchall()
         result = []
@@ -694,9 +702,10 @@ def add_user(user: UserIn, session=Depends(require_roles("admin"))):
         while conn.execute("SELECT id FROM users WHERE access_code=?", (code,)).fetchone():
             code = gen_access_code(prefix)
 
+        gov_id = user.governorate_id if user.role == "supervisor" else None
         cur = conn.execute(
-            "INSERT INTO users (username, password_hash, role, full_name, phone, access_code) VALUES (?, ?, ?, ?, ?, ?)",
-            (user.username, hash_password(password), user.role, user.full_name, user.phone, code)
+            "INSERT INTO users (username, password_hash, role, full_name, phone, access_code, governorate_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (user.username, hash_password(password), user.role, user.full_name, user.phone, code, gov_id)
         )
         role_label = "المشرف" if user.role == "supervisor" else "المدرس"
         response = {"id": cur.lastrowid, "access_code": code, "message": f"تم إضافة {role_label} بنجاح"}
@@ -731,10 +740,11 @@ def update_user(user_id: int, data: UserUpdateIn, session=Depends(require_roles(
         phone = data.phone if data.phone is not None else user["phone"]
         is_active = int(data.is_active) if data.is_active is not None else user["is_active"]
         password_hash = hash_password(data.password) if data.password else user["password_hash"]
+        governorate_id = data.governorate_id if data.governorate_id is not None else user["governorate_id"]
 
         conn.execute(
-            "UPDATE users SET full_name=?, phone=?, is_active=?, password_hash=? WHERE id=?",
-            (full_name, phone, is_active, password_hash, user_id)
+            "UPDATE users SET full_name=?, phone=?, is_active=?, password_hash=?, governorate_id=? WHERE id=?",
+            (full_name, phone, is_active, password_hash, governorate_id, user_id)
         )
         return {"message": "تم تعديل البيانات"}
 
