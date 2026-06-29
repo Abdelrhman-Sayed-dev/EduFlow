@@ -503,7 +503,8 @@ def get_group_info(group_id: int, session=Depends(get_current_session)):
         return result
 
 
-
+@app.post("/api/groups")
+def add_group(group: GroupIn, session=Depends(require_roles("admin"))):
     with get_connection() as conn:
         try:
             cur = conn.execute(
