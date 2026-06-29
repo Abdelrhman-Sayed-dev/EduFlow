@@ -272,18 +272,20 @@ def init_db():
         )
         """)
 
-        # جدول الحضور والغياب
+        # جدول الحضور والغياب - بيسمح بأكتر من حصة لنفس الطالب في نفس اليوم
         cur.execute("""
         CREATE TABLE IF NOT EXISTS attendance (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             student_id INTEGER NOT NULL,
             session_date TEXT NOT NULL,
+            session_number INTEGER NOT NULL DEFAULT 1,
             status TEXT NOT NULL CHECK(status IN ('present','absent','late','excused')),
             notes TEXT,
             FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
-            UNIQUE(student_id, session_date)
+            UNIQUE(student_id, session_date, session_number)
         )
         """)
+        _safe_alter(cur, "ALTER TABLE attendance ADD COLUMN session_number INTEGER NOT NULL DEFAULT 1")
 
         # ---------------------------------------------------------------
         # جدول مواعيد المدرس (جدول الحصص الخاص بالمدرس)
