@@ -986,8 +986,7 @@ function renderGroupScheduleSlots(){
   wrap.innerHTML = GROUP_SCHEDULE_SLOTS.map((slot, idx)=>`
     <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center;">
       <select class="form-select" style="flex:1.2;" onchange="updateGroupScheduleSlot(${idx}, 'day_of_week', this.value)">${dayOptions(slot.day_of_week)}</select>
-      <input class="form-input" type="time" style="flex:1;" value="${slot.start_time}" onchange="updateGroupScheduleSlot(${idx}, 'start_time', this.value)">
-      <input class="form-input" type="time" style="flex:1;" value="${slot.end_time}" onchange="updateGroupScheduleSlot(${idx}, 'end_time', this.value)">
+      <input class="form-input" type="time" style="flex:1;" value="${slot.start_time}" placeholder="وقت البداية" onchange="updateGroupScheduleSlot(${idx}, 'start_time', this.value)">
       <button type="button" class="action-btn del" onclick="removeGroupScheduleSlotRow(${idx})"><i data-lucide="x" style="width:14px;height:14px;"></i></button>
     </div>
   `).join("");
