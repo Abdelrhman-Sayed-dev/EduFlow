@@ -288,6 +288,39 @@ def init_db():
         _safe_alter(cur, "ALTER TABLE attendance ADD COLUMN session_number INTEGER NOT NULL DEFAULT 1")
 
         # ---------------------------------------------------------------
+        # جدول الواجبات - واجب لكل حصة مجموعة
+        # ---------------------------------------------------------------
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS homework (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL,
+            session_number INTEGER NOT NULL DEFAULT 1,
+            session_date TEXT,
+            description TEXT NOT NULL,
+            created_by INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+            UNIQUE(group_id, session_number)
+        )
+        """)
+
+        # جدول متابعة تسليم الواجبات لكل طالب
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS homework_submissions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            homework_id INTEGER NOT NULL,
+            student_id INTEGER NOT NULL,
+            done INTEGER,
+            notes TEXT,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (homework_id) REFERENCES homework(id) ON DELETE CASCADE,
+            FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+            UNIQUE(homework_id, student_id)
+        )
+        """)
+
+        # ---------------------------------------------------------------
         # جدول مواعيد المدرس (جدول الحصص الخاص بالمدرس)
         # ---------------------------------------------------------------
         cur.execute("""
