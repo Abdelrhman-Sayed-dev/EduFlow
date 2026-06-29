@@ -140,6 +140,12 @@ select option{font-family:'Cairo',sans-serif;}
 .searchable-option:hover,.searchable-option.active{background:var(--primary-10);color:var(--primary-80);}
 .searchable-option-empty{padding:12px;font-size:12px;color:var(--text-3);text-align:center;}
 
+/* ============ COLLAPSE CARDS ============ */
+.collapse-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);margin-bottom:12px;overflow:hidden;box-shadow:var(--shadow-sm);}
+.collapse-header{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;cursor:pointer;user-select:none;transition:background .12s;}
+.collapse-header:hover{background:var(--surface-2);}
+.collapse-body{border-top:1px solid var(--border);}
+
 /* ============ TABLES ============ */
 .table-wrap{overflow-x:auto;position:relative;}
 table{width:100%;border-collapse:collapse;font-size:13px;}
@@ -1684,6 +1690,12 @@ async function renderAttendancePage(){
       <div><h1>الحضور والغياب</h1><p>سجل حضور الطلاب يوم بيوم</p></div>
       <div class="header-actions">
         <input class="form-input" id="att_date" type="date" value="${todayStr()}" style="width:150px;" onchange="loadAttendanceTable()">
+        <select class="filter-select" id="att_session_num" onchange="loadAttendanceTable()" title="رقم الحصة">
+          <option value="1">الحصة الأولى</option>
+          <option value="2">الحصة الثانية</option>
+          <option value="3">الحصة الثالثة</option>
+          <option value="4">الحصة الرابعة</option>
+        </select>
         ${groups.length>1 ? `<select class="filter-select" id="att_group" onchange="loadAttendanceTable()"><option value="">كل المجموعات</option>${groupOptionsAll()}</select>` : ""}
         <select class="filter-select" id="att_status_filter" onchange="filterAttendanceRows()">
           <option value="">كل الحالات</option>
@@ -1759,9 +1771,12 @@ async function loadAttendanceTable(){
   const date = document.getElementById("att_date").value || todayStr();
   const groupSel = document.getElementById("att_group");
   const group_id = groupSel ? groupSel.value : "";
-  const rows = await api(`/api/attendance/${date}` + (group_id?`?group_id=${group_id}`:""));
+  const sessionNum = document.getElementById("att_session_num")?.value || "1";
+  let qs = group_id ? `?group_id=${group_id}&session_number=${sessionNum}` : `?session_number=${sessionNum}`;
+  const rows = await api(`/api/attendance/${date}${qs}`);
   ATT_ROWS_CACHE = rows;
   const canEdit = window.ATT_CAN_EDIT;
+  const sessionLabel = ["","الأولى","الثانية","الثالثة","الرابعة"][parseInt(sessionNum)] || sessionNum;
   document.getElementById("attTableBody").innerHTML = rows.map(r=>`
     <tr data-status="${r.status || 'unmarked'}">
       <td style="color:var(--text-3);font-family:monospace;font-size:12px;">#${r.student_id}</td>
@@ -1769,11 +1784,11 @@ async function loadAttendanceTable(){
       <td>
         ${canEdit ? `
         <div class="pill-group sm">
-          ${Object.keys(ATT_LABELS).map(k=>`<button type="button" class="pill-btn ${r.status===k?'active':''}" data-status="${k}" onclick="saveAttendance('${date}', ${r.student_id}, '${k}', this)"><span class="dot"></span>${ATT_LABELS[k]}</button>`).join("")}
+          ${Object.keys(ATT_LABELS).map(k=>`<button type="button" class="pill-btn ${r.status===k?'active':''}" data-status="${k}" onclick="saveAttendance('${date}', ${r.student_id}, '${k}', this, ${sessionNum})"><span class="dot"></span>${ATT_LABELS[k]}</button>`).join("")}
         </div>` : (r.status ? `<span class="badge ${ATT_BADGE[r.status]}">${ATT_LABELS[r.status]}</span>` : `<span class="badge badge-gray">لسه ملوش حضور</span>`)}
       </td>
       <td>
-        ${canEdit ? `<input class="form-input" style="height:30px;font-size:12px;min-width:130px;" placeholder="ملاحظة..." value="${(r.notes||"").replace(/"/g,'&quot;')}" onchange="saveAttendanceNote('${date}', ${r.student_id}, this.value)">`
+        ${canEdit ? `<input class="form-input" style="height:30px;font-size:12px;min-width:130px;" placeholder="ملاحظة..." value="${(r.notes||"").replace(/"/g,'&quot;')}" onchange="saveAttendanceNote('${date}', ${r.student_id}, this.value, ${sessionNum})">`
                    : `<span class="td-sub">${r.notes || "—"}</span>`}
       </td>
       ${canEdit ? `<td class="td-actions"></td>` : ""}
@@ -1807,23 +1822,23 @@ function filterAttendanceRows(){
   });
 }
 
-async function saveAttendance(date, studentId, status, btnEl){
+async function saveAttendance(date, studentId, status, btnEl, sessionNum=1){
   if (!status) return;
   if (btnEl){
     btnEl.closest(".pill-group").querySelectorAll(".pill-btn").forEach(b=>b.classList.remove("active"));
     btnEl.classList.add("active");
   }
-  await api("/api/attendance", {method:"POST", body: JSON.stringify({student_id: studentId, session_date: date, status})});
+  await api("/api/attendance", {method:"POST", body: JSON.stringify({student_id: studentId, session_date: date, status, session_number: parseInt(sessionNum)})});
   showToast("تم حفظ الحضور", "success");
   const row = ATT_ROWS_CACHE.find(r=>r.student_id===studentId);
   if (row) row.status = status;
   updateAttendanceStats();
 }
 
-async function saveAttendanceNote(date, studentId, notes){
+async function saveAttendanceNote(date, studentId, notes, sessionNum=1){
   const row = ATT_ROWS_CACHE.find(r=>r.student_id===studentId);
   const status = row && row.status ? row.status : "present";
-  await api("/api/attendance", {method:"POST", body: JSON.stringify({student_id: studentId, session_date: date, status, notes})});
+  await api("/api/attendance", {method:"POST", body: JSON.stringify({student_id: studentId, session_date: date, status, notes, session_number: parseInt(sessionNum)})});
   if (row) row.notes = notes;
   showToast("تم حفظ الملاحظة", "success");
 }
@@ -1833,11 +1848,13 @@ async function submitQuickAttendance(){
   const code = codeInput.value.trim();
   const status = QUICK_ATT_STATUS;
   const date = document.getElementById("att_date").value || todayStr();
+  const sessionNum = parseInt(document.getElementById("att_session_num")?.value || "1");
   const resultEl = document.getElementById("quick_att_result");
   if (!code){ showToast("لازم تكتب كود الطالب", "error"); return; }
+  const sessionLabel = ["","الأولى","الثانية","الثالثة","الرابعة"][sessionNum] || sessionNum;
   try{
-    const res = await api("/api/attendance/by-code", {method:"POST", body: JSON.stringify({access_code: code, session_date: date, status})});
-    resultEl.innerHTML = `<span class="badge badge-green"><i data-lucide="check" style="width:12px;height:12px;"></i> تم تسجيل "${res.student_name}" - ${ATT_LABELS[status]}</span>`;
+    const res = await api("/api/attendance/by-code", {method:"POST", body: JSON.stringify({access_code: code, session_date: date, status, session_number: sessionNum})});
+    resultEl.innerHTML = `<span class="badge badge-green"><i data-lucide="check" style="width:12px;height:12px;"></i> "${res.student_name}" - ${ATT_LABELS[status]} - الحصة ${sessionLabel}</span>`;
     codeInput.value = "";
     codeInput.focus();
     icons();
@@ -1875,32 +1892,188 @@ async function renderBoardsPage(){
 
 async function loadBoardImages(){
   const groupId = document.getElementById("board_group").value;
-  const imgs = await api(`/api/board-images?group_id=${groupId}`);
+  const [imgs, homeworks] = await Promise.all([
+    api(`/api/board-images?group_id=${groupId}`),
+    groupId ? api(`/api/homework?group_id=${groupId}`).catch(()=>[]) : Promise.resolve([])
+  ]);
   const canDelete = SESSION.role === "supervisor" || SESSION.role === "admin";
+  const canManageHW = SESSION.role === "supervisor" || SESSION.role === "admin" || SESSION.role === "teacher";
+
+  // تجميع الصور والواجبات تحت رقم الحصة
   const bySession = {};
-  imgs.forEach(im=>{ (bySession[im.session_number] = bySession[im.session_number] || []).push(im); });
+  imgs.forEach(im=>{
+    const k = im.session_number;
+    if (!bySession[k]) bySession[k] = {imgs:[], hw: null, date: im.session_date};
+    bySession[k].imgs.push(im);
+    if (im.session_date) bySession[k].date = im.session_date;
+  });
+  homeworks.forEach(hw=>{
+    const k = hw.session_number;
+    if (!bySession[k]) bySession[k] = {imgs:[], hw: null, date: hw.session_date};
+    bySession[k].hw = hw;
+    if (hw.session_date) bySession[k].date = hw.session_date;
+  });
+
   const sessions = Object.keys(bySession).sort((a,b)=>b-a);
-  document.getElementById("boardCardsWrap").innerHTML = sessions.length ? sessions.map(sn=>`
-    <div style="margin-bottom:22px;">
-      <div class="day-col-title"><i data-lucide="presentation" style="width:14px;height:14px;"></i> الحصة رقم ${sn}</div>
-      <div class="cards-grid">
-        ${bySession[sn].map(im=>`
-          <div class="session-card">
-            <img class="thumb" src="${im.image_data}" onclick="showImageLightbox('${im.image_data}')">
-            <div class="info">
-              <div>
-                <b>${im.session_date || ''}</b>
-                <div style="font-size:11px;color:var(--text-3);">${im.uploaded_by_name||''}</div>
-              </div>
-              ${canDelete ? `<button class="action-btn del" onclick="deleteBoardImage(${im.id})"><i data-lucide="trash-2" style="width:14px;height:14px;"></i></button>` : ""}
-            </div>
+  const sesNames = ["","الأولى","الثانية","الثالثة","الرابعة","الخامسة","السادسة","السابعة","الثامنة","التاسعة","العاشرة"];
+
+  document.getElementById("boardCardsWrap").innerHTML = sessions.length ? sessions.map((sn, idx)=>{
+    const sec = bySession[sn];
+    const hw = sec.hw;
+    const isOpen = idx === 0; // أول حصة مفتوحة افتراضياً
+    const hwDoneCount = hw ? hw.done_count : 0;
+    const hwTotalCount = hw ? hw.total_count : 0;
+    const hwPct = hwTotalCount ? Math.round(hwDoneCount/hwTotalCount*100) : null;
+    return `
+    <div class="collapse-card" id="session_card_${sn}">
+      <div class="collapse-header" onclick="toggleCollapse('session_body_${sn}', this)">
+        <div style="display:flex;align-items:center;gap:10px;flex:1;flex-wrap:wrap;">
+          <i data-lucide="presentation" style="width:15px;height:15px;color:var(--primary);flex-shrink:0;"></i>
+          <span style="font-weight:700;font-size:14px;">الحصة ${sesNames[sn] || '#'+sn}</span>
+          ${sec.date ? `<span style="font-size:12px;color:var(--text-3);">${sec.date}</span>` : ""}
+          <div style="display:flex;gap:6px;margin-right:auto;">
+            ${sec.imgs.length ? `<span class="badge badge-teal">${sec.imgs.length} صورة</span>` : ""}
+            ${hw ? `<span class="badge ${hwPct===100?'badge-green':hwPct>0?'badge-amber':'badge-gray'}">${hwDoneCount}/${hwTotalCount} واجب</span>` : ""}
           </div>
-        `).join("")}
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          ${canManageHW ? `<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openHomeworkModal('${groupId}', ${sn}, '${sec.date||todayStr()}', ${hw?hw.id:'null'}, \`${hw?(hw.description||'').replace(/`/g,'').replace(/'/g,''):''}\`)" style="font-size:12px;padding:4px 10px;"><i data-lucide="${hw?'clipboard-check':'clipboard-list'}" style="width:13px;height:13px;"></i> ${hw?'الواجب':'+ واجب'}</button>` : ""}
+          ${(SESSION.role==='supervisor'||SESSION.role==='admin') ? `<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();prepareUploadForSession(${sn},'${sec.date||todayStr()}');" style="font-size:12px;padding:4px 10px;"><i data-lucide="upload" style="width:13px;height:13px;"></i> صور</button>` : ""}
+          <i data-lucide="${isOpen?'chevron-up':'chevron-down'}" class="collapse-icon" style="width:16px;height:16px;color:var(--text-3);transition:transform .2s;"></i>
+        </div>
+      </div>
+      <div class="collapse-body" id="session_body_${sn}" style="display:${isOpen?'block':'none'};">
+        ${hw ? `
+        <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:12px 16px;margin:12px 16px 0;border-right:3px solid var(--primary);">
+          <div style="font-size:12px;font-weight:700;color:var(--text-3);margin-bottom:4px;">الواجب</div>
+          <div style="font-size:13.5px;color:var(--text);margin-bottom:${canManageHW?'10px':'0'};">${hw.description||'واجب الحصة'}</div>
+          ${canManageHW ? `<button class="btn btn-primary btn-sm" onclick="openHomeworkStudentsModal(${hw.id}, '${hw.description||'الواجب'}')"><i data-lucide="users" style="width:13px;height:13px;"></i> متابعة تسليم الطلاب</button>` : ""}
+        </div>` : ""}
+        ${sec.imgs.length ? `
+        <div class="cards-grid" style="padding:14px 16px;">
+          ${sec.imgs.map(im=>`
+            <div class="session-card">
+              <img class="thumb" src="${im.image_data}" onclick="showImageLightbox('${im.image_data}')">
+              <div class="info">
+                <div>
+                  <b>${im.session_date || ''}</b>
+                  <div style="font-size:11px;color:var(--text-3);">${im.uploaded_by_name||''}</div>
+                </div>
+                ${canDelete ? `<button class="action-btn del" onclick="deleteBoardImage(${im.id})"><i data-lucide="trash-2" style="width:14px;height:14px;"></i></button>` : ""}
+              </div>
+            </div>
+          `).join("")}
+        </div>` : `<div style="padding:14px 16px;font-size:13px;color:var(--text-3);">لا يوجد صور سبورة لهذه الحصة بعد</div>`}
       </div>
     </div>
-  `).join("") : `<div class="empty-state"><div class="empty-icon"><i data-lucide="image-off" style="width:26px;height:26px;"></i></div><div class="empty-title">لا يوجد صور سبورة لسه</div><div class="empty-desc">المشرف المسؤول عن المجموعة هو اللي يقدر يرفع صور السبورة بعد كل حصة.</div></div>`;
+  `}).join("") : `<div class="empty-state"><div class="empty-icon"><i data-lucide="image-off" style="width:26px;height:26px;"></i></div><div class="empty-title">لا يوجد حصص بعد</div><div class="empty-desc">ارفع صور السبورة أو أضف واجب عشان تظهر هنا.</div></div>`;
   icons();
 }
+
+function toggleCollapse(bodyId, headerEl){
+  const body = document.getElementById(bodyId);
+  if (!body) return;
+  const isOpen = body.style.display !== 'none';
+  body.style.display = isOpen ? 'none' : 'block';
+  const icon = headerEl.querySelector('.collapse-icon');
+  if (icon){
+    icon.setAttribute('data-lucide', isOpen ? 'chevron-down' : 'chevron-up');
+    icons();
+  }
+}
+
+function prepareUploadForSession(sessionNum, sessionDate){
+  openUploadBoardModal();
+  setTimeout(()=>{
+    const sEl = document.getElementById("f_b_session");
+    const dEl = document.getElementById("f_b_date");
+    if (sEl) sEl.value = sessionNum;
+    if (dEl) dEl.value = sessionDate;
+  }, 50);
+}
+
+/* =====================================================================
+   الواجبات - Homework System
+===================================================================== */
+function openHomeworkModal(groupId, sessionNum, sessionDate, hwId, currentDesc){
+  const isEdit = hwId && hwId !== 'null';
+  openModal(isEdit ? 'تعديل الواجب' : 'إضافة واجب', `
+    <div class="form-group">
+      <label class="form-label">وصف الواجب <span class="req">*</span></label>
+      <textarea class="form-textarea" id="hw_desc" placeholder="اكتب الواجب هنا..." style="min-height:80px;">${currentDesc||''}</textarea>
+    </div>
+  `, `
+    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+    ${isEdit ? `<button class="btn btn-danger btn-sm" onclick="deleteHomework(${hwId}, '${groupId}')"><i data-lucide="trash-2" style="width:13px;height:13px;"></i> حذف</button>` : ''}
+    <button class="btn btn-primary" onclick="submitHomework('${groupId}', ${sessionNum}, '${sessionDate}', ${isEdit?hwId:'null'})"><i data-lucide="check" style="width:14px;height:14px;"></i> حفظ</button>
+  `);
+  setTimeout(()=>document.getElementById("hw_desc")?.focus(), 100);
+}
+
+async function submitHomework(groupId, sessionNum, sessionDate, hwId){
+  const desc = document.getElementById("hw_desc")?.value.trim();
+  if (!desc){ showToast("لازم تكتب الواجب", "error"); return; }
+  const isEdit = hwId && hwId !== 'null';
+  const body = {group_id: parseInt(groupId), session_number: parseInt(sessionNum), session_date: sessionDate, description: desc};
+  if (isEdit){
+    await api(`/api/homework/${hwId}`, {method:"PUT", body: JSON.stringify(body)});
+  } else {
+    await api("/api/homework", {method:"POST", body: JSON.stringify(body)});
+  }
+  showToast(isEdit ? "تم تعديل الواجب" : "تم إضافة الواجب ✅", "success");
+  closeOverlay("genericModal");
+  loadBoardImages();
+}
+
+async function deleteHomework(hwId, groupId){
+  await api(`/api/homework/${hwId}`, {method:"DELETE"});
+  showToast("تم حذف الواجب", "success");
+  closeOverlay("genericModal");
+  loadBoardImages();
+}
+
+async function openHomeworkStudentsModal(hwId, hwDesc){
+  const rows = await api(`/api/homework/${hwId}/submissions`);
+  const canEdit = SESSION.role !== "student";
+  openModal(`متابعة: ${hwDesc}`, `
+    <div class="table-wrap" style="margin:-10px -10px;">
+    <table style="font-size:13px;">
+      <thead><tr><th>الطالب</th><th>حالة التسليم</th><th>ملاحظات</th></tr></thead>
+      <tbody>
+        ${rows.map(r=>`
+          <tr>
+            <td class="td-name">${r.full_name}</td>
+            <td>
+              ${canEdit ? `
+              <div class="pill-group sm">
+                <button type="button" class="pill-btn ${r.done?'active':''}" onclick="saveHomeworkSubmission(${hwId}, ${r.student_id}, true, this)"><span class="dot" style="background:var(--success);"></span>عمله</button>
+                <button type="button" class="pill-btn ${r.done===false?'active':''}" onclick="saveHomeworkSubmission(${hwId}, ${r.student_id}, false, this)"><span class="dot" style="background:var(--danger);"></span>ملعملوش</button>
+              </div>` : `<span class="badge ${r.done?'badge-green':'badge-red'}">${r.done?'عمله':'ملعملوش'}</span>`}
+            </td>
+            <td>
+              ${canEdit ? `<input class="form-input" style="height:30px;font-size:12px;min-width:120px;" placeholder="ملاحظة..." value="${(r.notes||'').replace(/"/g,'&quot;')}" onchange="saveHomeworkNote(${hwId}, ${r.student_id}, this.value)">` : `<span class="td-sub">${r.notes||'—'}</span>`}
+            </td>
+          </tr>
+        `).join("") || `<tr><td colspan="3" style="text-align:center;color:var(--text-3);padding:20px;">لا يوجد طلاب</td></tr>`}
+      </tbody>
+    </table></div>
+  `, `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`);
+}
+
+async function saveHomeworkSubmission(hwId, studentId, done, btnEl){
+  if (btnEl){
+    btnEl.closest(".pill-group").querySelectorAll(".pill-btn").forEach(b=>b.classList.remove("active"));
+    btnEl.classList.add("active");
+  }
+  await api(`/api/homework/${hwId}/submissions`, {method:"POST", body: JSON.stringify({student_id: studentId, done})});
+  showToast(done ? "✅ تم تسجيل إنه عمل الواجب" : "تم تسجيل إنه ملعملوش", done?"success":"error");
+}
+
+async function saveHomeworkNote(hwId, studentId, notes){
+  await api(`/api/homework/${hwId}/submissions`, {method:"POST", body: JSON.stringify({student_id: studentId, notes})});
+}
+
+
 
 function openUploadBoardModal(){
   openModal("رفع صور سبورة الحصة", `
@@ -2367,6 +2540,16 @@ async function loadMonthlyReport(studentId, canEditPayment){
       <thead><tr><th>الكويز</th><th>التاريخ</th><th>الدرجة</th></tr></thead>
       <tbody>${data.scores.map(s=>`<tr><td>${s.title}</td><td>${s.quiz_date||'—'}</td><td>${s.score??'—'} / ${s.max_score}</td></tr>`).join("") || `<tr><td colspan="3" style="text-align:center;color:var(--text-3);">لا يوجد كويزات</td></tr>`}</tbody>
     </table></div>
+    ${data.attendance.length ? `
+    <div class="form-label">سجل الحضور التفصيلي</div>
+    <div class="table-wrap" style="margin:8px 0 0;"><table>
+      <thead><tr><th>التاريخ</th><th>الحصة</th><th>الحالة</th></tr></thead>
+      <tbody>${data.attendance.map(x=>{
+        const sesLabels = ["","الأولى","الثانية","الثالثة","الرابعة"];
+        const sesLabel = sesLabels[x.session_number] || `#${x.session_number}`;
+        return `<tr><td>${x.session_date}</td><td style="font-size:12px;color:var(--text-2);">الحصة ${sesLabel}</td><td><span class="badge ${ATT_BADGE[x.status]||'badge-gray'}">${ATT_LABELS[x.status]||x.status}</span></td></tr>`;
+      }).join("")}</tbody>
+    </table></div>` : ""}
   `;
 }
 
