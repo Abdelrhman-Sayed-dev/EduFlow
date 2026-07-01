@@ -87,6 +87,17 @@ button{font-family:'Cairo',sans-serif;}
 .stat-icon.green{background:var(--success-bg);color:var(--success);}
 .stat-icon.amber{background:var(--warning-bg);color:var(--warning);}
 .stat-icon.red{background:var(--danger-bg);color:var(--danger);}
+.kpi-progress{height:6px;border-radius:99px;background:var(--surface-3);overflow:hidden;margin-top:8px;}
+.kpi-progress > div{height:100%;border-radius:99px;background:var(--primary);transition:width .3s var(--ease);}
+.mini-rank-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);}
+.mini-rank-row:last-child{border-bottom:none;}
+.mini-rank-num{width:22px;height:22px;border-radius:50%;background:var(--surface-2);color:var(--text-2);font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.bar-chart-wrap{display:flex;align-items:flex-end;gap:8px;height:140px;padding:10px 4px 0;}
+.bar-chart-col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;gap:4px;}
+.bar-chart-bar{width:100%;max-width:34px;border-radius:6px 6px 0 0;background:var(--primary);min-height:4px;transition:height .3s var(--ease);}
+.bar-chart-label{font-size:10px;color:var(--text-3);text-align:center;line-height:1.3;}
+.alert-card{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border-radius:var(--radius-md);background:var(--warning-bg);border:1px solid var(--warning);margin-bottom:8px;}
+.alert-card.ok{background:var(--success-bg);border-color:var(--success);}
 .stat-value{font-size:24px;font-weight:700;color:var(--text);line-height:1;margin-bottom:3px;letter-spacing:-.01em;}
 .stat-label{font-size:12px;color:var(--text-2);font-weight:500;}
 
@@ -661,14 +672,11 @@ const NAV_BY_ROLE = {
     {id:"student_search", label:"بحث عن طالب", icon:"search"},
   ],
   teacher: [
-    {id:"dashboard", label:"لوحة التحكم", icon:"layout-dashboard"},
-    {id:"groups", label:"المجموعات", icon:"users"},
-    {id:"students", label:"الطلاب", icon:"user"},
-    {id:"schedule", label:"جدول مواعيدي", icon:"calendar-clock"},
-    {id:"quizzes", label:"الكويزات", icon:"file-check-2"},
-    {id:"attendance", label:"الحضور والغياب", icon:"calendar-check"},
-    {id:"boards", label:"سبورة الحصص", icon:"presentation"},
-    {id:"student_search", label:"بحث عن طالب", icon:"search"},
+    {id:"dashboard", label:"الرئيسية", icon:"layout-dashboard"},
+    {id:"teacher_analytics", label:"التحليلات", icon:"bar-chart-3"},
+    {id:"teacher_compare", label:"مقارنة المجموعات", icon:"git-compare"},
+    {id:"teacher_reports", label:"التقارير", icon:"file-text"},
+    {id:"teacher_schedule", label:"جدولي", icon:"calendar-clock"},
   ],
   supervisor: [
     {id:"mygroup", label:"مجموعتي", icon:"users"},
@@ -745,6 +753,8 @@ const PAGE_TITLES = {
   mygroup:"مجموعتي", mydashboard:"لوحتي", myscores:"درجاتي", myhomework:"واجباتي",
   myattendance:"حضوري", myboard:"سبورة مجموعتي",
   student_search:"بحث عن طالب",
+  teacher_analytics:"التحليلات", teacher_compare:"مقارنة المجموعات",
+  teacher_reports:"التقارير", teacher_schedule:"جدولي",
 };
 
 async function renderPage(page){
@@ -770,6 +780,10 @@ async function renderPage(page){
       myhomework: renderMyHomeworkPage,
       myboard: renderMyBoardPage,
       student_search: renderStudentSearchPage,
+      teacher_analytics: renderTeacherAnalyticsPage,
+      teacher_compare: renderTeacherComparePage,
+      teacher_reports: renderTeacherReportsPage,
+      teacher_schedule: renderTeacherSchedulePage,
     };
     const fn = renderers[page];
     if (fn) await fn();
@@ -854,25 +868,19 @@ function renderTodayScheduleCard(todayName, items){
 }
 
 async function renderDashboardPage(){
+  if (SESSION.role === "teacher"){
+    return renderTeacherDashboardPage();
+  }
   const [groups, students, quizzes] = await Promise.all([
     loadGroups(), loadStudents(), api("/api/quizzes")
   ]);
   const supervisorsCount = SESSION.role === "admin" ? (await loadSupervisorsList()).length : null;
-
-  let todayScheduleHtml = "";
-  if (SESSION.role === "teacher"){
-    const schedule = await api("/api/schedule");
-    const todayName = getTodayArabicDayName();
-    const todayItems = schedule.filter(s=>s.day_of_week===todayName);
-    todayScheduleHtml = renderTodayScheduleCard(todayName, todayItems);
-  }
 
   const c = document.getElementById("pageContainer");
   c.innerHTML = `
     <div class="page-header">
       <div><h1>أهلاً، ${SESSION.full_name} 👋</h1><p>نظرة سريعة على حالة المنصة دلوقتي</p></div>
     </div>
-    ${todayScheduleHtml}
     <div class="stats-grid">
       <div class="stat-card"><div class="stat-top"><div class="stat-icon teal"><i data-lucide="users" style="width:18px;height:18px;"></i></div></div>
         <div class="stat-value">${groups.length}</div><div class="stat-label">عدد المجموعات</div></div>
@@ -900,6 +908,679 @@ async function renderDashboardPage(){
         </tbody>
       </table></div>
     </div>
+  `;
+  icons();
+}
+
+/* =====================================================================
+   لوحة المدرس التنفيذية (Teacher Executive Dashboard)
+   عرض فقط - بدون أي أزرار إضافة/تعديل/حذف
+===================================================================== */
+let TEACHER_STATS_CACHE = null;
+async function loadTeacherStats(force=false){
+  if (TEACHER_STATS_CACHE && !force) return TEACHER_STATS_CACHE;
+  TEACHER_STATS_CACHE = await api("/api/stats/overview");
+  return TEACHER_STATS_CACHE;
+}
+
+function renderMiniBarChart(items, valueKey, labelKey){
+  if (!items.length) return `<div style="text-align:center;color:var(--text-3);font-size:12.5px;padding:30px 0;">لا يوجد بيانات كافية لعرض الرسم</div>`;
+  const max = Math.max(...items.map(i=>i[valueKey]||0), 1);
+  return `
+    <div class="bar-chart-wrap">
+      ${items.map(it=>{
+        const val = it[valueKey] || 0;
+        const h = Math.max((val/max)*100, 3);
+        return `
+        <div class="bar-chart-col" title="${val}%">
+          <div style="font-size:10.5px;font-weight:700;color:var(--primary);">${val}%</div>
+          <div class="bar-chart-bar" style="height:${h}%;"></div>
+          <div class="bar-chart-label">${(it[labelKey]||"").toString().slice(0,10)}</div>
+        </div>`;
+      }).join("")}
+    </div>`;
+}
+
+function renderMiniRankList(items, nameKey, valueKey, subKey, valueSuffix=""){
+  if (!items.length) return `<div style="text-align:center;color:var(--text-3);font-size:12.5px;padding:20px 0;">لا يوجد بيانات بعد</div>`;
+  return items.slice(0,5).map((it,idx)=>`
+    <div class="mini-rank-row">
+      <div class="mini-rank-num">${idx+1}</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${it[nameKey]}</div>
+        ${subKey ? `<div style="font-size:11px;color:var(--text-3);">${it[subKey]||""}</div>` : ""}
+      </div>
+      <div style="font-weight:700;font-size:13px;color:var(--primary);flex-shrink:0;">${it[valueKey]!=null ? it[valueKey]+valueSuffix : "—"}</div>
+    </div>
+  `).join("");
+}
+
+async function renderTeacherDashboardPage(){
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `<div class="empty-state"><div class="empty-title">بتحمّل...</div></div>`;
+  const [stats, schedule] = await Promise.all([loadTeacherStats(true), api("/api/schedule")]);
+  const todayName = getTodayArabicDayName();
+  const todayItems = schedule.filter(s=>s.day_of_week===todayName);
+  const todayScheduleHtml = renderTodayScheduleCard(todayName, todayItems);
+
+  const t = stats.totals;
+  const weakGroups = stats.groups_overview.filter(g=>
+    (g.attendance_rate!=null && g.attendance_rate < 50) || (g.avg_score_percent!=null && g.avg_score_percent < 50)
+  );
+  const sortedByScore = [...stats.groups_overview].filter(g=>g.avg_score_percent!=null).sort((a,b)=>b.avg_score_percent-a.avg_score_percent);
+
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>أهلاً، ${SESSION.full_name} 👋</h1><p>نظرة تنفيذية سريعة على أداء المنصة دلوقتي</p></div>
+    </div>
+    ${todayScheduleHtml}
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-top"><div class="stat-icon teal"><i data-lucide="users" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${t.groups}</div><div class="stat-label">عدد المجموعات</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-top"><div class="stat-icon blue"><i data-lucide="user" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${t.students}</div><div class="stat-label">عدد الطلاب</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-top"><div class="stat-icon amber"><i data-lucide="percent" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${t.avg_attendance_rate!=null ? t.avg_attendance_rate+'%' : '—'}</div><div class="stat-label">متوسط نسبة الحضور</div>
+        <div class="kpi-progress"><div style="width:${t.avg_attendance_rate||0}%;"></div></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-top"><div class="stat-icon green"><i data-lucide="trending-up" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${t.avg_score_percent!=null ? t.avg_score_percent+'%' : '—'}</div><div class="stat-label">متوسط الدرجات</div>
+        <div class="kpi-progress"><div style="width:${t.avg_score_percent||0}%;"></div></div>
+      </div>
+    </div>
+
+    ${weakGroups.length ? `
+    <div class="table-card" style="padding:14px 16px;margin-bottom:18px;">
+      <div style="font-weight:700;font-size:13.5px;margin-bottom:10px;display:flex;align-items:center;gap:6px;"><i data-lucide="alert-triangle" style="width:15px;height:15px;color:var(--warning);"></i> تنبيهات تحتاج متابعة</div>
+      ${weakGroups.map(g=>`
+        <div class="alert-card">
+          <i data-lucide="alert-circle" style="width:16px;height:16px;color:var(--warning);flex-shrink:0;margin-top:1px;"></i>
+          <div style="font-size:12.5px;color:var(--text);">
+            <b>${g.name}</b> — ${g.avg_score_percent!=null && g.avg_score_percent<50 ? `متوسط الدرجات منخفض (${g.avg_score_percent}%)` : ""}${(g.avg_score_percent!=null && g.avg_score_percent<50 && g.attendance_rate!=null && g.attendance_rate<50)?' و':''}${g.attendance_rate!=null && g.attendance_rate<50 ? `نسبة الحضور منخفضة (${g.attendance_rate}%)` : ""}
+          </div>
+        </div>
+      `).join("")}
+    </div>` : `
+    <div class="table-card" style="padding:14px 16px;margin-bottom:18px;">
+      <div class="alert-card ok"><i data-lucide="check-circle-2" style="width:16px;height:16px;color:var(--success);flex-shrink:0;margin-top:1px;"></i><div style="font-size:12.5px;">كل المجموعات أداءها كويس، مفيش تنبيهات النهاردة 👌</div></div>
+    </div>`}
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;">
+      <div class="table-card" style="padding:14px 16px;">
+        <div style="font-weight:700;font-size:13.5px;margin-bottom:4px;display:flex;align-items:center;gap:6px;"><i data-lucide="award" style="width:15px;height:15px;color:var(--primary);"></i> أفضل الطلاب</div>
+        ${renderMiniRankList(stats.top_students, "full_name", "avg_score_percent", "group_name", "%")}
+      </div>
+      <div class="table-card" style="padding:14px 16px;">
+        <div style="font-weight:700;font-size:13.5px;margin-bottom:4px;display:flex;align-items:center;gap:6px;"><i data-lucide="trophy" style="width:15px;height:15px;color:var(--primary);"></i> أفضل المجموعات</div>
+        ${renderMiniRankList(sortedByScore, "name", "avg_score_percent", "stage_name", "%")}
+      </div>
+    </div>
+
+    <div class="table-card" style="padding:14px 16px;">
+      <div style="font-weight:700;font-size:13.5px;margin-bottom:4px;display:flex;align-items:center;gap:6px;"><i data-lucide="bar-chart-3" style="width:15px;height:15px;color:var(--primary);"></i> اتجاه متوسط درجات آخر الكويزات</div>
+      ${renderMiniBarChart(stats.score_trend, "avg_score_percent", "title")}
+    </div>
+  `;
+  icons();
+}
+
+/* =====================================================================
+   التحليلات متعددة المستويات للمدرس
+   Level 0: اختيار السنة الدراسية
+   Level 1: نظرة عامة على السنة + تصفية محافظة
+   Level 2: تفاصيل مجموعة
+===================================================================== */
+let TEACHER_ANA = {stage:null, gov:null, dateFrom:"", dateTo:"", group:null};
+
+async function renderTeacherAnalyticsPage(){
+  TEACHER_ANA = {stage:null, gov:null, dateFrom:"", dateTo:"", group:null};
+  const stages = await loadStages();
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>التحليلات</h1><p>اختار السنة الدراسية عشان تشوف التحليل الكامل</p></div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;max-width:700px;">
+      ${stages.map(st=>`
+        <div class="stat-card" style="cursor:pointer;border:2px solid transparent;transition:border-color .15s;" onclick="selectAnalyticsStage(${st.id}, '${st.name.replace(/'/g,"\\'")}')">
+          <div class="stat-top"><div class="stat-icon teal"><i data-lucide="graduation-cap" style="width:18px;height:18px;"></i></div></div>
+          <div class="stat-value" style="font-size:15px;">${st.name}</div>
+          <div class="stat-label">اختار للتحليل</div>
+        </div>
+      `).join("") || `<div class="empty-state"><div class="empty-title">لا يوجد مراحل دراسية</div></div>`}
+    </div>
+  `;
+  icons();
+}
+
+async function selectAnalyticsStage(stageId, stageName){
+  TEACHER_ANA.stage = {id:stageId, name:stageName};
+  TEACHER_ANA.gov = null; TEACHER_ANA.dateFrom = ""; TEACHER_ANA.dateTo = "";
+  await renderAnalyticsStageView();
+}
+
+async function renderAnalyticsStageView(){
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `<div class="empty-state"><div class="empty-title">بتحمّل...</div></div>`;
+  const govs = await loadGovernorates();
+  const qs = new URLSearchParams({stage_id: TEACHER_ANA.stage.id});
+  if (TEACHER_ANA.gov) qs.set("governorate_id", TEACHER_ANA.gov);
+  if (TEACHER_ANA.dateFrom) qs.set("date_from", TEACHER_ANA.dateFrom);
+  if (TEACHER_ANA.dateTo) qs.set("date_to", TEACHER_ANA.dateTo);
+  const data = await api(`/api/stats/stage-overview?${qs}`);
+  const t = data.totals;
+  const byScore = [...data.groups_ranking].filter(g=>g.avg_score_percent!=null).sort((a,b)=>b.avg_score_percent-a.avg_score_percent);
+  const byAttendance = [...data.groups_ranking].filter(g=>g.attendance_rate!=null).sort((a,b)=>b.attendance_rate-a.attendance_rate);
+  const byCommitment = [...data.groups_ranking].filter(g=>g.commitment_rate!=null).sort((a,b)=>b.commitment_rate-a.commitment_rate);
+  const needsAttention = data.groups_ranking.filter(g=>(g.avg_score_percent!=null&&g.avg_score_percent<50)||(g.attendance_rate!=null&&g.attendance_rate<50));
+  const govOptions = [
+    {id:"", name:"كل المحافظات"},
+    ...data.governorates_breakdown.map(g=>({id:g.governorate_id, name:g.governorate_name}))
+  ];
+
+  c.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+          <button class="btn btn-ghost btn-sm" onclick="renderTeacherAnalyticsPage()"><i data-lucide="arrow-right" style="width:13px;height:13px;"></i> السنوات الدراسية</button>
+          <i data-lucide="chevron-left" style="width:13px;height:13px;color:var(--text-3);"></i>
+          <b>${data.stage.name}</b>
+          ${TEACHER_ANA.gov ? `<i data-lucide="chevron-left" style="width:13px;height:13px;color:var(--text-3);"></i><span style="color:var(--primary);">${govs.find(g=>g.id==TEACHER_ANA.gov)?.name||""}</span>` : ""}
+        </div>
+        <p style="font-size:12.5px;color:var(--text-2);">تحليل شامل لـ ${t.groups} مجموعة — ${t.students} طالب داخل نفس السنة الدراسية</p>
+      </div>
+    </div>
+
+    <!-- الفلاتر -->
+    <div class="table-card" style="padding:12px 16px;margin-bottom:16px;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <i data-lucide="filter" style="width:14px;height:14px;color:var(--primary);flex-shrink:0;"></i>
+        <select class="filter-select" id="ana_gov" onchange="TEACHER_ANA.gov=this.value||null;renderAnalyticsStageView()">
+          ${govOptions.map(g=>`<option value="${g.id}" ${String(TEACHER_ANA.gov||"")==String(g.id)?"selected":""}>${g.name}</option>`).join("")}
+        </select>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <label style="font-size:12px;color:var(--text-2);">من</label>
+          <input class="form-input" type="date" id="ana_date_from" value="${TEACHER_ANA.dateFrom}" style="width:140px;height:34px;" onchange="TEACHER_ANA.dateFrom=this.value;renderAnalyticsStageView()">
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <label style="font-size:12px;color:var(--text-2);">لحد</label>
+          <input class="form-input" type="date" id="ana_date_to" value="${TEACHER_ANA.dateTo}" style="width:140px;height:34px;" onchange="TEACHER_ANA.dateTo=this.value;renderAnalyticsStageView()">
+        </div>
+        ${(TEACHER_ANA.gov||TEACHER_ANA.dateFrom||TEACHER_ANA.dateTo) ? `<button class="btn btn-ghost btn-sm" onclick="TEACHER_ANA.gov=null;TEACHER_ANA.dateFrom='';TEACHER_ANA.dateTo='';renderAnalyticsStageView()"><i data-lucide="x" style="width:13px;height:13px;"></i> مسح الفلاتر</button>` : ""}
+      </div>
+    </div>
+
+    <!-- KPIs -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-top"><div class="stat-icon teal"><i data-lucide="users" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${t.groups}</div><div class="stat-label">عدد المجموعات</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-top"><div class="stat-icon blue"><i data-lucide="user" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${t.students}</div><div class="stat-label">عدد الطلاب</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-top"><div class="stat-icon amber"><i data-lucide="percent" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${t.attendance_rate!=null?t.attendance_rate+'%':'—'}</div><div class="stat-label">متوسط الحضور</div>
+        ${t.attendance_rate!=null?`<div class="kpi-progress"><div style="width:${t.attendance_rate}%;"></div></div>`:""}
+      </div>
+      <div class="stat-card">
+        <div class="stat-top"><div class="stat-icon green"><i data-lucide="trending-up" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${t.avg_score_percent!=null?t.avg_score_percent+'%':'—'}</div><div class="stat-label">متوسط الدرجات</div>
+        ${t.avg_score_percent!=null?`<div class="kpi-progress"><div style="width:${t.avg_score_percent}%;"></div></div>`:""}
+      </div>
+      <div class="stat-card">
+        <div class="stat-top"><div class="stat-icon blue"><i data-lucide="clipboard-check" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${t.commitment_rate!=null?t.commitment_rate+'%':'—'}</div><div class="stat-label">معدل الالتزام بالواجبات</div>
+        ${t.commitment_rate!=null?`<div class="kpi-progress"><div style="width:${t.commitment_rate}%;"></div></div>`:""}
+      </div>
+    </div>
+
+    <!-- تنبيهات -->
+    ${needsAttention.length ? `
+    <div class="table-card" style="padding:14px 16px;margin-bottom:16px;">
+      <div style="font-weight:700;font-size:13.5px;margin-bottom:10px;display:flex;align-items:center;gap:6px;"><i data-lucide="alert-triangle" style="width:15px;height:15px;color:var(--warning);"></i> مجموعات تحتاج متابعة (${needsAttention.length})</div>
+      ${needsAttention.map(g=>`
+        <div class="alert-card" style="cursor:pointer;" onclick="selectAnalyticsGroup(${g.id},'${g.name.replace(/'/g,"\\'")}')">
+          <i data-lucide="alert-circle" style="width:15px;height:15px;color:var(--warning);flex-shrink:0;"></i>
+          <div style="flex:1;font-size:12.5px;"><b>${g.name}</b> — ${g.avg_score_percent!=null&&g.avg_score_percent<50?`درجات ${g.avg_score_percent}% ↓`:""}${g.attendance_rate!=null&&g.attendance_rate<50?` حضور ${g.attendance_rate}% ↓`:""}</div>
+          <i data-lucide="chevron-left" style="width:14px;height:14px;color:var(--text-3);"></i>
+        </div>`).join("")}
+    </div>` : ""}
+
+    <!-- رسوم بيانية -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px;">
+      <div class="table-card" style="padding:14px 16px;">
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px;"><i data-lucide="bar-chart-3" style="width:14px;height:14px;color:var(--primary);"></i> متوسط الدرجات للمجموعات</div>
+        ${renderMiniBarChart(byScore.slice(0,8), "avg_score_percent", "name")}
+      </div>
+      <div class="table-card" style="padding:14px 16px;">
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px;"><i data-lucide="calendar-check" style="width:14px;height:14px;color:var(--primary);"></i> نسبة الحضور للمجموعات</div>
+        ${renderMiniBarChart(byAttendance.slice(0,8), "attendance_rate", "name")}
+      </div>
+    </div>
+
+    <div class="table-card" style="padding:14px 16px;margin-bottom:16px;">
+      <div style="font-weight:700;font-size:13px;margin-bottom:4px;"><i data-lucide="trending-up" style="width:14px;height:14px;color:var(--primary);"></i> اتجاه متوسط الدرجات عبر الوقت</div>
+      ${renderMiniBarChart(data.score_trend, "avg_score_percent", "quiz_date")}
+    </div>
+
+    <!-- المقارنة بين المحافظات داخل نفس السنة الدراسية -->
+    ${data.governorates_breakdown.length > 1 ? `
+    <div class="table-card" style="margin-bottom:16px;">
+      <div class="toolbar"><b style="font-size:13.5px;">مقارنة المحافظات — ${data.stage.name}</b></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>المحافظة</th><th>المجموعات</th><th>الطلاب</th><th>متوسط الدرجات</th><th>نسبة الحضور</th></tr></thead>
+        <tbody>${data.governorates_breakdown.map(g=>`
+          <tr>
+            <td class="td-name" style="cursor:pointer;color:var(--primary);" onclick="TEACHER_ANA.gov=${g.governorate_id};renderAnalyticsStageView()">${g.governorate_name}</td>
+            <td>${g.groups_count}</td><td>${g.students_count}</td>
+            <td>${g.avg_score_percent!=null?`<div style="display:flex;align-items:center;gap:6px;"><div class="kpi-progress" style="width:60px;margin-top:0;"><div style="width:${g.avg_score_percent}%;"></div></div>${g.avg_score_percent}%</div>`:'—'}</td>
+            <td>${g.attendance_rate!=null?`<div style="display:flex;align-items:center;gap:6px;"><div class="kpi-progress" style="width:60px;margin-top:0;"><div style="width:${g.attendance_rate}%;"></div></div>${g.attendance_rate}%</div>`:'—'}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table></div>
+    </div>` : ""}
+
+    <!-- ترتيب المجموعات الكاملة -->
+    <div class="table-card" style="margin-bottom:16px;">
+      <div class="toolbar" style="justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <b style="font-size:13.5px;">ترتيب المجموعات داخل ${data.stage.name}</b>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-ghost btn-sm ${!window._ana_group_sort||window._ana_group_sort==='score'?'active':''}" onclick="window._ana_group_sort='score';renderAnalyticsStageView()">حسب الدرجات</button>
+          <button class="btn btn-ghost btn-sm ${window._ana_group_sort==='att'?'active':''}" onclick="window._ana_group_sort='att';renderAnalyticsStageView()">حسب الحضور</button>
+          <button class="btn btn-ghost btn-sm ${window._ana_group_sort==='commitment'?'active':''}" onclick="window._ana_group_sort='commitment';renderAnalyticsStageView()">حسب الالتزام</button>
+        </div>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>#</th><th>المجموعة</th><th>المحافظة</th><th>الطلاب</th><th>متوسط الدرجات</th><th>نسبة الحضور</th><th>الالتزام</th><th></th></tr></thead>
+        <tbody>${(window._ana_group_sort==='att'?byAttendance:window._ana_group_sort==='commitment'?byCommitment:byScore).concat(
+          data.groups_ranking.filter(g=>g.avg_score_percent==null&&g.attendance_rate==null)
+        ).map((g,idx)=>`
+          <tr>
+            <td style="color:var(--text-3);font-weight:700;">${idx+1}</td>
+            <td class="td-name">${g.name}</td>
+            <td><span class="badge badge-gray">${g.governorate_name}</span></td>
+            <td>${g.students_count}</td>
+            <td>${g.avg_score_percent!=null?`<div style="display:flex;align-items:center;gap:6px;"><div class="kpi-progress" style="width:55px;margin-top:0;"><div style="width:${g.avg_score_percent}%;"></div></div>${g.avg_score_percent}%</div>`:'—'}</td>
+            <td>${g.attendance_rate!=null?`<div style="display:flex;align-items:center;gap:6px;"><div class="kpi-progress" style="width:55px;margin-top:0;"><div style="width:${g.attendance_rate}%;background:var(--success);"></div></div>${g.attendance_rate}%</div>`:'—'}</td>
+            <td>${g.commitment_rate!=null?g.commitment_rate+'%':'—'}</td>
+            <td><button class="btn btn-ghost btn-sm" onclick="selectAnalyticsGroup(${g.id},'${g.name.replace(/'/g,"\\'")}')"><i data-lucide="eye" style="width:13px;height:13px;"></i></button></td>
+          </tr>`).join("")}
+        </tbody>
+      </table></div>
+    </div>
+
+    <!-- أفضل الطلاب + الأكثر التزامًا + الأكثر غيابًا -->
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:16px;">
+      <div class="table-card" style="padding:14px 16px;">
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px;"><i data-lucide="award" style="width:14px;height:14px;color:var(--primary);"></i> أفضل الطلاب</div>
+        ${renderMiniRankList(data.top_students,"full_name","avg_score_percent","group_name","%")}
+      </div>
+      <div class="table-card" style="padding:14px 16px;">
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px;"><i data-lucide="check-circle-2" style="width:14px;height:14px;color:var(--success);"></i> أكثر الطلاب التزامًا</div>
+        ${renderMiniRankList(data.most_committed_students,"full_name","attendance_rate","group_name","%")}
+      </div>
+      <div class="table-card" style="padding:14px 16px;">
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px;"><i data-lucide="alert-circle" style="width:14px;height:14px;color:var(--danger);"></i> أكثر الطلاب غيابًا</div>
+        ${renderMiniRankList(data.most_absent_students,"full_name","attendance_rate","group_name","%")}
+      </div>
+    </div>
+  `;
+  icons();
+}
+
+async function selectAnalyticsGroup(groupId, groupName){
+  TEACHER_ANA.group = {id:groupId, name:groupName};
+  await renderAnalyticsGroupView();
+}
+
+async function renderAnalyticsGroupView(){
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `<div class="empty-state"><div class="empty-title">بتحمّل...</div></div>`;
+  const qs = new URLSearchParams({group_id: TEACHER_ANA.group.id});
+  if (TEACHER_ANA.dateFrom) qs.set("date_from", TEACHER_ANA.dateFrom);
+  if (TEACHER_ANA.dateTo) qs.set("date_to", TEACHER_ANA.dateTo);
+  const data = await api(`/api/stats/group-detail?${qs}`);
+  const g = data.group;
+  const t = data.totals;
+
+  c.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+          <button class="btn btn-ghost btn-sm" onclick="renderTeacherAnalyticsPage()"><i data-lucide="arrow-right" style="width:13px;height:13px;"></i> السنوات الدراسية</button>
+          <i data-lucide="chevron-left" style="width:13px;height:13px;color:var(--text-3);"></i>
+          <button class="btn btn-ghost btn-sm" onclick="renderAnalyticsStageView()">${TEACHER_ANA.stage?.name||g.stage_name}</button>
+          <i data-lucide="chevron-left" style="width:13px;height:13px;color:var(--text-3);"></i>
+          <b>${g.name}</b>
+        </div>
+        <p style="font-size:12.5px;color:var(--text-2);">${g.governorate_name} — ${g.students_count} طالب — مشرف: ${g.supervisor_name||'—'}</p>
+      </div>
+    </div>
+
+    <!-- تصفية بتاريخ على مستوى المجموعة -->
+    <div class="table-card" style="padding:12px 16px;margin-bottom:16px;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <i data-lucide="filter" style="width:14px;height:14px;color:var(--primary);flex-shrink:0;"></i>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <label style="font-size:12px;color:var(--text-2);">من</label>
+          <input class="form-input" type="date" value="${TEACHER_ANA.dateFrom}" style="width:140px;height:34px;" onchange="TEACHER_ANA.dateFrom=this.value;renderAnalyticsGroupView()">
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <label style="font-size:12px;color:var(--text-2);">لحد</label>
+          <input class="form-input" type="date" value="${TEACHER_ANA.dateTo}" style="width:140px;height:34px;" onchange="TEACHER_ANA.dateTo=this.value;renderAnalyticsGroupView()">
+        </div>
+        ${(TEACHER_ANA.dateFrom||TEACHER_ANA.dateTo)?`<button class="btn btn-ghost btn-sm" onclick="TEACHER_ANA.dateFrom='';TEACHER_ANA.dateTo='';renderAnalyticsGroupView()"><i data-lucide="x" style="width:13px;height:13px;"></i> مسح</button>`:""}
+      </div>
+    </div>
+
+    <!-- KPIs المجموعة -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-top"><div class="stat-icon teal"><i data-lucide="users" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${g.students_count}</div><div class="stat-label">عدد الطلاب</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-top"><div class="stat-icon green"><i data-lucide="trending-up" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${t.avg_score_percent!=null?t.avg_score_percent+'%':'—'}</div><div class="stat-label">متوسط الدرجات</div>
+        ${t.avg_score_percent!=null?`<div class="kpi-progress"><div style="width:${t.avg_score_percent}%;"></div></div>`:""}
+      </div>
+      <div class="stat-card">
+        <div class="stat-top"><div class="stat-icon amber"><i data-lucide="percent" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${t.attendance_rate!=null?t.attendance_rate+'%':'—'}</div><div class="stat-label">نسبة الحضور</div>
+        ${t.attendance_rate!=null?`<div class="kpi-progress"><div style="width:${t.attendance_rate}%;"></div></div>`:""}
+      </div>
+      <div class="stat-card">
+        <div class="stat-top"><div class="stat-icon blue"><i data-lucide="clipboard-check" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${t.commitment_rate!=null?t.commitment_rate+'%':'—'}</div><div class="stat-label">معدل الالتزام</div>
+        ${t.commitment_rate!=null?`<div class="kpi-progress"><div style="width:${t.commitment_rate}%;"></div></div>`:""}
+      </div>
+      <div class="stat-card">
+        <div class="stat-top"><div class="stat-icon ${data.rank.position===1?'amber':'teal'}"><i data-lucide="trophy" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${data.rank.position!=null?'#'+data.rank.position:'—'}</div>
+        <div class="stat-label">ترتيبها بين ${data.rank.total_groups} مجموعة في ${g.stage_name}</div>
+      </div>
+    </div>
+
+    <!-- اتجاه الدرجات -->
+    <div class="table-card" style="padding:14px 16px;margin-bottom:16px;">
+      <div style="font-weight:700;font-size:13px;margin-bottom:4px;"><i data-lucide="trending-up" style="width:14px;height:14px;color:var(--primary);"></i> تطور متوسط الدرجات عبر الكويزات</div>
+      ${renderMiniBarChart(data.score_trend, "avg_score_percent", "quiz_date")}
+    </div>
+
+    <!-- الطلاب -->
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;">
+      <div class="table-card" style="padding:14px 16px;">
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px;"><i data-lucide="award" style="width:14px;height:14px;color:var(--primary);"></i> أعلى الطلاب أداءً</div>
+        ${renderMiniRankList(data.top_students,"full_name","avg_score_percent",null,"%")}
+      </div>
+      <div class="table-card" style="padding:14px 16px;">
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px;"><i data-lucide="check-circle-2" style="width:14px;height:14px;color:var(--success);"></i> الأكثر التزامًا بالحضور</div>
+        ${renderMiniRankList(data.most_committed_students,"full_name","attendance_rate",null,"%")}
+      </div>
+      <div class="table-card" style="padding:14px 16px;">
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px;"><i data-lucide="alert-circle" style="width:14px;height:14px;color:var(--danger);"></i> الأكثر غيابًا</div>
+        ${renderMiniRankList(data.most_absent_students,"full_name","attendance_rate",null,"%")}
+      </div>
+    </div>
+  `;
+  icons();
+}
+
+/* =====================================================================
+   مقارنة المجموعات - Teacher Compare Page
+   كل المقارنات داخل نفس السنة الدراسية فقط
+===================================================================== */
+async function renderTeacherComparePage(){
+  const stages = await loadStages();
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>مقارنة المجموعات</h1><p>قارن أداء المجموعات داخل نفس السنة الدراسية فقط</p></div>
+    </div>
+    <div class="table-card" style="padding:12px 16px;margin-bottom:16px;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <label class="form-label" style="margin-bottom:0;">السنة الدراسية</label>
+        <select class="filter-select" id="cmp_stage" onchange="loadCompareData()">
+          <option value="">اختار سنة دراسية</option>
+          ${stages.map(s=>`<option value="${s.id}">${s.name}</option>`).join("")}
+        </select>
+        <label class="form-label" style="margin-bottom:0;">الفترة من</label>
+        <input class="form-input" type="date" id="cmp_from" style="width:140px;height:34px;" onchange="loadCompareData()">
+        <label class="form-label" style="margin-bottom:0;">لحد</label>
+        <input class="form-input" type="date" id="cmp_to" style="width:140px;height:34px;" onchange="loadCompareData()">
+      </div>
+    </div>
+    <div id="cmpResult">
+      <div class="empty-state"><div class="empty-icon"><i data-lucide="git-compare" style="width:26px;height:26px;"></i></div><div class="empty-title">اختار سنة دراسية</div><div class="empty-desc">المقارنات محصورة داخل نفس السنة الدراسية فقط</div></div>
+    </div>
+  `;
+  icons();
+}
+
+async function loadCompareData(){
+  const stageId = document.getElementById("cmp_stage")?.value;
+  if (!stageId){ return; }
+  const dateFrom = document.getElementById("cmp_from")?.value||"";
+  const dateTo = document.getElementById("cmp_to")?.value||"";
+  const result = document.getElementById("cmpResult");
+  result.innerHTML = `<div class="empty-state"><div class="empty-title">بتحمّل...</div></div>`;
+  const qs = new URLSearchParams({stage_id: stageId});
+  if (dateFrom) qs.set("date_from", dateFrom);
+  if (dateTo) qs.set("date_to", dateTo);
+  const data = await api(`/api/stats/stage-overview?${qs}`);
+  if (!data.groups_ranking.length){
+    result.innerHTML = `<div class="empty-state"><div class="empty-title">لا يوجد مجموعات في هذه السنة بعد</div></div>`;
+    return;
+  }
+  const byScore = [...data.groups_ranking].filter(g=>g.avg_score_percent!=null).sort((a,b)=>b.avg_score_percent-a.avg_score_percent);
+  const byAttendance = [...data.groups_ranking].filter(g=>g.attendance_rate!=null).sort((a,b)=>b.attendance_rate-a.attendance_rate);
+  const byCommitment = [...data.groups_ranking].filter(g=>g.commitment_rate!=null).sort((a,b)=>b.commitment_rate-a.commitment_rate);
+  const needsFollowup = data.groups_ranking.filter(g=>(g.avg_score_percent!=null&&g.avg_score_percent<50)||(g.attendance_rate!=null&&g.attendance_rate<50));
+  const improving = byScore.slice(0,3);
+
+  result.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
+      <div class="table-card" style="padding:14px 16px;">
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px;"><i data-lucide="bar-chart-3" style="width:14px;height:14px;color:var(--primary);"></i> ترتيب المجموعات بالدرجات</div>
+        ${renderMiniBarChart(byScore.slice(0,8), "avg_score_percent", "name")}
+      </div>
+      <div class="table-card" style="padding:14px 16px;">
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px;"><i data-lucide="calendar-check" style="width:14px;height:14px;color:var(--primary);"></i> ترتيب المجموعات بالحضور</div>
+        ${renderMiniBarChart(byAttendance.slice(0,8), "attendance_rate", "name")}
+      </div>
+    </div>
+
+    <div class="table-card" style="margin-bottom:14px;">
+      <div class="toolbar"><b style="font-size:13.5px;">مقارنة كاملة — ${data.stage.name} (جميع المقارنات داخل نفس السنة الدراسية)</b></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>#</th><th>المجموعة</th><th>المحافظة</th><th>الطلاب</th><th>متوسط الدرجات</th><th>نسبة الحضور</th><th>الالتزام</th></tr></thead>
+        <tbody>${byScore.concat(data.groups_ranking.filter(g=>g.avg_score_percent==null)).map((g,idx)=>`
+          <tr>
+            <td style="font-weight:700;color:var(--text-3);">${idx+1}</td>
+            <td class="td-name">${g.name}</td>
+            <td>${g.governorate_name}</td>
+            <td>${g.students_count}</td>
+            <td>${g.avg_score_percent!=null?`<div style="display:flex;align-items:center;gap:6px;"><div class="kpi-progress" style="width:55px;margin-top:0;"><div style="width:${g.avg_score_percent}%;"></div></div>${g.avg_score_percent}%</div>`:'—'}</td>
+            <td>${g.attendance_rate!=null?`<div style="display:flex;align-items:center;gap:6px;"><div class="kpi-progress" style="width:55px;margin-top:0;"><div style="width:${g.attendance_rate}%;background:var(--success);"></div></div>${g.attendance_rate}%</div>`:'—'}</td>
+            <td>${g.commitment_rate!=null?g.commitment_rate+'%':'—'}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:14px;">
+      <div class="table-card" style="padding:14px 16px;">
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px;"><i data-lucide="trophy" style="width:14px;height:14px;color:var(--primary);"></i> أفضل المجموعات</div>
+        ${renderMiniRankList(byScore,"name","avg_score_percent","governorate_name","%")}
+      </div>
+      <div class="table-card" style="padding:14px 16px;">
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px;"><i data-lucide="award" style="width:14px;height:14px;color:var(--primary);"></i> أفضل الطلاب</div>
+        ${renderMiniRankList(data.top_students,"full_name","avg_score_percent","group_name","%")}
+      </div>
+      <div class="table-card" style="padding:14px 16px;">
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px;"><i data-lucide="alert-triangle" style="width:14px;height:14px;color:var(--warning);"></i> تحتاج متابعة</div>
+        ${needsFollowup.length ? renderMiniRankList(needsFollowup,"name","attendance_rate","governorate_name","%") : `<div style="text-align:center;color:var(--success);padding:20px 0;font-size:13px;">كل المجموعات أداءها كويس 👌</div>`}
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;">
+      <div class="table-card" style="padding:14px 16px;">
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px;"><i data-lucide="check-circle-2" style="width:14px;height:14px;color:var(--success);"></i> أكثر الطلاب التزامًا</div>
+        ${renderMiniRankList(data.most_committed_students,"full_name","attendance_rate","group_name","%")}
+      </div>
+      <div class="table-card" style="padding:14px 16px;">
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px;"><i data-lucide="alert-circle" style="width:14px;height:14px;color:var(--danger);"></i> أكثر الطلاب غيابًا</div>
+        ${renderMiniRankList(data.most_absent_students,"full_name","attendance_rate","group_name","%")}
+      </div>
+      <div class="table-card" style="padding:14px 16px;">
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px;"><i data-lucide="trending-up" style="width:14px;height:14px;color:var(--primary);"></i> أعلى المجموعات أداءً</div>
+        ${renderMiniRankList(byCommitment,"name","commitment_rate","governorate_name","%")}
+      </div>
+    </div>
+  `;
+  icons();
+}
+
+/* =====================================================================
+   التقارير - Teacher Reports Page
+===================================================================== */
+async function renderTeacherReportsPage(){
+  const stages = await loadStages();
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>التقارير</h1><p>تقارير أداء تفصيلية قابلة للطباعة</p></div>
+      <div class="header-actions"><button class="btn btn-ghost btn-sm" onclick="window.print()"><i data-lucide="printer" style="width:14px;height:14px;"></i> طباعة</button></div>
+    </div>
+    <div class="table-card" style="padding:12px 16px;margin-bottom:16px;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <label class="form-label" style="margin-bottom:0;">السنة الدراسية</label>
+        <select class="filter-select" id="rep_stage" onchange="loadReportData()">
+          <option value="">اختار سنة دراسية</option>
+          ${stages.map(s=>`<option value="${s.id}">${s.name}</option>`).join("")}
+        </select>
+        <label class="form-label" style="margin-bottom:0;">من</label>
+        <input class="form-input" type="date" id="rep_from" style="width:140px;height:34px;" onchange="loadReportData()">
+        <label class="form-label" style="margin-bottom:0;">لحد</label>
+        <input class="form-input" type="date" id="rep_to" style="width:140px;height:34px;" onchange="loadReportData()">
+      </div>
+    </div>
+    <div id="repResult">
+      <div class="empty-state"><div class="empty-icon"><i data-lucide="file-text" style="width:26px;height:26px;"></i></div><div class="empty-title">اختار سنة دراسية</div><div class="empty-desc">هيظهر التقرير الكامل جاهز للطباعة</div></div>
+    </div>
+  `;
+  icons();
+}
+
+async function loadReportData(){
+  const stageId = document.getElementById("rep_stage")?.value;
+  if (!stageId){ return; }
+  const dateFrom = document.getElementById("rep_from")?.value||"";
+  const dateTo = document.getElementById("rep_to")?.value||"";
+  const result = document.getElementById("repResult");
+  result.innerHTML = `<div class="empty-state"><div class="empty-title">بتحمّل...</div></div>`;
+  const qs = new URLSearchParams({stage_id: stageId});
+  if (dateFrom) qs.set("date_from", dateFrom);
+  if (dateTo) qs.set("date_to", dateTo);
+  const data = await api(`/api/stats/stage-overview?${qs}`);
+  const t = data.totals;
+  const byScore = [...data.groups_ranking].sort((a,b)=>(b.avg_score_percent??-1)-(a.avg_score_percent??-1));
+
+  result.innerHTML = `
+    <div class="table-card" style="padding:16px 18px;margin-bottom:14px;">
+      <div style="font-weight:700;font-size:14px;margin-bottom:10px;">ملخص — ${data.stage.name}${dateFrom||dateTo?` (${dateFrom||""}${dateFrom&&dateTo?" → ":""}${dateTo||""})`:""}</div>
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:14px;font-size:13px;">
+        <div><div style="color:var(--text-3);font-size:11.5px;margin-bottom:3px;">المجموعات</div><b style="font-size:18px;">${t.groups}</b></div>
+        <div><div style="color:var(--text-3);font-size:11.5px;margin-bottom:3px;">الطلاب</div><b style="font-size:18px;">${t.students}</b></div>
+        <div><div style="color:var(--text-3);font-size:11.5px;margin-bottom:3px;">متوسط الدرجات</div><b style="font-size:18px;">${t.avg_score_percent!=null?t.avg_score_percent+'%':'—'}</b></div>
+        <div><div style="color:var(--text-3);font-size:11.5px;margin-bottom:3px;">متوسط الحضور</div><b style="font-size:18px;">${t.attendance_rate!=null?t.attendance_rate+'%':'—'}</b></div>
+        <div><div style="color:var(--text-3);font-size:11.5px;margin-bottom:3px;">معدل الالتزام</div><b style="font-size:18px;">${t.commitment_rate!=null?t.commitment_rate+'%':'—'}</b></div>
+      </div>
+    </div>
+
+    <div class="table-card" style="margin-bottom:14px;">
+      <div class="toolbar"><b>تقرير أداء المجموعات — ${data.stage.name}</b></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>#</th><th>المجموعة</th><th>المحافظة</th><th>المشرف</th><th>الطلاب</th><th>متوسط الدرجات</th><th>نسبة الحضور</th><th>الالتزام</th></tr></thead>
+        <tbody>${byScore.map((g,idx)=>`
+          <tr>
+            <td style="font-weight:700;color:var(--text-3);">${idx+1}</td>
+            <td class="td-name">${g.name}</td>
+            <td>${g.governorate_name}</td>
+            <td>${g.supervisor_name||'—'}</td>
+            <td>${g.students_count}</td>
+            <td>${g.avg_score_percent!=null?g.avg_score_percent+'%':'—'}</td>
+            <td>${g.attendance_rate!=null?g.attendance_rate+'%':'—'}</td>
+            <td>${g.commitment_rate!=null?g.commitment_rate+'%':'—'}</td>
+          </tr>`).join("")||`<tr><td colspan="8" style="text-align:center;color:var(--text-3);">لا يوجد بيانات</td></tr>`}
+        </tbody>
+      </table></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+      <div class="table-card">
+        <div class="toolbar"><b>أفضل الطلاب أداءً</b></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>#</th><th>الطالب</th><th>المجموعة</th><th>متوسط الدرجات</th></tr></thead>
+          <tbody>${data.top_students.map((s,idx)=>`
+            <tr><td>${idx+1}</td><td class="td-name">${s.full_name}</td><td>${s.group_name}</td><td>${s.avg_score_percent}%</td></tr>`).join("")||`<tr><td colspan="4" style="text-align:center;color:var(--text-3);">لا يوجد بيانات</td></tr>`}
+          </tbody>
+        </table></div>
+      </div>
+      <div class="table-card">
+        <div class="toolbar"><b>أكثر الطلاب غيابًا</b></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>#</th><th>الطالب</th><th>المجموعة</th><th>نسبة الحضور</th></tr></thead>
+          <tbody>${data.most_absent_students.map((s,idx)=>`
+            <tr><td>${idx+1}</td><td class="td-name">${s.full_name}</td><td>${s.group_name}</td><td style="color:var(--danger);">${s.attendance_rate}%</td></tr>`).join("")||`<tr><td colspan="4" style="text-align:center;color:var(--text-3);">لا يوجد بيانات</td></tr>`}
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+  `;
+  icons();
+}
+
+/* =====================================================================
+   جدول المدرس - Teacher Schedule (read-only)
+===================================================================== */
+async function renderTeacherSchedulePage(){
+  const items = await api("/api/schedule");
+  const todayName = getTodayArabicDayName();
+  const byDay = {};
+  DAYS_ORDER.forEach(d=>byDay[d]=[]);
+  items.forEach(i=>{ if (!byDay[i.day_of_week]) byDay[i.day_of_week]=[]; byDay[i.day_of_week].push(i); });
+
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header"><div><h1>جدولي</h1><p>جدول حصصك ومواعيدك الأسبوعي (عرض فقط)</p></div></div>
+    ${DAYS_ORDER.map(day=>{
+      const dayItems = byDay[day]||[];
+      if (!dayItems.length) return "";
+      const isToday = day === todayName;
+      return `
+        <div class="day-col-title" style="${isToday?'color:var(--primary);':''}"><i data-lucide="calendar" style="width:14px;height:14px;"></i> ${day} ${isToday?'<span class="badge badge-green" style="margin-right:6px;">النهارده</span>':''}</div>
+        ${dayItems.map(it=>`
+          <div class="schedule-item">
+            <div class="schedule-time">${it.start_time}${it.end_time?` - ${it.end_time}`:""}</div>
+            <div class="schedule-body">
+              <b>${it.title || "حصة"}</b>
+              <div class="sub">${it.group_name ? `مجموعة: ${it.group_name}` : "موعد عام"} ${it.notes?(' • '+it.notes):''}</div>
+            </div>
+          </div>
+        `).join("")}
+      `;
+    }).join("") || `<div class="empty-state"><div class="empty-icon"><i data-lucide="calendar-x" style="width:26px;height:26px;"></i></div><div class="empty-title">الجدول فاضي</div><div class="empty-desc">لسه مفيش مواعيد متضافة.</div></div>`}
   `;
   icons();
 }
@@ -1508,7 +2189,7 @@ function deleteUser(id, name, role){
 const DAYS_ORDER = ["السبت","الأحد","الإثنين","الثلاثاء","الأربعاء","الخميس","الجمعة"];
 
 async function renderSchedulePage(){
-  const canManage = SESSION.role === "admin" || SESSION.role === "teacher";
+  const canManage = SESSION.role === "admin";
   const [items, groups] = await Promise.all([api("/api/schedule"), loadGroups()]);
   CACHE_ALL_GROUPS = groups;
 
@@ -1747,8 +2428,16 @@ const ATT_LABELS = {present:"حاضر", absent:"غايب", late:"متأخر", ex
 const ATT_BADGE = {present:"badge-green", absent:"badge-red", late:"badge-amber", excused:"badge-blue"};
 const ATT_SESSION_NAMES = ["","الأولى","الثانية","الثالثة","الرابعة"];
 
-let QUICK_ATT_STATUS_BY_SESSION = {1:"present", 2:"present", 3:"present", 4:"present"};
-let ATT_ROWS_CACHE_BY_SESSION = {1:[], 2:[], 3:[], 4:[]};
+let QUICK_ATT_STATUS_BY_SESSION = {};
+let ATT_ROWS_CACHE_BY_SESSION = {};
+let ATT_ACTIVE_SESSIONS = []; // [{group_id, group_name, session_number}]
+
+const ATT_EMPTY_STATE_HTML = `
+  <div class="empty-state" id="attEmptyState">
+    <div class="empty-icon"><i data-lucide="clipboard-check" style="width:26px;height:26px;"></i></div>
+    <div class="empty-title">جاهز تاخد الغياب؟</div>
+    <div class="empty-desc">دوس على "أخذ الغياب" واختار المجموعة والحصة وابدأ تسجل.</div>
+  </div>`;
 
 async function renderAttendancePage(){
   if (SESSION.role === "admin" || SESSION.role === "teacher"){
@@ -1758,14 +2447,15 @@ async function renderAttendancePage(){
   window.ATT_CAN_EDIT = canEdit;
   const groups = await loadGroups();
   CACHE_ALL_GROUPS = groups;
+  ATT_ACTIVE_SESSIONS = [];
+  QUICK_ATT_STATUS_BY_SESSION = {};
+  ATT_ROWS_CACHE_BY_SESSION = {};
   const c = document.getElementById("pageContainer");
   c.innerHTML = `
     <div class="page-header">
-      <div><h1>الحضور والغياب</h1><p>سجل حضور كل حصة لوحدها، افتح الحصة اللي عايز تاخد غيابها</p></div>
+      <div><h1>الحضور والغياب</h1><p>اختار المجموعة والحصة وابدأ تاخد الغياب بتاريخ النهارده</p></div>
       <div class="header-actions">
         ${canEdit ? `<button class="btn btn-primary" onclick="openTakeAttendanceModal()"><i data-lucide="clipboard-check" style="width:14px;height:14px;"></i> أخذ الغياب</button>` : ""}
-        <input class="form-input" id="att_date" type="date" value="${todayStr()}" style="width:150px;" onchange="loadAllAttendanceSessions()">
-        ${groups.length>1 ? `<select class="filter-select" id="att_group" onchange="loadAllAttendanceSessions()"><option value="">كل المجموعات</option>${groupOptionsAll()}</select>` : ""}
         <select class="filter-select" id="att_status_filter" onchange="filterAttendanceRows()">
           <option value="">كل الحالات</option>
           <option value="unmarked">غير محدد</option>
@@ -1774,57 +2464,9 @@ async function renderAttendancePage(){
       </div>
     </div>
 
-    <div id="attSessionsWrap">
-      ${[1,2,3,4].map((sn, idx)=>renderAttendanceSessionShell(sn, idx===0, canEdit)).join("")}
-    </div>
+    <div id="attSessionsWrap">${canEdit ? ATT_EMPTY_STATE_HTML : `<div class="empty-state"><div class="empty-icon"><i data-lucide="lock" style="width:26px;height:26px;"></i></div><div class="empty-title">مفيش صلاحية</div><div class="empty-desc">أخذ الغياب متاح للمشرف بس.</div></div>`}</div>
   `;
   icons();
-  await loadAllAttendanceSessions();
-}
-
-function openTakeAttendanceModal(){
-  openModal(
-    `<i data-lucide="clipboard-check" style="width:16px;height:16px;"></i> أخذ الغياب`,
-    `
-    <div style="margin-bottom:14px;">
-      <label class="form-label">رقم الحصة</label>
-      <select class="form-input" id="take_att_session_num">
-        ${[1,2,3,4].map(sn=>`<option value="${sn}">الحصة ${ATT_SESSION_NAMES[sn]}</option>`).join("")}
-      </select>
-    </div>
-    <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:10px 14px;font-size:13px;color:var(--text-2);display:flex;align-items:center;gap:8px;">
-      <i data-lucide="calendar" style="width:14px;height:14px;color:var(--primary);"></i>
-      هيتم تسجيل الغياب بتاريخ النهارده <b>${todayStr()}</b> تلقائيًا
-    </div>
-    `,
-    `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
-     <button class="btn btn-primary" onclick="startTakeAttendance()"><i data-lucide="play" style="width:14px;height:14px;"></i> ابدأ أخذ الغياب</button>`
-  );
-}
-
-async function startTakeAttendance(){
-  const sn = parseInt(document.getElementById("take_att_session_num").value);
-  closeOverlay("genericModal");
-  const dateInput = document.getElementById("att_date");
-  if (dateInput) dateInput.value = todayStr();
-  await loadAllAttendanceSessions();
-  // اقفل كل الحصص واسيب الحصة المطلوبة مفتوحة بس
-  [1,2,3,4].forEach(num=>{
-    const body = document.getElementById(`att_session_body_${num}`);
-    const card = document.getElementById(`att_session_card_${num}`);
-    if (!body || !card) return;
-    const header = card.querySelector(".collapse-header");
-    const icon = header ? header.querySelector(".collapse-icon") : null;
-    body.style.display = (num === sn) ? "block" : "none";
-    if (icon) icon.setAttribute("data-lucide", num === sn ? "chevron-up" : "chevron-down");
-  });
-  icons();
-  const card = document.getElementById(`att_session_card_${sn}`);
-  if (card) card.scrollIntoView({behavior:"smooth", block:"start"});
-  setTimeout(()=>{
-    const codeInput = document.getElementById(`quick_att_code_${sn}`);
-    if (codeInput) codeInput.focus();
-  }, 350);
 }
 
 async function renderAttendanceStatsOnlyPage(){
@@ -1878,39 +2520,116 @@ async function loadAttendanceStatsOnly(){
   }).join("") || `<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:24px;">لا يوجد بيانات</td></tr>`;
 }
 
-function renderAttendanceSessionShell(sn, isOpen, canEdit){
+
+function openTakeAttendanceModal(){
+  const groups = CACHE_ALL_GROUPS || [];
+  if (!groups.length){
+    showToast("معندك مجموعات متعينة لسه", "error");
+    return;
+  }
+  const groupOptions = groups.map(g=>({id:g.id, name:g.name}));
+  openModal(
+    `<i data-lucide="clipboard-check" style="width:16px;height:16px;"></i> أخذ الغياب`,
+    `
+    <div style="margin-bottom:14px;">
+      <label class="form-label">المجموعة</label>
+      ${renderSearchableSelect("take_att_group", groupOptions, groups.length===1?groups[0].id:null, "دوس واكتب اسم المجموعة...")}
+    </div>
+    <div style="margin-bottom:14px;">
+      <label class="form-label">رقم الحصة</label>
+      <select class="form-input" id="take_att_session_num">
+        ${[1,2,3,4].map(sn=>`<option value="${sn}">الحصة ${ATT_SESSION_NAMES[sn]}</option>`).join("")}
+      </select>
+    </div>
+    <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:10px 14px;font-size:13px;color:var(--text-2);display:flex;align-items:center;gap:8px;">
+      <i data-lucide="calendar" style="width:14px;height:14px;color:var(--primary);"></i>
+      هيتم تسجيل الغياب بتاريخ النهارده <b>${todayStr()}</b> تلقائيًا
+    </div>
+    `,
+    `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+     <button class="btn btn-primary" onclick="startTakeAttendance()"><i data-lucide="play" style="width:14px;height:14px;"></i> ابدأ أخذ الغياب</button>`
+  );
+  initSearchableSelect("take_att_group", groupOptions);
+}
+
+async function startTakeAttendance(){
+  const groupIdRaw = document.getElementById("take_att_group_value").value;
+  const groupName = document.getElementById("take_att_group_input").value.trim();
+  const groupId = parseInt(groupIdRaw);
+  const sn = parseInt(document.getElementById("take_att_session_num").value);
+  if (!groupId){ showToast("لازم تختار مجموعة من القائمة", "error"); return; }
+  closeOverlay("genericModal");
+  await openAttendancePanel(groupId, groupName, sn);
+}
+
+async function openAttendancePanel(groupId, groupName, sn){
+  const key = `${groupId}_${sn}`;
+  const exists = ATT_ACTIVE_SESSIONS.find(s=>s.group_id===groupId && s.session_number===sn);
+  if (exists){
+    const card = document.getElementById(`att_panel_${key}`);
+    if (card) card.scrollIntoView({behavior:"smooth", block:"start"});
+    showToast("الحصة دي مفتوحة بالفعل تحت", "info");
+    return;
+  }
+  ATT_ACTIVE_SESSIONS.push({group_id: groupId, group_name: groupName, session_number: sn});
+  const emptyState = document.getElementById("attEmptyState");
+  if (emptyState) emptyState.remove();
+  const wrap = document.getElementById("attSessionsWrap");
+  wrap.insertAdjacentHTML("beforeend", renderAttendanceSessionShell(groupId, groupName, sn, true));
+  icons();
+  await loadAttendanceTableForSession(groupId, sn);
+  const card = document.getElementById(`att_panel_${key}`);
+  if (card) card.scrollIntoView({behavior:"smooth", block:"start"});
+  setTimeout(()=>{
+    const codeInput = document.getElementById(`quick_att_code_${key}`);
+    if (codeInput) codeInput.focus();
+  }, 350);
+}
+
+function closeAttendancePanel(groupId, sn){
+  const key = `${groupId}_${sn}`;
+  ATT_ACTIVE_SESSIONS = ATT_ACTIVE_SESSIONS.filter(s=>!(s.group_id===groupId && s.session_number===sn));
+  const card = document.getElementById(`att_panel_${key}`);
+  if (card) card.remove();
+  if (!ATT_ACTIVE_SESSIONS.length){
+    const wrap = document.getElementById("attSessionsWrap");
+    if (wrap){ wrap.innerHTML = ATT_EMPTY_STATE_HTML; icons(); }
+  }
+}
+
+function renderAttendanceSessionShell(groupId, groupName, sn, isOpen){
   const label = ATT_SESSION_NAMES[sn] || sn;
+  const key = `${groupId}_${sn}`;
   return `
-    <div class="collapse-card" id="att_session_card_${sn}">
-      <div class="collapse-header" onclick="toggleCollapse('att_session_body_${sn}', this)">
+    <div class="collapse-card" id="att_panel_${key}">
+      <div class="collapse-header" onclick="toggleCollapse('att_session_body_${key}', this)">
         <div style="display:flex;align-items:center;gap:10px;flex:1;flex-wrap:wrap;">
           <i data-lucide="calendar-check" style="width:15px;height:15px;color:var(--primary);flex-shrink:0;"></i>
-          <span style="font-weight:700;font-size:14px;">الحصة ${label}</span>
-          <div style="display:flex;gap:6px;margin-right:auto;flex-wrap:wrap;" id="att_session_badges_${sn}"></div>
+          <span style="font-weight:700;font-size:14px;">${groupName} <span style="color:var(--text-3);font-weight:500;">— الحصة ${label}</span></span>
+          <div style="display:flex;gap:6px;margin-right:auto;flex-wrap:wrap;" id="att_session_badges_${key}"></div>
         </div>
+        <button class="act-btn act-del" title="إغلاق الحصة" onclick="event.stopPropagation();closeAttendancePanel(${groupId}, ${sn})" style="margin-right:8px;"><i data-lucide="x" style="width:13px;height:13px;"></i></button>
         <i data-lucide="${isOpen?'chevron-up':'chevron-down'}" class="collapse-icon" style="width:16px;height:16px;color:var(--text-3);transition:transform .2s;"></i>
       </div>
-      <div class="collapse-body" id="att_session_body_${sn}" style="display:${isOpen?'block':'none'};">
-        ${canEdit ? `
+      <div class="collapse-body" id="att_session_body_${key}" style="display:${isOpen?'block':'none'};">
         <div style="padding:14px 16px;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;border-bottom:1px solid var(--border);">
           <div style="flex:1;min-width:200px;">
             <label class="form-label">كود الطالب</label>
-            <input class="form-input" id="quick_att_code_${sn}" placeholder="مثال: ST-4F92AB" style="font-family:monospace;" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();submitQuickAttendance(${sn});}">
+            <input class="form-input" id="quick_att_code_${key}" placeholder="مثال: ST-4F92AB" style="font-family:monospace;" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();submitQuickAttendance(${groupId}, ${sn});}">
           </div>
           <div>
             <label class="form-label">الحالة</label>
-            <div class="pill-group" id="quickAttPills_${sn}">
-              ${Object.keys(ATT_LABELS).map(k=>`<button type="button" class="pill-btn ${k===QUICK_ATT_STATUS_BY_SESSION[sn]?'active':''}" data-status="${k}" onclick="setQuickAttStatus(${sn}, '${k}')"><span class="dot"></span>${ATT_LABELS[k]}</button>`).join("")}
+            <div class="pill-group" id="quickAttPills_${key}">
+              ${Object.keys(ATT_LABELS).map(k=>`<button type="button" class="pill-btn ${k==='present'?'active':''}" data-status="${k}" onclick="setQuickAttStatus('${key}', '${k}')"><span class="dot"></span>${ATT_LABELS[k]}</button>`).join("")}
             </div>
           </div>
-          <button class="btn btn-primary" onclick="submitQuickAttendance(${sn})"><i data-lucide="check" style="width:14px;height:14px;"></i> تسجيل</button>
+          <button class="btn btn-primary" onclick="submitQuickAttendance(${groupId}, ${sn})"><i data-lucide="check" style="width:14px;height:14px;"></i> تسجيل</button>
         </div>
-        <div id="quick_att_result_${sn}" style="padding:10px 16px 0;"></div>
-        ` : ""}
+        <div id="quick_att_result_${key}" style="padding:10px 16px 0;"></div>
         <div class="table-wrap">
           <table>
             <thead><tr><th>#</th><th>الطالب</th><th>الحالة</th><th>ملاحظات</th></tr></thead>
-            <tbody id="attTableBody_${sn}"><tr><td colspan="4" class="loading-row"><span class="spinner"></span> بتحمّل...</td></tr></tbody>
+            <tbody id="attTableBody_${key}"><tr><td colspan="4" class="loading-row"><span class="spinner"></span> بتحمّل...</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -1918,54 +2637,45 @@ function renderAttendanceSessionShell(sn, isOpen, canEdit){
   `;
 }
 
-function setQuickAttStatus(sn, status){
-  QUICK_ATT_STATUS_BY_SESSION[sn] = status;
-  document.querySelectorAll(`#quickAttPills_${sn} .pill-btn`).forEach(b=>{
+function setQuickAttStatus(key, status){
+  QUICK_ATT_STATUS_BY_SESSION[key] = status;
+  document.querySelectorAll(`#quickAttPills_${key} .pill-btn`).forEach(b=>{
     b.classList.toggle("active", b.dataset.status === status);
   });
 }
 
-async function loadAllAttendanceSessions(){
-  await Promise.all([1,2,3,4].map(sn=>loadAttendanceTableForSession(sn)));
-}
-
-async function loadAttendanceTableForSession(sn){
-  const date = document.getElementById("att_date")?.value || todayStr();
-  const groupSel = document.getElementById("att_group");
-  const group_id = groupSel ? groupSel.value : "";
-  let qs = group_id ? `?group_id=${group_id}&session_number=${sn}` : `?session_number=${sn}`;
-  const rows = await api(`/api/attendance/${date}${qs}`);
-  ATT_ROWS_CACHE_BY_SESSION[sn] = rows;
-  const canEdit = window.ATT_CAN_EDIT;
-  const tbody = document.getElementById(`attTableBody_${sn}`);
+async function loadAttendanceTableForSession(groupId, sn){
+  const date = todayStr();
+  const key = `${groupId}_${sn}`;
+  const rows = await api(`/api/attendance/${date}?group_id=${groupId}&session_number=${sn}`);
+  ATT_ROWS_CACHE_BY_SESSION[key] = rows;
+  const tbody = document.getElementById(`attTableBody_${key}`);
   if (!tbody) return;
   tbody.innerHTML = rows.map(r=>`
     <tr data-status="${r.status || 'unmarked'}">
       <td style="color:var(--text-3);font-family:monospace;font-size:12px;">#${r.student_id}</td>
       <td class="td-name">${r.full_name}</td>
       <td>
-        ${canEdit ? `
         <div class="pill-group sm">
-          ${Object.keys(ATT_LABELS).map(k=>`<button type="button" class="pill-btn ${r.status===k?'active':''}" data-status="${k}" onclick="saveAttendance('${date}', ${r.student_id}, '${k}', this, ${sn})"><span class="dot"></span>${ATT_LABELS[k]}</button>`).join("")}
-        </div>` : (r.status ? `<span class="badge ${ATT_BADGE[r.status]}">${ATT_LABELS[r.status]}</span>` : `<span class="badge badge-gray">لسه ملوش حضور</span>`)}
+          ${Object.keys(ATT_LABELS).map(k=>`<button type="button" class="pill-btn ${r.status===k?'active':''}" data-status="${k}" onclick="saveAttendance('${date}', ${r.student_id}, '${k}', this, '${key}')"><span class="dot"></span>${ATT_LABELS[k]}</button>`).join("")}
+        </div>
       </td>
       <td>
-        ${canEdit ? `<input class="form-input" style="height:30px;font-size:12px;min-width:130px;" placeholder="ملاحظة..." value="${(r.notes||"").replace(/"/g,'&quot;')}" onchange="saveAttendanceNote('${date}', ${r.student_id}, this.value, ${sn})">`
-                   : `<span class="td-sub">${r.notes || "—"}</span>`}
+        <input class="form-input" style="height:30px;font-size:12px;min-width:130px;" placeholder="ملاحظة..." value="${(r.notes||"").replace(/"/g,'&quot;')}" onchange="saveAttendanceNote('${date}', ${r.student_id}, this.value, '${key}')">
       </td>
     </tr>`).join("") || `<tr><td colspan="4" style="text-align:center;color:var(--text-3);padding:24px;">لا يوجد طلاب</td></tr>`;
-  updateAttendanceSessionBadges(sn);
+  updateAttendanceSessionBadges(key);
   filterAttendanceRows();
   icons();
 }
 
-function updateAttendanceSessionBadges(sn){
-  const rows = ATT_ROWS_CACHE_BY_SESSION[sn] || [];
+function updateAttendanceSessionBadges(key){
+  const rows = ATT_ROWS_CACHE_BY_SESSION[key] || [];
   const counts = {present:0, absent:0, late:0, excused:0};
   rows.forEach(r=>{ if (r.status && counts.hasOwnProperty(r.status)) counts[r.status]++; });
   const total = rows.length;
   const marked = counts.present + counts.absent + counts.late + counts.excused;
-  const el = document.getElementById(`att_session_badges_${sn}`);
+  const el = document.getElementById(`att_session_badges_${key}`);
   if (!el) return;
   el.innerHTML = total ? `
     <span class="badge badge-green">${counts.present} حاضر</span>
@@ -1982,40 +2692,43 @@ function filterAttendanceRows(){
   });
 }
 
-async function saveAttendance(date, studentId, status, btnEl, sn=1){
+async function saveAttendance(date, studentId, status, btnEl, key){
   if (!status) return;
   if (btnEl){
     btnEl.closest(".pill-group").querySelectorAll(".pill-btn").forEach(b=>b.classList.remove("active"));
     btnEl.classList.add("active");
   }
-  await api("/api/attendance", {method:"POST", body: JSON.stringify({student_id: studentId, session_date: date, status, session_number: parseInt(sn)})});
+  const sessionNum = parseInt(key.split("_")[1]);
+  await api("/api/attendance", {method:"POST", body: JSON.stringify({student_id: studentId, session_date: date, status, session_number: sessionNum})});
   showToast("تم حفظ الحضور", "success");
-  const rows = ATT_ROWS_CACHE_BY_SESSION[sn] || [];
+  const rows = ATT_ROWS_CACHE_BY_SESSION[key] || [];
   const row = rows.find(r=>r.student_id===studentId);
   if (row){
     row.status = status;
     const tr = btnEl ? btnEl.closest("tr") : null;
     if (tr) tr.dataset.status = status;
   }
-  updateAttendanceSessionBadges(sn);
+  updateAttendanceSessionBadges(key);
   filterAttendanceRows();
 }
 
-async function saveAttendanceNote(date, studentId, notes, sn=1){
-  const rows = ATT_ROWS_CACHE_BY_SESSION[sn] || [];
+async function saveAttendanceNote(date, studentId, notes, key){
+  const sessionNum = parseInt(key.split("_")[1]);
+  const rows = ATT_ROWS_CACHE_BY_SESSION[key] || [];
   const row = rows.find(r=>r.student_id===studentId);
   const status = row && row.status ? row.status : "present";
-  await api("/api/attendance", {method:"POST", body: JSON.stringify({student_id: studentId, session_date: date, status, notes, session_number: parseInt(sn)})});
+  await api("/api/attendance", {method:"POST", body: JSON.stringify({student_id: studentId, session_date: date, status, notes, session_number: sessionNum})});
   if (row) row.notes = notes;
   showToast("تم حفظ الملاحظة", "success");
 }
 
-async function submitQuickAttendance(sn){
-  const codeInput = document.getElementById(`quick_att_code_${sn}`);
+async function submitQuickAttendance(groupId, sn){
+  const key = `${groupId}_${sn}`;
+  const codeInput = document.getElementById(`quick_att_code_${key}`);
   const code = codeInput.value.trim();
-  const status = QUICK_ATT_STATUS_BY_SESSION[sn] || "present";
-  const date = document.getElementById("att_date").value || todayStr();
-  const resultEl = document.getElementById(`quick_att_result_${sn}`);
+  const status = QUICK_ATT_STATUS_BY_SESSION[key] || "present";
+  const date = todayStr();
+  const resultEl = document.getElementById(`quick_att_result_${key}`);
   if (!code){ showToast("لازم تكتب كود الطالب", "error"); return; }
   const sessionLabel = ATT_SESSION_NAMES[sn] || sn;
   try{
@@ -2024,7 +2737,7 @@ async function submitQuickAttendance(sn){
     codeInput.value = "";
     codeInput.focus();
     icons();
-    loadAttendanceTableForSession(sn);
+    loadAttendanceTableForSession(groupId, sn);
   }catch(e){
     resultEl.innerHTML = `<span class="badge badge-red">مفيش طالب بالكود ده</span>`;
     codeInput.value = "";
