@@ -1582,6 +1582,453 @@ def save_homework_submission(hw_id: int, data: HomeworkSubmissionIn,
 
 
 # ---------------------------------------------------------------------------
+# إحصائيات لوحة المدرس/الأدمن - Executive Dashboard Overview
+# ---------------------------------------------------------------------------
+
+@app.get("/api/stats/overview")
+def get_stats_overview(session=Depends(require_roles("admin", "teacher"))):
+    """
+    إندبوينت واحد بيجمع كل البيانات اللازمة للوحة المدرس التنفيذية:
+    إجماليات، أداء المجموعات، أفضل الطلاب، مقارنة بالمراحل، واتجاه آخر الكويزات.
+    للأدمن والمدرس بس (عرض فقط، من غير أي تعديل).
+    """
+    with get_connection() as conn:
+        groups_count = conn.execute("SELECT COUNT(*) c FROM groups").fetchone()["c"]
+        students_count = conn.execute("SELECT COUNT(*) c FROM students WHERE is_active=1").fetchone()["c"]
+        quizzes_count = conn.execute("SELECT COUNT(*) c FROM quizzes").fetchone()["c"]
+
+        att_row = conn.execute("""
+            SELECT
+              SUM(CASE WHEN status='present' THEN 1 ELSE 0 END) as present_c,
+              COUNT(*) as total_c
+            FROM attendance
+        """).fetchone()
+        avg_attendance_rate = round((att_row["present_c"] / att_row["total_c"]) * 100, 1) if att_row["total_c"] else None
+
+        score_row = conn.execute("""
+            SELECT AVG(qs.score * 100.0 / q.max_score) as avg_pct
+            FROM quiz_scores qs JOIN quizzes q ON q.id = qs.quiz_id
+            WHERE q.max_score > 0
+        """).fetchone()
+        avg_score_percent = round(score_row["avg_pct"], 1) if score_row["avg_pct"] is not None else None
+
+        # أداء كل مجموعة: متوسط الدرجات + نسبة الحضور + عدد الطلاب
+        groups_overview = conn.execute("""
+            SELECT g.id, g.name, st.name as stage_name, gov.name as governorate_name,
+                   u.full_name as supervisor_name,
+                   (SELECT COUNT(*) FROM students s WHERE s.group_id=g.id AND s.is_active=1) as students_count,
+                   (SELECT AVG(qs.score * 100.0 / q.max_score)
+                      FROM quiz_scores qs JOIN quizzes q ON q.id=qs.quiz_id
+                      JOIN students s2 ON s2.id=qs.student_id
+                      WHERE s2.group_id=g.id AND q.max_score>0) as avg_score_percent,
+                   (SELECT (SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END)*100.0/COUNT(*))
+                      FROM attendance a JOIN students s3 ON s3.id=a.student_id
+                      WHERE s3.group_id=g.id) as attendance_rate
+            FROM groups g
+            JOIN stages st ON st.id=g.stage_id
+            JOIN governorates gov ON gov.id=g.governorate_id
+            LEFT JOIN users u ON u.id=g.supervisor_id
+            ORDER BY avg_score_percent DESC NULLS LAST
+        """).fetchall()
+        groups_overview = [dict(r) for r in groups_overview]
+        for g in groups_overview:
+            g["avg_score_percent"] = round(g["avg_score_percent"], 1) if g["avg_score_percent"] is not None else None
+            g["attendance_rate"] = round(g["attendance_rate"], 1) if g["attendance_rate"] is not None else None
+
+        # أفضل 10 طلاب حسب متوسط الدرجات (لازم يكون عنده درجة واحدة على الأقل)
+        top_students = conn.execute("""
+            SELECT s.id, s.full_name, g.name as group_name, st.name as stage_name,
+                   AVG(qs.score * 100.0 / q.max_score) as avg_score_percent,
+                   COUNT(qs.id) as quizzes_taken
+            FROM students s
+            JOIN quiz_scores qs ON qs.student_id=s.id
+            JOIN quizzes q ON q.id=qs.quiz_id AND q.max_score>0
+            JOIN groups g ON g.id=s.group_id
+            JOIN stages st ON st.id=g.stage_id
+            WHERE s.is_active=1
+            GROUP BY s.id
+            ORDER BY avg_score_percent DESC
+            LIMIT 10
+        """).fetchall()
+        top_students = [dict(r) for r in top_students]
+        for s in top_students:
+            s["avg_score_percent"] = round(s["avg_score_percent"], 1)
+
+        # مقارنة المراحل الدراسية (تجميع المجموعات حسب المرحلة)
+        stage_breakdown = conn.execute("""
+            SELECT st.id as stage_id, st.name as stage_name,
+                   COUNT(DISTINCT g.id) as groups_count,
+                   (SELECT COUNT(*) FROM students s WHERE s.group_id IN
+                      (SELECT id FROM groups WHERE stage_id=st.id) AND s.is_active=1) as students_count,
+                   (SELECT AVG(qs.score * 100.0 / q.max_score)
+                      FROM quiz_scores qs JOIN quizzes q ON q.id=qs.quiz_id
+                      JOIN students s2 ON s2.id=qs.student_id
+                      JOIN groups g2 ON g2.id=s2.group_id
+                      WHERE g2.stage_id=st.id AND q.max_score>0) as avg_score_percent
+            FROM stages st
+            LEFT JOIN groups g ON g.stage_id=st.id
+            GROUP BY st.id
+            HAVING groups_count > 0
+            ORDER BY st.name
+        """).fetchall()
+        stage_breakdown = [dict(r) for r in stage_breakdown]
+        for sb in stage_breakdown:
+            sb["avg_score_percent"] = round(sb["avg_score_percent"], 1) if sb["avg_score_percent"] is not None else None
+
+        # اتجاه آخر 10 كويزات (متوسط الدرجة لكل كويز) عشان رسم بياني بسيط
+        score_trend = conn.execute("""
+            SELECT q.id, q.title, q.quiz_date,
+                   AVG(qs.score * 100.0 / q.max_score) as avg_score_percent
+            FROM quizzes q
+            JOIN quiz_scores qs ON qs.quiz_id=q.id
+            WHERE q.max_score>0
+            GROUP BY q.id
+            ORDER BY q.quiz_date DESC, q.id DESC
+            LIMIT 10
+        """).fetchall()
+        score_trend = [dict(r) for r in score_trend][::-1]
+        for t in score_trend:
+            t["avg_score_percent"] = round(t["avg_score_percent"], 1) if t["avg_score_percent"] is not None else None
+
+        return {
+            "totals": {
+                "groups": groups_count,
+                "students": students_count,
+                "quizzes": quizzes_count,
+                "avg_attendance_rate": avg_attendance_rate,
+                "avg_score_percent": avg_score_percent,
+            },
+            "groups_overview": groups_overview,
+            "top_students": top_students,
+            "stage_breakdown": stage_breakdown,
+            "score_trend": score_trend,
+        }
+
+
+def _date_clause(column, date_from, date_to, params):
+    """بيبني شرط التاريخ (من/لحد) ويضيف الـ params المطلوبة بنفس الترتيب"""
+    clause = ""
+    if date_from:
+        clause += f" AND {column} >= ?"
+        params.append(date_from)
+    if date_to:
+        clause += f" AND {column} <= ?"
+        params.append(date_to)
+    return clause
+
+
+@app.get("/api/stats/stage-overview")
+def get_stage_overview(stage_id: int, governorate_id: Optional[int] = None,
+                        date_from: Optional[str] = None, date_to: Optional[str] = None,
+                        session=Depends(require_roles("admin", "teacher"))):
+    """
+    نظرة عامة على سنة دراسية كاملة (مرحلة) - مع إمكانية التصفية بمحافظة وفترة زمنية.
+    كل المقارنات والترتيبات هنا محصورة داخل نفس السنة الدراسية المختارة فقط.
+    """
+    with get_connection() as conn:
+        stage = conn.execute("SELECT id, name FROM stages WHERE id=?", (stage_id,)).fetchone()
+        if not stage:
+            raise HTTPException(status_code=404, detail="المرحلة غير موجودة")
+
+        gov_filter_sql = " AND g.governorate_id = ?" if governorate_id else ""
+
+        def base_params():
+            p = [stage_id]
+            if governorate_id:
+                p.append(governorate_id)
+            return p
+
+        # ---- إجماليات السنة الدراسية ----
+        groups_count = conn.execute(
+            f"SELECT COUNT(*) c FROM groups g WHERE g.stage_id=?{gov_filter_sql}", base_params()
+        ).fetchone()["c"]
+        students_count = conn.execute(
+            f"""SELECT COUNT(*) c FROM students s JOIN groups g ON g.id=s.group_id
+                WHERE g.stage_id=?{gov_filter_sql} AND s.is_active=1""", base_params()
+        ).fetchone()["c"]
+
+        att_params = base_params()
+        att_clause = _date_clause("a.session_date", date_from, date_to, att_params)
+        att_row = conn.execute(f"""
+            SELECT SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END) as present_c, COUNT(*) as total_c
+            FROM attendance a JOIN students s ON s.id=a.student_id JOIN groups g ON g.id=s.group_id
+            WHERE g.stage_id=?{gov_filter_sql}{att_clause}
+        """, att_params).fetchone()
+        attendance_rate = round(att_row["present_c"]*100.0/att_row["total_c"], 1) if att_row["total_c"] else None
+
+        score_params = base_params()
+        score_clause = _date_clause("q.quiz_date", date_from, date_to, score_params)
+        score_row = conn.execute(f"""
+            SELECT AVG(qs.score*100.0/q.max_score) as avg_pct
+            FROM quiz_scores qs JOIN quizzes q ON q.id=qs.quiz_id AND q.max_score>0
+            JOIN students s ON s.id=qs.student_id JOIN groups g ON g.id=s.group_id
+            WHERE g.stage_id=?{gov_filter_sql}{score_clause}
+        """, score_params).fetchone()
+        avg_score_percent = round(score_row["avg_pct"], 1) if score_row["avg_pct"] is not None else None
+
+        hw_params = base_params()
+        hw_clause = _date_clause("h.session_date", date_from, date_to, hw_params)
+        hw_row = conn.execute(f"""
+            SELECT SUM(CASE WHEN hs.done=1 THEN 1 ELSE 0 END) as done_c, COUNT(*) as total_c
+            FROM homework_submissions hs JOIN homework h ON h.id=hs.homework_id JOIN groups g ON g.id=h.group_id
+            WHERE g.stage_id=?{gov_filter_sql}{hw_clause}
+        """, hw_params).fetchone()
+        commitment_rate = round(hw_row["done_c"]*100.0/hw_row["total_c"], 1) if hw_row["total_c"] else None
+
+        # ---- توزيع المحافظات داخل السنة الدراسية (من غير فلتر المحافظة، عشان تبان كل المحافظات) ----
+        gov_score_params = [stage_id]
+        gov_score_clause = _date_clause("q.quiz_date", date_from, date_to, gov_score_params)
+        gov_att_params = [stage_id]
+        gov_att_clause = _date_clause("a.session_date", date_from, date_to, gov_att_params)
+        governorates_breakdown = conn.execute(f"""
+            SELECT gov.id as governorate_id, gov.name as governorate_name,
+                   COUNT(DISTINCT g.id) as groups_count,
+                   (SELECT COUNT(*) FROM students s WHERE s.group_id IN
+                      (SELECT id FROM groups WHERE stage_id=? AND governorate_id=gov.id) AND s.is_active=1) as students_count,
+                   (SELECT AVG(qs.score*100.0/q.max_score) FROM quiz_scores qs
+                      JOIN quizzes q ON q.id=qs.quiz_id AND q.max_score>0
+                      JOIN students s2 ON s2.id=qs.student_id JOIN groups g2 ON g2.id=s2.group_id
+                      WHERE g2.stage_id=? AND g2.governorate_id=gov.id{gov_score_clause}) as avg_score_percent,
+                   (SELECT SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END)*100.0/COUNT(*)
+                      FROM attendance a JOIN students s3 ON s3.id=a.student_id JOIN groups g3 ON g3.id=s3.group_id
+                      WHERE g3.stage_id=? AND g3.governorate_id=gov.id{gov_att_clause}) as attendance_rate
+            FROM governorates gov
+            JOIN groups g ON g.stage_id=? AND g.governorate_id=gov.id
+            GROUP BY gov.id
+            ORDER BY gov.name
+        """, [stage_id, stage_id] + gov_score_params[1:] + [stage_id] + gov_att_params[1:] + [stage_id]).fetchall()
+        governorates_breakdown = [dict(r) for r in governorates_breakdown]
+        for gb in governorates_breakdown:
+            gb["avg_score_percent"] = round(gb["avg_score_percent"], 1) if gb["avg_score_percent"] is not None else None
+            gb["attendance_rate"] = round(gb["attendance_rate"], 1) if gb["attendance_rate"] is not None else None
+
+        # ---- ترتيب المجموعات (كل المؤشرات سوا، الفرونت بيرتب حسب اللي محتاجه) ----
+        g_score_params = []
+        g_score_clause = _date_clause("q.quiz_date", date_from, date_to, g_score_params)
+        g_att_params = []
+        g_att_clause = _date_clause("a.session_date", date_from, date_to, g_att_params)
+        g_hw_params = []
+        g_hw_clause = _date_clause("h.session_date", date_from, date_to, g_hw_params)
+        outer_params = base_params()
+
+        groups_ranking = conn.execute(f"""
+            SELECT g.id, g.name, gov.name as governorate_name, u.full_name as supervisor_name,
+                   (SELECT COUNT(*) FROM students s WHERE s.group_id=g.id AND s.is_active=1) as students_count,
+                   (SELECT AVG(qs.score*100.0/q.max_score) FROM quiz_scores qs
+                      JOIN quizzes q ON q.id=qs.quiz_id AND q.max_score>0
+                      JOIN students s2 ON s2.id=qs.student_id
+                      WHERE s2.group_id=g.id{g_score_clause}) as avg_score_percent,
+                   (SELECT SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END)*100.0/COUNT(*)
+                      FROM attendance a JOIN students s3 ON s3.id=a.student_id
+                      WHERE s3.group_id=g.id{g_att_clause}) as attendance_rate,
+                   (SELECT SUM(CASE WHEN hs.done=1 THEN 1 ELSE 0 END)*100.0/COUNT(*)
+                      FROM homework_submissions hs JOIN homework h ON h.id=hs.homework_id
+                      WHERE h.group_id=g.id{g_hw_clause}) as commitment_rate
+            FROM groups g
+            JOIN governorates gov ON gov.id=g.governorate_id
+            LEFT JOIN users u ON u.id=g.supervisor_id
+            WHERE g.stage_id=?{gov_filter_sql}
+            ORDER BY avg_score_percent DESC NULLS LAST
+        """, g_score_params + g_att_params + g_hw_params + outer_params).fetchall()
+        groups_ranking = [dict(r) for r in groups_ranking]
+        for g in groups_ranking:
+            g["avg_score_percent"] = round(g["avg_score_percent"], 1) if g["avg_score_percent"] is not None else None
+            g["attendance_rate"] = round(g["attendance_rate"], 1) if g["attendance_rate"] is not None else None
+            g["commitment_rate"] = round(g["commitment_rate"], 1) if g["commitment_rate"] is not None else None
+
+        # ---- ترتيب الطلاب (أفضل / أكثر التزامًا / أكثر غيابًا) ----
+        s_score_params = base_params()
+        s_score_clause = _date_clause("q.quiz_date", date_from, date_to, s_score_params)
+        top_students = conn.execute(f"""
+            SELECT s.id, s.full_name, g.name as group_name, gov.name as governorate_name,
+                   AVG(qs.score*100.0/q.max_score) as avg_score_percent, COUNT(qs.id) as quizzes_taken
+            FROM students s
+            JOIN quiz_scores qs ON qs.student_id=s.id
+            JOIN quizzes q ON q.id=qs.quiz_id AND q.max_score>0
+            JOIN groups g ON g.id=s.group_id
+            JOIN governorates gov ON gov.id=g.governorate_id
+            WHERE g.stage_id=?{gov_filter_sql} AND s.is_active=1{s_score_clause}
+            GROUP BY s.id ORDER BY avg_score_percent DESC LIMIT 10
+        """, s_score_params).fetchall()
+        top_students = [dict(r) for r in top_students]
+        for s in top_students:
+            s["avg_score_percent"] = round(s["avg_score_percent"], 1)
+
+        s_att_params = base_params()
+        s_att_clause = _date_clause("a.session_date", date_from, date_to, s_att_params)
+        students_attendance = conn.execute(f"""
+            SELECT s.id, s.full_name, g.name as group_name, gov.name as governorate_name,
+                   SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END)*100.0/COUNT(*) as attendance_rate,
+                   COUNT(*) as records_count
+            FROM students s
+            JOIN attendance a ON a.student_id=s.id
+            JOIN groups g ON g.id=s.group_id
+            JOIN governorates gov ON gov.id=g.governorate_id
+            WHERE g.stage_id=?{gov_filter_sql} AND s.is_active=1{s_att_clause}
+            GROUP BY s.id
+        """, s_att_params).fetchall()
+        students_attendance = [dict(r) for r in students_attendance]
+        for s in students_attendance:
+            s["attendance_rate"] = round(s["attendance_rate"], 1)
+        most_committed_students = sorted(students_attendance, key=lambda x: x["attendance_rate"], reverse=True)[:10]
+        most_absent_students = sorted(students_attendance, key=lambda x: x["attendance_rate"])[:10]
+
+        # ---- اتجاه متوسط الدرجات لآخر 10 كويزات داخل السنة الدراسية ----
+        t_score_params = base_params()
+        t_score_clause = _date_clause("q.quiz_date", date_from, date_to, t_score_params)
+        score_trend = conn.execute(f"""
+            SELECT q.id, q.title, q.quiz_date, AVG(qs.score*100.0/q.max_score) as avg_score_percent
+            FROM quizzes q
+            JOIN quiz_scores qs ON qs.quiz_id=q.id
+            JOIN students s ON s.id=qs.student_id
+            JOIN groups g ON g.id=s.group_id
+            WHERE g.stage_id=?{gov_filter_sql} AND q.max_score>0{t_score_clause}
+            GROUP BY q.id ORDER BY q.quiz_date DESC, q.id DESC LIMIT 10
+        """, t_score_params).fetchall()
+        score_trend = [dict(r) for r in score_trend][::-1]
+        for t in score_trend:
+            t["avg_score_percent"] = round(t["avg_score_percent"], 1) if t["avg_score_percent"] is not None else None
+
+        return {
+            "stage": {"id": stage["id"], "name": stage["name"]},
+            "filters_applied": {
+                "governorate_id": governorate_id, "date_from": date_from, "date_to": date_to
+            },
+            "totals": {
+                "groups": groups_count, "students": students_count,
+                "attendance_rate": attendance_rate, "commitment_rate": commitment_rate,
+                "avg_score_percent": avg_score_percent,
+            },
+            "governorates_breakdown": governorates_breakdown,
+            "groups_ranking": groups_ranking,
+            "top_students": top_students,
+            "most_committed_students": most_committed_students,
+            "most_absent_students": most_absent_students,
+            "score_trend": score_trend,
+        }
+
+
+@app.get("/api/stats/group-detail")
+def get_group_detail(group_id: int, date_from: Optional[str] = None, date_to: Optional[str] = None,
+                      session=Depends(require_roles("admin", "teacher"))):
+    """تفاصيل أداء مجموعة واحدة + ترتيبها بين باقي مجموعات نفس السنة الدراسية"""
+    with get_connection() as conn:
+        group = conn.execute("""
+            SELECT g.id, g.name, g.stage_id, st.name as stage_name, gov.name as governorate_name,
+                   u.full_name as supervisor_name,
+                   (SELECT COUNT(*) FROM students s WHERE s.group_id=g.id AND s.is_active=1) as students_count
+            FROM groups g
+            JOIN stages st ON st.id=g.stage_id
+            JOIN governorates gov ON gov.id=g.governorate_id
+            LEFT JOIN users u ON u.id=g.supervisor_id
+            WHERE g.id=?
+        """, (group_id,)).fetchone()
+        if not group:
+            raise HTTPException(status_code=404, detail="المجموعة غير موجودة")
+        group = dict(group)
+        stage_id = group["stage_id"]
+
+        score_params = [group_id]
+        score_clause = _date_clause("q.quiz_date", date_from, date_to, score_params)
+        score_row = conn.execute(f"""
+            SELECT AVG(qs.score*100.0/q.max_score) as avg_pct
+            FROM quiz_scores qs JOIN quizzes q ON q.id=qs.quiz_id AND q.max_score>0
+            JOIN students s ON s.id=qs.student_id
+            WHERE s.group_id=?{score_clause}
+        """, score_params).fetchone()
+        avg_score_percent = round(score_row["avg_pct"], 1) if score_row["avg_pct"] is not None else None
+
+        att_params = [group_id]
+        att_clause = _date_clause("a.session_date", date_from, date_to, att_params)
+        att_row = conn.execute(f"""
+            SELECT SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END) as present_c, COUNT(*) as total_c
+            FROM attendance a JOIN students s ON s.id=a.student_id
+            WHERE s.group_id=?{att_clause}
+        """, att_params).fetchone()
+        attendance_rate = round(att_row["present_c"]*100.0/att_row["total_c"], 1) if att_row["total_c"] else None
+
+        hw_params = [group_id]
+        hw_clause = _date_clause("h.session_date", date_from, date_to, hw_params)
+        hw_row = conn.execute(f"""
+            SELECT SUM(CASE WHEN hs.done=1 THEN 1 ELSE 0 END) as done_c, COUNT(*) as total_c
+            FROM homework_submissions hs JOIN homework h ON h.id=hs.homework_id
+            WHERE h.group_id=?{hw_clause}
+        """, hw_params).fetchone()
+        commitment_rate = round(hw_row["done_c"]*100.0/hw_row["total_c"], 1) if hw_row["total_c"] else None
+
+        # ترتيب المجموعة بين باقي مجموعات نفس السنة الدراسية (حسب متوسط الدرجات)
+        rank_score_params = []
+        rank_score_clause = _date_clause("q.quiz_date", date_from, date_to, rank_score_params)
+        all_groups_scores = conn.execute(f"""
+            SELECT g.id,
+                   (SELECT AVG(qs.score*100.0/q.max_score) FROM quiz_scores qs
+                      JOIN quizzes q ON q.id=qs.quiz_id AND q.max_score>0
+                      JOIN students s2 ON s2.id=qs.student_id
+                      WHERE s2.group_id=g.id{rank_score_clause}) as avg_score_percent
+            FROM groups g WHERE g.stage_id=?
+        """, rank_score_params + [stage_id]).fetchall()
+        scored = [dict(r) for r in all_groups_scores if r["avg_score_percent"] is not None]
+        scored.sort(key=lambda x: x["avg_score_percent"], reverse=True)
+        rank_position = next((i+1 for i, g in enumerate(scored) if g["id"] == group_id), None)
+
+        # اتجاه الدرجات عبر آخر الكويزات للمجموعة دي بس
+        trend_params = [group_id]
+        trend_clause = _date_clause("q.quiz_date", date_from, date_to, trend_params)
+        score_trend = conn.execute(f"""
+            SELECT q.id, q.title, q.quiz_date, AVG(qs.score*100.0/q.max_score) as avg_score_percent
+            FROM quizzes q JOIN quiz_scores qs ON qs.quiz_id=q.id
+            JOIN students s ON s.id=qs.student_id
+            WHERE s.group_id=? AND q.max_score>0{trend_clause}
+            GROUP BY q.id ORDER BY q.quiz_date DESC, q.id DESC LIMIT 10
+        """, trend_params).fetchall()
+        score_trend = [dict(r) for r in score_trend][::-1]
+        for t in score_trend:
+            t["avg_score_percent"] = round(t["avg_score_percent"], 1) if t["avg_score_percent"] is not None else None
+
+        # طلاب المجموعة: أفضل أداء + الأكثر التزامًا (حضورًا) + الأكثر غيابًا
+        ts_params = [group_id]
+        ts_clause = _date_clause("q.quiz_date", date_from, date_to, ts_params)
+        top_students = conn.execute(f"""
+            SELECT s.id, s.full_name, AVG(qs.score*100.0/q.max_score) as avg_score_percent, COUNT(qs.id) as quizzes_taken
+            FROM students s JOIN quiz_scores qs ON qs.student_id=s.id
+            JOIN quizzes q ON q.id=qs.quiz_id AND q.max_score>0
+            WHERE s.group_id=? AND s.is_active=1{ts_clause}
+            GROUP BY s.id ORDER BY avg_score_percent DESC LIMIT 10
+        """, ts_params).fetchall()
+        top_students = [dict(r) for r in top_students]
+        for s in top_students:
+            s["avg_score_percent"] = round(s["avg_score_percent"], 1)
+
+        att_students_params = [group_id]
+        att_students_clause = _date_clause("a.session_date", date_from, date_to, att_students_params)
+        students_attendance = conn.execute(f"""
+            SELECT s.id, s.full_name, SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END)*100.0/COUNT(*) as attendance_rate,
+                   COUNT(*) as records_count
+            FROM students s JOIN attendance a ON a.student_id=s.id
+            WHERE s.group_id=? AND s.is_active=1{att_students_clause}
+            GROUP BY s.id
+        """, att_students_params).fetchall()
+        students_attendance = [dict(r) for r in students_attendance]
+        for s in students_attendance:
+            s["attendance_rate"] = round(s["attendance_rate"], 1)
+        most_committed_students = sorted(students_attendance, key=lambda x: x["attendance_rate"], reverse=True)[:10]
+        most_absent_students = sorted(students_attendance, key=lambda x: x["attendance_rate"])[:10]
+
+        return {
+            "group": group,
+            "totals": {
+                "avg_score_percent": avg_score_percent, "attendance_rate": attendance_rate,
+                "commitment_rate": commitment_rate,
+            },
+            "rank": {"position": rank_position, "total_groups": len(scored)},
+            "score_trend": score_trend,
+            "top_students": top_students,
+            "most_committed_students": most_committed_students,
+            "most_absent_students": most_absent_students,
+        }
+
+
+# ---------------------------------------------------------------------------
 # تشغيل السيرفر مباشرة
 # ---------------------------------------------------------------------------
 
