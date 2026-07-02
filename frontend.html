@@ -675,6 +675,7 @@ const NAV_BY_ROLE = {
     {id:"dashboard", label:"الرئيسية", icon:"layout-dashboard"},
     {id:"teacher_analytics", label:"التحليلات", icon:"bar-chart-3"},
     {id:"teacher_compare", label:"مقارنة المجموعات", icon:"git-compare"},
+    {id:"teacher_ranking", label:"الترتيب المتقدم", icon:"trophy"},
     {id:"teacher_reports", label:"التقارير", icon:"file-text"},
     {id:"teacher_schedule", label:"جدولي", icon:"calendar-clock"},
   ],
@@ -754,7 +755,7 @@ const PAGE_TITLES = {
   myattendance:"حضوري", myboard:"سبورة مجموعتي",
   student_search:"بحث عن طالب",
   teacher_analytics:"التحليلات", teacher_compare:"مقارنة المجموعات",
-  teacher_reports:"التقارير", teacher_schedule:"جدولي",
+  teacher_ranking:"الترتيب المتقدم", teacher_reports:"التقارير", teacher_schedule:"جدولي",
 };
 
 async function renderPage(page){
@@ -782,6 +783,7 @@ async function renderPage(page){
       student_search: renderStudentSearchPage,
       teacher_analytics: renderTeacherAnalyticsPage,
       teacher_compare: renderTeacherComparePage,
+      teacher_ranking: renderTeacherRankingPage,
       teacher_reports: renderTeacherReportsPage,
       teacher_schedule: renderTeacherSchedulePage,
     };
@@ -1544,6 +1546,261 @@ async function loadReportData(){
           <tbody>${data.most_absent_students.map((s,idx)=>`
             <tr><td>${idx+1}</td><td class="td-name">${s.full_name}</td><td>${s.group_name}</td><td style="color:var(--danger);">${s.attendance_rate}%</td></tr>`).join("")||`<tr><td colspan="4" style="text-align:center;color:var(--text-3);">لا يوجد بيانات</td></tr>`}
           </tbody>
+        </table></div>
+      </div>
+    </div>
+  `;
+  icons();
+}
+
+/* =====================================================================
+   الترتيب المتقدم — Advanced Multi-Dimension Ranking Page
+===================================================================== */
+let RANKING_DATA = null;
+let RANKING_STAGE_ID = null;
+
+async function renderTeacherRankingPage(){
+  RANKING_DATA = null;
+  const stages = await loadStages();
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>الترتيب المتقدم</h1><p>ترتيب الطلاب والمجموعات من زوايا متعددة — اختار السنة الدراسية</p></div>
+    </div>
+
+    <!-- الفلاتر -->
+    <div class="table-card" style="padding:12px 16px;margin-bottom:16px;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <i data-lucide="filter" style="width:14px;height:14px;color:var(--primary);flex-shrink:0;"></i>
+        <select class="filter-select" id="rnk_stage" onchange="loadRankingData()">
+          <option value="">اختار سنة دراسية</option>
+          ${stages.map(s=>`<option value="${s.id}">${s.name}</option>`).join("")}
+        </select>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <label style="font-size:12px;color:var(--text-2);">من</label>
+          <input class="form-input" type="date" id="rnk_from" style="width:140px;height:34px;" onchange="loadRankingData()">
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <label style="font-size:12px;color:var(--text-2);">لحد</label>
+          <input class="form-input" type="date" id="rnk_to" style="width:140px;height:34px;" onchange="loadRankingData()">
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <label style="font-size:12px;color:var(--text-2);">حد النجاح</label>
+          <select class="filter-select" id="rnk_pass" onchange="loadRankingData()">
+            ${[40,50,60,70].map(v=>`<option value="${v}" ${v===50?"selected":""}>${v}%</option>`).join("")}
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- أتابس الترتيب -->
+    <div id="rnk_tabs" style="display:none;margin-bottom:4px;">
+      <div style="display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:4px;margin-bottom:16px;">
+        ${[
+          {key:"students", label:"🎓 الطلاب"},
+          {key:"groups", label:"👥 المجموعات"},
+        ].map(t=>`<button class="btn btn-ghost btn-sm rnk-tab" data-tab="${t.key}" onclick="switchRankTab('${t.key}')">${t.label}</button>`).join("")}
+      </div>
+
+      <!-- تاب الطلاب -->
+      <div id="rnk_pane_students">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:14px;" id="rnk_students_top3"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;" id="rnk_students_tables"></div>
+      </div>
+
+      <!-- تاب المجموعات -->
+      <div id="rnk_pane_groups" style="display:none;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;" id="rnk_groups_top"></div>
+        <div id="rnk_groups_stability"></div>
+      </div>
+    </div>
+
+    <div id="rnk_empty">
+      <div class="empty-state">
+        <div class="empty-icon"><i data-lucide="trophy" style="width:28px;height:28px;"></i></div>
+        <div class="empty-title">اختار سنة دراسية</div>
+        <div class="empty-desc">هيظهر الترتيب المتقدم من كل الزوايا</div>
+      </div>
+    </div>
+  `;
+  icons();
+}
+
+async function loadRankingData(){
+  const stageId = document.getElementById("rnk_stage")?.value;
+  if (!stageId) return;
+  const dateFrom = document.getElementById("rnk_from")?.value||"";
+  const dateTo = document.getElementById("rnk_to")?.value||"";
+  const passThreshold = document.getElementById("rnk_pass")?.value||"50";
+
+  const qs = new URLSearchParams({stage_id: stageId, pass_threshold: passThreshold});
+  if (dateFrom) qs.set("date_from", dateFrom);
+  if (dateTo) qs.set("date_to", dateTo);
+
+  document.getElementById("rnk_empty").innerHTML = `<div class="empty-state"><div class="empty-title">بتحمّل...</div></div>`;
+  document.getElementById("rnk_tabs").style.display = "none";
+
+  RANKING_DATA = await api(`/api/stats/rankings?${qs}`);
+  RANKING_STAGE_ID = stageId;
+
+  document.getElementById("rnk_empty").innerHTML = "";
+  document.getElementById("rnk_tabs").style.display = "";
+
+  switchRankTab("students");
+}
+
+function switchRankTab(tab){
+  document.querySelectorAll(".rnk-tab").forEach(b=>{
+    b.classList.toggle("active", b.dataset.tab === tab);
+  });
+  document.getElementById("rnk_pane_students").style.display = tab==="students" ? "" : "none";
+  document.getElementById("rnk_pane_groups").style.display = tab==="groups" ? "" : "none";
+
+  if (tab === "students") renderStudentRankings();
+  else renderGroupRankings();
+}
+
+/* ---------- مساعد بناء بطاقة الترتيب ---------- */
+function buildRankCard(title, icon, iconColor, items, unit="", subKey=null, note=""){
+  const rows = items.slice(0,10).map((it, idx) => {
+    const name = it.full_name || it.name;
+    const sub = subKey ? (it[subKey]||"") : (it.detail||it.group_name||"");
+    const barW = Math.min(100, it.value > 0 ? it.value : 0);
+    const medal = idx===0?"🥇":idx===1?"🥈":idx===2?"🥉":"";
+    const valueColor = it.value >= 75 ? "var(--success)" : it.value >= 50 ? "var(--primary)" : "var(--danger)";
+    return `
+      <div class="mini-rank-row">
+        <div class="mini-rank-num" style="${idx<3?'background:var(--primary-20);color:var(--primary);font-weight:800;':''}">${medal||idx+1}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${name}</div>
+          ${sub ? `<div style="font-size:11px;color:var(--text-3);">${sub}</div>` : ""}
+          <div class="kpi-progress" style="margin-top:4px;"><div style="width:${barW}%;background:${valueColor};"></div></div>
+        </div>
+        <div style="font-weight:800;font-size:13px;color:${valueColor};flex-shrink:0;min-width:40px;text-align:left;">
+          ${it.value != null ? it.value+(unit||"%") : "—"}
+        </div>
+      </div>`;
+  }).join("");
+
+  return `
+    <div class="table-card" style="padding:14px 16px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <i data-lucide="${icon}" style="width:15px;height:15px;color:${iconColor};"></i>
+        <b style="font-size:13.5px;">${title}</b>
+        ${note ? `<span style="font-size:11px;color:var(--text-3);margin-right:auto;">${note}</span>` : ""}
+      </div>
+      ${rows || `<div style="text-align:center;color:var(--text-3);padding:20px 0;font-size:12.5px;">لا يوجد بيانات كافية بعد<br><span style="font-size:11px;">محتاج كويزات/حضور/واجبات مسجلة</span></div>`}
+    </div>`;
+}
+
+/* ---------- بطاقات البودييم (Top 3) ---------- */
+function buildPodiumCard(title, icon, items, unit="%", valueLabel=""){
+  if (!items.length) return `<div class="table-card" style="padding:14px 16px;opacity:.5;"><b style="font-size:13px;">${title}</b><div style="font-size:12px;color:var(--text-3);margin-top:8px;">لا يوجد بيانات</div></div>`;
+  const medals = ["🥇","🥈","🥉"];
+  const colors = ["#FFD700","#C0C0C0","#CD7F32"];
+  const bgs = ["#FFFBEB","#F8F8F8","#FDF6EE"];
+  return `
+    <div class="table-card" style="padding:14px 16px;">
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:12px;">
+        <i data-lucide="${icon}" style="width:16px;height:16px;color:var(--primary);"></i>
+        <b style="font-size:13.5px;">${title}</b>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        ${items.slice(0,3).map((it,i)=>{
+          const name = it.full_name||it.name;
+          const sub = it.detail||it.group_name||"";
+          return `
+          <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--radius-md);background:${bgs[i]};border:1px solid ${colors[i]}22;">
+            <span style="font-size:20px;flex-shrink:0;">${medals[i]}</span>
+            <div style="flex:1;min-width:0;">
+              <div style="font-weight:800;font-size:13px;">${name}</div>
+              ${sub ? `<div style="font-size:11px;color:var(--text-3);">${sub}</div>` : ""}
+            </div>
+            <div style="font-weight:800;font-size:15px;color:${colors[i]};flex-shrink:0;">${it.value!=null?it.value+unit:"—"}</div>
+          </div>`;
+        }).join("")}
+      </div>
+    </div>`;
+}
+
+function renderStudentRankings(){
+  const s = RANKING_DATA.students;
+  const topEl = document.getElementById("rnk_students_top3");
+  const tablesEl = document.getElementById("rnk_students_tables");
+
+  topEl.innerHTML = `
+    ${buildPodiumCard("🏆 أفضل أداء في الامتحانات","file-check-2", s.by_exams,"%")}
+    ${buildPodiumCard("🌟 أكثر تحسناً","trending-up", s.by_improvement,"%")}
+    ${buildPodiumCard("💎 الأكثر التزامًا","award", s.by_commitment,"%")}
+  `;
+
+  tablesEl.innerHTML = `
+    ${buildRankCard("أفضل حضور","calendar-check","var(--success)", s.by_attendance,"%","detail")}
+    ${buildRankCard("أعلى التزام بالواجبات","clipboard-list","var(--info)", s.by_homework,"%","detail")}
+    ${buildRankCard("أفضل درجات في الامتحانات","percent","var(--primary)", s.by_exams,"%","group_name")}
+    ${buildRankCard("الأكثر تحسناً (مقارنة أول وآخر الكويزات)","trending-up","var(--warning)", s.by_improvement,"%","detail","يحتاج ≥ 2 كويز")}
+  `;
+  icons();
+}
+
+function renderGroupRankings(){
+  const g = RANKING_DATA.groups;
+  const topEl = document.getElementById("rnk_groups_top");
+  const stabEl = document.getElementById("rnk_groups_stability");
+
+  topEl.innerHTML = `
+    ${buildPodiumCard("📈 أكثر المجموعات تحسناً","trending-up", g.by_improvement,"%")}
+    ${buildPodiumCard("🎯 أقل غياب (أعلى حضور)","calendar-check", g.by_attendance,"%")}
+  `;
+
+  // Stability table is special — lower std = better, needs custom display
+  const stabRows = g.by_stability.map((it,idx)=>`
+    <tr>
+      <td style="font-weight:700;color:var(--text-3);">${idx+1}</td>
+      <td class="td-name">${it.name}</td>
+      <td>${it.governorate_name}</td>
+      <td style="font-weight:700;color:var(--primary);">${it.value}%</td>
+      <td>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div class="kpi-progress" style="width:70px;margin-top:0;">
+            <div style="width:${Math.max(5, 100-it.stability_std*2)}%;background:${it.stability_std<10?'var(--success)':it.stability_std<20?'var(--warning)':'var(--danger)'};"></div>
+          </div>
+          <span style="font-size:12px;color:${it.stability_std<10?'var(--success)':it.stability_std<20?'var(--text-2)':'var(--danger)'}">±${it.stability_std}%</span>
+        </div>
+      </td>
+      <td style="font-size:12px;color:var(--text-3);">${it.quizzes||0} كويز</td>
+    </tr>`).join("");
+
+  const passRows = g.by_pass_rate.map((it,idx)=>`
+    <tr>
+      <td style="font-weight:700;color:var(--text-3);">${idx+1}</td>
+      <td class="td-name">${it.name}</td>
+      <td>${it.governorate_name}</td>
+      <td>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div class="kpi-progress" style="width:70px;margin-top:0;"><div style="width:${it.value}%;background:${it.value>=80?'var(--success)':it.value>=60?'var(--warning)':'var(--danger)'};"></div></div>
+          <span style="font-weight:700;">${it.value}%</span>
+        </div>
+      </td>
+    </tr>`).join("");
+
+  stabEl.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px;">
+      <div class="table-card">
+        <div class="toolbar" style="justify-content:space-between;">
+          <b style="font-size:13.5px;">الاستقرار (أقل تذبذب)</b>
+          <span style="font-size:11px;color:var(--text-3);">الأنبار المعياري ↓ = استقرار أعلى</span>
+        </div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>#</th><th>المجموعة</th><th>المحافظة</th><th>متوسط الدرجات</th><th>مستوى الاستقرار</th><th>عدد الكويزات</th></tr></thead>
+          <tbody>${stabRows||`<tr><td colspan="6" style="text-align:center;color:var(--text-3);">لا يوجد بيانات كافية (محتاج ≥ 2 كويز)</td></tr>`}</tbody>
+        </table></div>
+      </div>
+      <div class="table-card">
+        <div class="toolbar"><b style="font-size:13.5px;">نسبة النجاح (فوق ${RANKING_DATA.pass_threshold}%)</b></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>#</th><th>المجموعة</th><th>المحافظة</th><th>نسبة الناجحين</th></tr></thead>
+          <tbody>${passRows||`<tr><td colspan="4" style="text-align:center;color:var(--text-3);">لا يوجد بيانات</td></tr>`}</tbody>
         </table></div>
       </div>
     </div>
