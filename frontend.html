@@ -3480,7 +3480,7 @@ async function renderStudentDashboardPage(){
       </div>
     </div>` : ""}
 
-    <div class="student-sup-card" onclick="${groupInfo?.supervisor_name && supWaNum ? `window.open('https://wa.me/${supWaNum}','_blank')` : "showToast('لسه مفيش تفاصيل تانية عن المشرف','info')"}">
+    <div class="student-sup-card" onclick="${groupInfo?.supervisor_name && supWaNum ? `window.open('https://wa.me/${supWaNum}','_blank')` : (groupInfo?.supervisor_name ? "showToast('رقم واتساب مشرفك مش متاح دلوقتي','info')" : "showToast('لسه مفيش مشرف معيّن لهذه المجموعة','info')")}">
       <div class="student-sup-left">
         <div class="student-sup-ic"><i data-lucide="user" style="width:20px;height:20px;"></i></div>
         <div>
@@ -3488,7 +3488,7 @@ async function renderStudentDashboardPage(){
           <div class="student-sup-desc">${groupInfo?.supervisor_name ? `${groupInfo.supervisor_name} — مشرف المجموعة` : "لسه مفيش مشرف معيّن لهذه المجموعة"}</div>
         </div>
       </div>
-      <div class="student-sup-link">عرض التفاصيل <i data-lucide="chevron-left" style="width:14px;height:14px;"></i></div>
+      <div class="student-sup-link">تواصل مع مشرفك <i data-lucide="message-circle" style="width:14px;height:14px;color:#25D366;"></i></div>
     </div>
 
     <div class="student-stats-row">
