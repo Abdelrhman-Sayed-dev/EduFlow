@@ -3,7 +3,7 @@ database.py
 ملف قاعدة البيانات - مسؤول عن إنشاء الجداول والاتصال بـ SQLite
 
 الهيكل الهرمي:
-    المرحلة (إعدادي / ثانوي)
+    المرحلة (الصف الأول الثانوي / الصف الثاني الثانوي / الصف الثالث الثانوي)
         -> المحافظة
             -> المجموعة (تابعة لمرحلة ومحافظة معينة، وليها مشرف واحد مسؤول عنها)
                 -> الطالب (تابع لمجموعة معينة)
@@ -24,8 +24,8 @@ from contextlib import contextmanager
 
 DB_NAME = "teacher_system.db"
 
-# المراحل الدراسية الثابتة في النظام
-STAGES = ["إعدادي", "ثانوي"]
+# المراحل الدراسية الثابتة في النظام (المرحلة الثانوية فقط بصفوفها الثلاثة)
+STAGES = ["الصف الأول الثانوي", "الصف الثاني الثانوي", "الصف الثالث الثانوي"]
 
 # محافظات مصر الـ27 - ثابتة في النظام (متعرضة كدروب داون بحث، من غير إدارة يدوية)
 GOVERNORATES = [
@@ -107,6 +107,34 @@ def _safe_alter(cur, sql):
         cur.execute(sql)
     except Exception:
         pass
+
+
+def _migrate_stages(cur):
+    """
+    ترحيل بيانات المراحل القديمة بعد إلغاء مرحلة الإعدادي من النظام:
+    - مرحلة "إعدادي" (لو كانت موجودة من نسخة قديمة) بتتحذف بالكامل، وبالتبعية (CASCADE)
+      بتتحذف كل المجموعات والطلاب وكل بياناتهم المرتبطة (درجات/حضور/واجبات/مدفوعات...).
+    - مرحلة "ثانوي" العامة القديمة (لو كانت موجودة) بتتحول اسمها لـ "الصف الأول الثانوي"
+      بدل ما تتحذف، عشان نحافظ على المجموعات والطلاب الموجودين فيها فعليًا.
+    """
+    old_prep = cur.execute("SELECT id FROM stages WHERE name=?", ("إعدادي",)).fetchone()
+    if old_prep:
+        cur.execute("DELETE FROM stages WHERE id=?", (old_prep["id"],))
+
+    old_sec = cur.execute("SELECT id FROM stages WHERE name=?", ("ثانوي",)).fetchone()
+    if old_sec:
+        # لو "الصف الأول الثانوي" مش موجودة أصلاً، حوّل الاسم القديم لها بدل ما تتمسح بياناته
+        already_exists = cur.execute(
+            "SELECT id FROM stages WHERE name=?", ("الصف الأول الثانوي",)
+        ).fetchone()
+        if not already_exists:
+            cur.execute(
+                "UPDATE stages SET name=? WHERE id=?",
+                ("الصف الأول الثانوي", old_sec["id"]),
+            )
+        else:
+            # الاسم الجديد موجود بالفعل -> امسح الصف العام القديم مع بياناته
+            cur.execute("DELETE FROM stages WHERE id=?", (old_sec["id"],))
 
 
 def cleanup_expired_sessions(conn):
@@ -354,6 +382,9 @@ def init_db():
             FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL
         )
         """)
+
+        # ترحيل المراحل القديمة (حذف الإعدادي بالكامل + تحويل الثانوي العامة لأول صف)
+        _migrate_stages(cur)
 
         # تعبئة المراحل الثابتة لو الجدول فاضي
         for stage_name in STAGES:
