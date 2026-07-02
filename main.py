@@ -2029,6 +2029,279 @@ def get_group_detail(group_id: int, date_from: Optional[str] = None, date_to: Op
 
 
 # ---------------------------------------------------------------------------
+# Ranking متقدم — Advanced Multi-Dimension Rankings
+# ---------------------------------------------------------------------------
+
+import math
+
+def _safe_round(val, ndigits=1):
+    return round(val, ndigits) if val is not None else None
+
+def _stddev(values):
+    """حساب الانحراف المعياري (مقياس الاستقرار)"""
+    n = len(values)
+    if n < 2: return 0
+    mean = sum(values) / n
+    variance = sum((v - mean) ** 2 for v in values) / n
+    return math.sqrt(variance)
+
+
+@app.get("/api/stats/rankings")
+def get_rankings(stage_id: int, governorate_id: Optional[int] = None,
+                 date_from: Optional[str] = None, date_to: Optional[str] = None,
+                 pass_threshold: int = 50,
+                 session=Depends(require_roles("admin", "teacher"))):
+    """
+    Ranking متقدم لكل الأبعاد — الطلاب والمجموعات داخل نفس السنة الدراسية فقط.
+    يرجع ترتيبات منفصلة لكل بُعد.
+    """
+    gov_sql = " AND g.governorate_id=?" if governorate_id else ""
+
+    def bp():
+        p = [stage_id]
+        if governorate_id: p.append(governorate_id)
+        return p
+
+    with get_connection() as conn:
+        # ======= جمع كل درجات الطلاب مرتبة بالتاريخ (لحساب التحسن) =======
+        sc_params = bp()
+        sc_clause = _date_clause("q.quiz_date", date_from, date_to, sc_params)
+        raw_scores = conn.execute(f"""
+            SELECT s.id as sid, s.full_name, g.name as group_name, gov.name as governorate_name,
+                   q.quiz_date, qs.score * 100.0 / q.max_score as pct
+            FROM quiz_scores qs
+            JOIN quizzes q ON q.id=qs.quiz_id AND q.max_score>0
+            JOIN students s ON s.id=qs.student_id AND s.is_active=1
+            JOIN groups g ON g.id=s.group_id
+            JOIN governorates gov ON gov.id=g.governorate_id
+            WHERE g.stage_id=?{gov_sql}{sc_clause}
+            ORDER BY q.quiz_date ASC, q.id ASC
+        """, sc_params).fetchall()
+
+        # Group by student
+        from collections import defaultdict
+        student_scores = defaultdict(list)
+        student_meta = {}
+        for r in raw_scores:
+            student_scores[r["sid"]].append(r["pct"])
+            if r["sid"] not in student_meta:
+                student_meta[r["sid"]] = {"id": r["sid"], "full_name": r["full_name"],
+                                           "group_name": r["group_name"], "governorate_name": r["governorate_name"]}
+
+        # ======= حضور الطلاب =======
+        att_params = bp()
+        att_clause = _date_clause("a.session_date", date_from, date_to, att_params)
+        att_rows = conn.execute(f"""
+            SELECT s.id as sid, s.full_name, g.name as group_name, gov.name as governorate_name,
+                   SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END)*100.0/COUNT(*) as rate,
+                   COUNT(*) as total
+            FROM attendance a
+            JOIN students s ON s.id=a.student_id AND s.is_active=1
+            JOIN groups g ON g.id=s.group_id
+            JOIN governorates gov ON gov.id=g.governorate_id
+            WHERE g.stage_id=?{gov_sql}{att_clause}
+            GROUP BY s.id HAVING total >= 1
+        """, att_params).fetchall()
+
+        # ======= واجبات الطلاب =======
+        hw_params = bp()
+        hw_clause = _date_clause("h.session_date", date_from, date_to, hw_params)
+        hw_rows = conn.execute(f"""
+            SELECT s.id as sid, s.full_name, g.name as group_name, gov.name as governorate_name,
+                   SUM(CASE WHEN hs.done=1 THEN 1 ELSE 0 END)*100.0/COUNT(*) as rate,
+                   COUNT(*) as total
+            FROM homework_submissions hs
+            JOIN homework h ON h.id=hs.homework_id
+            JOIN students s ON s.id=hs.student_id AND s.is_active=1
+            JOIN groups g ON g.id=s.group_id
+            JOIN governorates gov ON gov.id=g.governorate_id
+            WHERE g.stage_id=?{gov_sql}{hw_clause}
+            GROUP BY s.id HAVING total >= 1
+        """, hw_params).fetchall()
+
+        # ======= حساب ترتيبات الطلاب =======
+        def make_student(sid, extra):
+            m = student_meta.get(sid, {})
+            return {**m, **extra}
+
+        # 1. أفضل امتحانات (متوسط الدرجات)
+        exam_rank = sorted(
+            [{"id": sid, "full_name": m["full_name"], "group_name": m["group_name"],
+              "governorate_name": m["governorate_name"],
+              "value": round(sum(scores)/len(scores), 1), "quizzes": len(scores), "detail": f"{len(scores)} كويز"}
+             for sid, scores in student_scores.items() for m in [student_meta[sid]]],
+            key=lambda x: x["value"], reverse=True
+        )[:15]
+
+        # 2. أفضل حضور
+        att_rank = sorted(
+            [{"id": r["sid"], "full_name": r["full_name"], "group_name": r["group_name"],
+              "governorate_name": r["governorate_name"],
+              "value": round(r["rate"], 1), "detail": f"{r['total']} جلسة"}
+             for r in att_rows],
+            key=lambda x: x["value"], reverse=True
+        )[:15]
+
+        # 3. أفضل التزام بالواجبات
+        hw_rank = sorted(
+            [{"id": r["sid"], "full_name": r["full_name"], "group_name": r["group_name"],
+              "governorate_name": r["governorate_name"],
+              "value": round(r["rate"], 1), "detail": f"{r['total']} واجب"}
+             for r in hw_rows],
+            key=lambda x: x["value"], reverse=True
+        )[:15]
+
+        # 4. أكثر تحسناً (فرق متوسط النصف الثاني - النصف الأول، لازم ≥ 2 كويز)
+        improvement_list = []
+        for sid, scores in student_scores.items():
+            if len(scores) < 2: continue
+            half = len(scores) // 2
+            first_avg = sum(scores[:half]) / half
+            second_avg = sum(scores[half:]) / (len(scores) - half)
+            delta = second_avg - first_avg
+            m = student_meta[sid]
+            improvement_list.append({
+                "id": sid, "full_name": m["full_name"], "group_name": m["group_name"],
+                "governorate_name": m["governorate_name"],
+                "value": round(delta, 1), "detail": f"من {round(first_avg,1)}% ← {round(second_avg,1)}%",
+                "quizzes": len(scores)
+            })
+        improvement_rank = sorted(improvement_list, key=lambda x: x["value"], reverse=True)[:15]
+
+        # 5. مؤشر الالتزام المركب (متوسط حضور + واجبات)
+        att_by_sid = {r["sid"]: r["rate"] for r in att_rows}
+        hw_by_sid = {r["sid"]: r["rate"] for r in hw_rows}
+        commitment_list = []
+        all_sids = set(att_by_sid) | set(hw_by_sid)
+        for sid in all_sids:
+            parts = [v for v in [att_by_sid.get(sid), hw_by_sid.get(sid)] if v is not None]
+            if not parts: continue
+            score = sum(parts) / len(parts)
+            m = student_meta.get(sid)
+            if not m: continue
+            commitment_list.append({
+                "id": sid, "full_name": m["full_name"], "group_name": m["group_name"],
+                "governorate_name": m["governorate_name"],
+                "value": round(score, 1),
+                "detail": f"حضور {round(att_by_sid.get(sid,0),0):.0f}% · واجبات {round(hw_by_sid.get(sid,0),0):.0f}%"
+            })
+        commitment_rank = sorted(commitment_list, key=lambda x: x["value"], reverse=True)[:15]
+
+        # ======= ترتيبات المجموعات =======
+        # جمع درجات المجموعات مرتبة بالوقت (لحساب التحسن والاستقرار)
+        grp_sc_params = bp()
+        grp_sc_clause = _date_clause("q.quiz_date", date_from, date_to, grp_sc_params)
+        grp_raw = conn.execute(f"""
+            SELECT g.id as gid, g.name as gname, gov.name as govname, q.quiz_date,
+                   AVG(qs.score*100.0/q.max_score) as avg_pct
+            FROM quiz_scores qs
+            JOIN quizzes q ON q.id=qs.quiz_id AND q.max_score>0
+            JOIN students s ON s.id=qs.student_id AND s.is_active=1
+            JOIN groups g ON g.id=s.group_id
+            JOIN governorates gov ON gov.id=g.governorate_id
+            WHERE g.stage_id=?{gov_sql}{grp_sc_clause}
+            GROUP BY g.id, q.id
+            ORDER BY q.quiz_date ASC, q.id ASC
+        """, grp_sc_params).fetchall()
+
+        grp_scores = defaultdict(list)
+        grp_meta = {}
+        for r in grp_raw:
+            grp_scores[r["gid"]].append(r["avg_pct"])
+            if r["gid"] not in grp_meta:
+                grp_meta[r["gid"]] = {"id": r["gid"], "name": r["gname"], "governorate_name": r["govname"]}
+
+        # جمع بيانات الحضور للمجموعات
+        grp_att_params = bp()
+        grp_att_clause = _date_clause("a.session_date", date_from, date_to, grp_att_params)
+        grp_att_rows = conn.execute(f"""
+            SELECT g.id as gid, g.name as gname, gov.name as govname,
+                   SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END)*100.0/COUNT(*) as rate,
+                   COUNT(*) as total
+            FROM attendance a
+            JOIN students s ON s.id=a.student_id AND s.is_active=1
+            JOIN groups g ON g.id=s.group_id
+            JOIN governorates gov ON gov.id=g.governorate_id
+            WHERE g.stage_id=?{gov_sql}{grp_att_clause}
+            GROUP BY g.id HAVING total >= 1
+        """, grp_att_params).fetchall()
+
+        # نسبة النجاح للمجموعات (≥ threshold)
+        grp_pass_params = bp()
+        grp_pass_clause = _date_clause("q.quiz_date", date_from, date_to, grp_pass_params)
+        grp_pass_rows = conn.execute(f"""
+            SELECT g.id as gid,
+                   SUM(CASE WHEN qs.score*100.0/q.max_score >= ? THEN 1 ELSE 0 END)*100.0/COUNT(*) as pass_rate,
+                   COUNT(*) as total
+            FROM quiz_scores qs
+            JOIN quizzes q ON q.id=qs.quiz_id AND q.max_score>0
+            JOIN students s ON s.id=qs.student_id AND s.is_active=1
+            JOIN groups g ON g.id=s.group_id
+            WHERE g.stage_id=?{gov_sql}{grp_pass_clause}
+            GROUP BY g.id HAVING total >= 1
+        """, [pass_threshold] + grp_pass_params).fetchall()
+        pass_by_gid = {r["gid"]: round(r["pass_rate"], 1) for r in grp_pass_rows}
+
+        # ترتيب المجموعات — التحسن
+        grp_improvement = []
+        for gid, scores in grp_scores.items():
+            if len(scores) < 2: continue
+            half = len(scores) // 2
+            first_avg = sum(scores[:half]) / half
+            second_avg = sum(scores[half:]) / (len(scores) - half)
+            delta = second_avg - first_avg
+            m = grp_meta[gid]
+            grp_improvement.append({**m, "value": round(delta, 1),
+                "detail": f"من {round(first_avg,1)}% ← {round(second_avg,1)}%", "quizzes": len(scores)})
+        grp_improvement_rank = sorted(grp_improvement, key=lambda x: x["value"], reverse=True)[:15]
+
+        # ترتيب المجموعات — الاستقرار (أقل انحراف معياري = أكثر استقرارًا)
+        grp_stability = []
+        for gid, scores in grp_scores.items():
+            if len(scores) < 2: continue
+            std = _stddev(scores)
+            avg = sum(scores) / len(scores)
+            m = grp_meta[gid]
+            grp_stability.append({**m, "value": round(avg, 1), "stability_std": round(std, 1),
+                "detail": f"انحراف ±{round(std,1)} عن {round(avg,1)}%", "quizzes": len(scores)})
+        grp_stability_rank = sorted(grp_stability, key=lambda x: x["stability_std"])[:15]
+
+        # ترتيب المجموعات — نسبة النجاح
+        grp_pass_rank = []
+        for r in grp_att_rows:  # استخدم نفس المجموعات اللي عندها بيانات
+            gid = r["gid"]
+            m = grp_meta.get(gid, {"id": gid, "name": r["gname"], "governorate_name": r["govname"]})
+            if gid in pass_by_gid:
+                grp_pass_rank.append({**m, "value": pass_by_gid[gid],
+                    "detail": f"نسبة الطلاب فوق {pass_threshold}%"})
+        grp_pass_rank = sorted(grp_pass_rank, key=lambda x: x["value"], reverse=True)[:15]
+
+        # ترتيب المجموعات — أقل غياب (= أعلى حضور)
+        grp_att_rank = sorted([{
+            **grp_meta.get(r["gid"], {"id": r["gid"], "name": r["gname"], "governorate_name": r["govname"]}),
+            "value": round(r["rate"], 1), "detail": f"{r['total']} سجل حضور"
+        } for r in grp_att_rows], key=lambda x: x["value"], reverse=True)[:15]
+
+        return {
+            "stage_id": stage_id,
+            "pass_threshold": pass_threshold,
+            "students": {
+                "by_exams": exam_rank,
+                "by_attendance": att_rank,
+                "by_homework": hw_rank,
+                "by_improvement": improvement_rank,
+                "by_commitment": commitment_rank,
+            },
+            "groups": {
+                "by_improvement": grp_improvement_rank,
+                "by_stability": grp_stability_rank,
+                "by_pass_rate": grp_pass_rank,
+                "by_attendance": grp_att_rank,
+            }
+        }
+
+
+# ---------------------------------------------------------------------------
 # تشغيل السيرفر مباشرة
 # ---------------------------------------------------------------------------
 
