@@ -345,6 +345,67 @@ tbody tr:hover{background:var(--primary-10);}
   .header-actions{gap:6px;}
   .btn-block{width:100%;justify-content:center;}
 }
+/* ============ STUDENT MOBILE SHELL ============ */
+body.is-student .sidebar,
+body.is-student .sidebar-backdrop{display:none !important;}
+body.is-student .main{width:100%;}
+body.is-student .topbar{padding:0 16px;}
+.topbar .student-only{display:none;align-items:center;}
+body.is-student .topbar .default-only{display:none;}
+body.is-student .topbar .student-only{display:flex;}
+.student-topbar-brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px;color:var(--text);}
+.student-topbar-brand .brand-mark{width:26px;height:26px;border-radius:8px;overflow:hidden;flex-shrink:0;background:var(--primary-10);display:flex;align-items:center;justify-content:center;}
+.student-topbar-brand .brand-mark img{width:100%;height:100%;object-fit:contain;}
+.student-topbar-actions{display:flex;align-items:center;gap:8px;margin-right:auto;}
+.student-icon-btn{position:relative;width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--surface-3);color:var(--text-2);cursor:pointer;border:none;flex-shrink:0;}
+.student-icon-btn .dot{position:absolute;top:5px;left:6px;width:7px;height:7px;border-radius:50%;background:var(--warning);border:1.5px solid var(--surface);}
+.student-avatar-btn{width:34px;height:34px;border-radius:50%;background:var(--primary-80);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;cursor:pointer;border:none;flex-shrink:0;}
+
+body.is-student .page{padding:16px 16px 100px;}
+
+.bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--border);padding:8px 4px calc(6px + env(safe-area-inset-bottom));z-index:40;box-shadow:0 -4px 18px rgba(46,45,41,.07);}
+body.is-student .bottom-nav{display:flex;}
+.bottom-nav-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;background:none;border:none;cursor:pointer;color:var(--text-3);padding:4px 2px;font-family:'Cairo',sans-serif;transition:color .12s var(--ease);}
+.bottom-nav-item span{font-size:10px;font-weight:600;}
+.bottom-nav-item.active{color:var(--warning);}
+.bottom-nav-item .bn-ic-wrap{width:22px;height:22px;display:flex;align-items:center;justify-content:center;}
+
+/* هيدر الترحيب */
+.student-hero{position:relative;border-radius:var(--radius-xl);overflow:hidden;margin-bottom:14px;padding:18px;background:linear-gradient(120deg,var(--primary-10),var(--surface-2));display:flex;align-items:center;justify-content:space-between;gap:14px;}
+.student-hero h1{font-size:18px;margin-bottom:2px;line-height:1.3;}
+.student-hero p{font-size:12.5px;color:var(--text-2);}
+.student-hero-ic{width:54px;height:54px;border-radius:16px;background:var(--surface);display:flex;align-items:center;justify-content:center;color:var(--primary);flex-shrink:0;box-shadow:var(--shadow-sm);}
+
+/* كارت المجموعة الغامق */
+.student-group-card{background:linear-gradient(135deg,#1F2A44,#2C3B5E 65%,#233150);border-radius:var(--radius-xl);padding:20px;color:#fff;margin-bottom:14px;position:relative;overflow:hidden;display:flex;align-items:center;gap:14px;}
+.student-group-card::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 10% 130%, rgba(255,255,255,.10), transparent 55%);}
+.student-group-icon{width:50px;height:50px;border-radius:50%;background:rgba(255,255,255,.10);display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0;position:relative;}
+.student-group-body{position:relative;flex:1;min-width:0;}
+.student-group-label{font-size:11.5px;color:rgba(255,255,255,.62);margin-bottom:3px;}
+.student-group-name{font-size:18px;font-weight:700;margin-bottom:9px;line-height:1.3;}
+.student-group-badges{display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;}
+.student-group-badge{background:rgba(255,255,255,.13);color:#fff;font-size:11px;font-weight:600;padding:4px 11px;border-radius:99px;}
+.student-group-meta{font-size:12px;color:rgba(255,255,255,.6);}
+
+/* كارت المشرف */
+.student-sup-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-xl);padding:14px 16px;display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;box-shadow:var(--shadow-sm);cursor:pointer;}
+.student-sup-left{display:flex;align-items:center;gap:12px;min-width:0;}
+.student-sup-ic{width:42px;height:42px;border-radius:50%;background:var(--surface-3);color:var(--text-2);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.student-sup-title{font-weight:700;font-size:14px;margin-bottom:2px;}
+.student-sup-desc{font-size:12px;color:var(--text-3);}
+.student-sup-link{font-size:12px;color:var(--primary);font-weight:600;display:flex;align-items:center;gap:3px;white-space:nowrap;}
+
+/* صف الإحصائيات الثلاثة */
+.student-stats-row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px;}
+.student-stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 8px;text-align:center;box-shadow:var(--shadow-sm);}
+.student-stat-icon{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 8px;}
+.student-stat-value{font-size:18px;font-weight:700;margin-bottom:2px;color:var(--text);}
+.student-stat-label{font-size:10.5px;color:var(--text-2);font-weight:500;}
+
+/* قائمة المزيد */
+.student-more-item{display:flex;align-items:center;gap:12px;padding:12px 6px;border-bottom:1px solid var(--border);cursor:pointer;}
+.student-more-item:last-child{border-bottom:none;}
+.student-more-ic{width:38px;height:38px;border-radius:var(--radius-sm);background:var(--primary-10);color:var(--primary);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
 </style>
 </head>
 <body>
@@ -416,16 +477,34 @@ tbody tr:hover{background:var(--primary-10);}
 
   <div class="main">
     <div class="topbar">
-      <div class="topbar-left">
+      <div class="topbar-left default-only">
         <button class="action-btn" id="menuToggle" onclick="document.getElementById('sidebar').classList.toggle('open');document.getElementById('sidebarBackdrop').classList.toggle('open');"><i data-lucide="menu"></i></button>
         <div class="breadcrumb"><b id="pageTitleBreadcrumb">لوحة التحكم</b></div>
       </div>
-      <div class="topbar-right">
+      <div class="topbar-right default-only">
         <span class="topbar-date" id="topbarDate"></span>
+      </div>
+
+      <div class="topbar-left student-only">
+        <button class="action-btn" onclick="navigateTo('student_more')"><i data-lucide="menu"></i></button>
+      </div>
+      <div class="student-only" style="flex:1;justify-content:center;">
+        <div class="student-topbar-brand">
+          <div class="brand-mark"><i data-lucide="package" style="width:16px;height:16px;color:var(--primary);"></i></div>
+          <span>EduFlow</span>
+        </div>
+      </div>
+      <div class="topbar-right student-only">
+        <div class="student-topbar-actions">
+          <button class="student-icon-btn" onclick="showToast('لا يوجد إشعارات جديدة حالياً','info')"><i data-lucide="bell" style="width:16px;height:16px;"></i><span class="dot"></span></button>
+          <button class="student-avatar-btn" onclick="openAccountModal()" id="studentTopbarAvatar">؟</button>
+        </div>
       </div>
     </div>
     <div class="page" id="pageContainer"></div>
   </div>
+
+  <nav class="bottom-nav" id="bottomNav"></nav>
 </div>
 
 <!-- ══════════ المودالات المشتركة ══════════ -->
@@ -589,6 +668,7 @@ function onLoginSuccess(data){
 function doLogout(silent){
   TOKEN = null; SESSION = null;
   localStorage.removeItem("token"); localStorage.removeItem("session");
+  document.body.classList.remove("is-student");
   document.getElementById("app").classList.add("hidden");
   document.getElementById("loginScreen").classList.remove("hidden");
   const u = document.getElementById("loginUsername"); if (u) u.value = "";
@@ -697,6 +777,27 @@ const NAV_BY_ROLE = {
 
 const ROLE_LABELS = {admin:"الأدمن العام", teacher:"المدرس", supervisor:"مشرف مجموعة", student:"طالب"};
 
+// عناصر الناف بار السفلي الخاص بواجهة الطالب (موبايل)
+const STUDENT_BOTTOM_NAV = [
+  {id:"mydashboard", label:"الرئيسية", icon:"home"},
+  {id:"myhomework", label:"دوراتي", icon:"book-open"},
+  {id:"myattendance", label:"حضوري", icon:"calendar-check"},
+  {id:"myboard", label:"سبورة المجموعة", icon:"presentation"},
+  {id:"student_more", label:"المزيد", icon:"layout-grid"},
+];
+
+function buildBottomNav(){
+  const el = document.getElementById("bottomNav");
+  if (!el) return;
+  el.innerHTML = STUDENT_BOTTOM_NAV.map(n=>`
+    <button class="bottom-nav-item" data-page="${n.id}" onclick="navigateTo('${n.id}')">
+      <span class="bn-ic-wrap"><i data-lucide="${n.icon}" style="width:20px;height:20px;"></i></span>
+      <span>${n.label}</span>
+    </button>
+  `).join("");
+  icons();
+}
+
 function buildNav(){
   const nav = NAV_BY_ROLE[SESSION.role] || [];
   const container = document.getElementById("navContainer");
@@ -720,6 +821,7 @@ function closeSidebarMobile(){
 function navigateTo(page){
   CURRENT_PAGE = page;
   document.querySelectorAll(".nav-item").forEach(b=>b.classList.toggle("active", b.dataset.page===page));
+  document.querySelectorAll(".bottom-nav-item").forEach(b=>b.classList.toggle("active", b.dataset.page===page));
   renderPage(page);
   closeSidebarMobile();
 }
@@ -730,10 +832,14 @@ function navigateTo(page){
 async function boot(){
   document.getElementById("loginScreen").classList.add("hidden");
   document.getElementById("app").classList.remove("hidden");
+  document.body.classList.toggle("is-student", SESSION.role === "student");
   document.getElementById("topbarDate").textContent = new Date().toLocaleDateString("ar-EG", {weekday:"long", year:"numeric", month:"long", day:"numeric"});
   buildNav();
+  const avatarEl = document.getElementById("studentTopbarAvatar");
+  if (avatarEl) avatarEl.textContent = (SESSION.full_name || "؟").trim()[0] || "؟";
+  if (SESSION.role === "student") buildBottomNav();
   icons();
-  const first = (NAV_BY_ROLE[SESSION.role] || [{id:"dashboard"}])[0].id;
+  const first = SESSION.role === "student" ? "mydashboard" : (NAV_BY_ROLE[SESSION.role] || [{id:"dashboard"}])[0].id;
   navigateTo(first);
 }
 
@@ -752,7 +858,7 @@ const PAGE_TITLES = {
   supervisors:"المشرفين", teachers:"المدرسين", schedule:"جدول المواعيد",
   quizzes:"الكويزات", attendance:"الحضور والغياب", boards:"سبورة الحصص",
   mygroup:"مجموعتي", mydashboard:"لوحتي", myscores:"درجاتي", myhomework:"واجباتي",
-  myattendance:"حضوري", myboard:"سبورة مجموعتي",
+  myattendance:"حضوري", myboard:"سبورة مجموعتي", student_more:"المزيد",
   student_search:"بحث عن طالب",
   teacher_analytics:"التحليلات", teacher_compare:"مقارنة المجموعات",
   teacher_ranking:"الترتيب المتقدم", teacher_reports:"التقارير", teacher_schedule:"جدولي",
@@ -780,6 +886,7 @@ async function renderPage(page){
       myattendance: renderMyAttendancePage,
       myhomework: renderMyHomeworkPage,
       myboard: renderMyBoardPage,
+      student_more: renderStudentMorePage,
       student_search: renderStudentSearchPage,
       teacher_analytics: renderTeacherAnalyticsPage,
       teacher_compare: renderTeacherComparePage,
@@ -3341,72 +3448,110 @@ async function renderStudentDashboardPage(){
   const present = attendance.filter(a=>a.status==='present').length;
   const avg = scores.length ? (scores.reduce((s,x)=>s+(x.score||0)/x.max_score*100,0)/scores.length).toFixed(0) : "—";
 
-  // بناء كارت المجموعة والمشرف
   const supPhone = groupInfo?.supervisor_phone;
   const supWaNum = supPhone ? normalizePhoneForWa(supPhone) : null;
   const scheduleRows = (groupInfo?.schedule || []);
-  const DAYS_AR = {السبت:"السبت", الأحد:"الأحد", الإثنين:"الإثنين", الثلاثاء:"الثلاثاء", الأربعاء:"الأربعاء", الخميس:"الخميس", الجمعة:"الجمعة"};
+  const firstName = (SESSION.full_name || "طالب").trim().split(/\s+/)[0];
 
   const c = document.getElementById("pageContainer");
   c.innerHTML = `
-    <div class="page-header">
-      <div><h1>أهلاً، ${SESSION.full_name} 👋</h1><p>${groupInfo ? groupInfo.name : '—'}</p></div>
+    <div class="student-hero">
+      <div>
+        <h1>👋 أهلاً ${firstName}</h1>
+        <p>الخلاصة السريعة</p>
+      </div>
+      <div class="student-hero-ic"><i data-lucide="graduation-cap" style="width:26px;height:26px;"></i></div>
     </div>
 
     ${groupInfo ? `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px;">
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;box-shadow:var(--shadow-sm);">
-        <div style="font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">مجموعتي</div>
-        <div style="font-weight:700;font-size:15px;margin-bottom:4px;">${groupInfo.name}</div>
-        <div style="margin-bottom:8px;">
-          <span class="badge badge-teal">${groupInfo.stage_name}</span>
-          <span class="badge badge-gray" style="margin-right:4px;">${groupInfo.governorate_name}</span>
+    <div class="student-group-card">
+      <div class="student-group-icon"><i data-lucide="users" style="width:22px;height:22px;"></i></div>
+      <div class="student-group-body">
+        <div class="student-group-label">مجموعتي</div>
+        <div class="student-group-name">${groupInfo.name}</div>
+        <div class="student-group-badges">
+          <span class="student-group-badge">${groupInfo.stage_name}</span>
+          <span class="student-group-badge">${groupInfo.governorate_name}</span>
         </div>
-        ${scheduleRows.length ? `
-        <div style="font-size:11px;font-weight:700;color:var(--text-3);margin-bottom:6px;margin-top:10px;">مواعيد المجموعة</div>
-        ${scheduleRows.map(s=>`
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
-            <span style="background:var(--primary-10);color:var(--primary);font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;">${s.day_of_week}</span>
-            <span style="font-size:12px;color:var(--text-2);">${s.start_time}${s.end_time?' - '+s.end_time:''}</span>
-          </div>
-        `).join("")}` : '<div style="font-size:12px;color:var(--text-3);margin-top:8px;">لا يوجد مواعيد مضافة بعد</div>'}
-      </div>
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;box-shadow:var(--shadow-sm);">
-        <div style="font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">مشرفي الخاص</div>
-        ${groupInfo.supervisor_name ? `
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
-            <div style="width:38px;height:38px;border-radius:50%;background:var(--primary);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:15px;flex-shrink:0;">${groupInfo.supervisor_name[0]||'؟'}</div>
-            <div>
-              <div style="font-weight:700;font-size:14px;">${groupInfo.supervisor_name}</div>
-              <div style="font-size:12px;color:var(--text-3);">مشرف المجموعة</div>
-            </div>
-          </div>
-          ${supWaNum ? `
-          <a href="https://wa.me/${supWaNum}" target="_blank" class="btn btn-primary btn-sm btn-block" style="background:#25D366;justify-content:center;display:flex;gap:6px;">
-            <i data-lucide="message-circle" style="width:14px;height:14px;"></i> تواصل مع مشرفك عبر واتساب
-          </a>` : `<div style="font-size:12px;color:var(--text-3);">رقم المشرف مش متاح</div>`}
-        ` : `<div style="font-size:13px;color:var(--text-3);">مفيش مشرف معيّن للمجموعة دي بعد</div>`}
+        <div class="student-group-meta">
+          ${scheduleRows.length ? scheduleRows.map(s=>`${s.day_of_week} ${s.start_time}${s.end_time?' - '+s.end_time:''}`).join(" · ") : "لا يوجد مواعيد مضافة بعد"}
+        </div>
       </div>
     </div>` : ""}
 
-    <div class="stats-grid">
-      <div class="stat-card"><div class="stat-top"><div class="stat-icon teal"><i data-lucide="file-check-2" style="width:18px;height:18px;"></i></div></div>
-        <div class="stat-value">${scores.length}</div><div class="stat-label">عدد الكويزات</div></div>
-      <div class="stat-card"><div class="stat-top"><div class="stat-icon blue"><i data-lucide="percent" style="width:18px;height:18px;"></i></div></div>
-        <div class="stat-value">${avg}${avg!=='—'?'%':''}</div><div class="stat-label">متوسط الدرجات</div></div>
-      <div class="stat-card"><div class="stat-top"><div class="stat-icon green"><i data-lucide="calendar-check" style="width:18px;height:18px;"></i></div></div>
-        <div class="stat-value">${present}</div><div class="stat-label">أيام الحضور</div></div>
+    <div class="student-sup-card" onclick="${groupInfo?.supervisor_name && supWaNum ? `window.open('https://wa.me/${supWaNum}','_blank')` : "showToast('لسه مفيش تفاصيل تانية عن المشرف','info')"}">
+      <div class="student-sup-left">
+        <div class="student-sup-ic"><i data-lucide="user" style="width:20px;height:20px;"></i></div>
+        <div>
+          <div class="student-sup-title">مشرفي الخاص</div>
+          <div class="student-sup-desc">${groupInfo?.supervisor_name ? `${groupInfo.supervisor_name} — مشرف المجموعة` : "لسه مفيش مشرف معيّن لهذه المجموعة"}</div>
+        </div>
+      </div>
+      <div class="student-sup-link">عرض التفاصيل <i data-lucide="chevron-left" style="width:14px;height:14px;"></i></div>
     </div>
+
+    <div class="student-stats-row">
+      <div class="student-stat">
+        <div class="student-stat-icon" style="background:var(--warning-bg);color:var(--warning);"><i data-lucide="calendar-check" style="width:16px;height:16px;"></i></div>
+        <div class="student-stat-value">${present}</div><div class="student-stat-label">أيام الحضور</div>
+      </div>
+      <div class="student-stat">
+        <div class="student-stat-icon" style="background:var(--surface-3);color:var(--text-2);"><i data-lucide="percent" style="width:16px;height:16px;"></i></div>
+        <div class="student-stat-value">${avg}${avg!=='—'?'%':''}</div><div class="student-stat-label">متوسط الدرجات</div>
+      </div>
+      <div class="student-stat">
+        <div class="student-stat-icon" style="background:var(--success-bg);color:var(--success);"><i data-lucide="file-check-2" style="width:16px;height:16px;"></i></div>
+        <div class="student-stat-value">${scores.length}</div><div class="student-stat-label">عدد الكورسات</div>
+      </div>
+    </div>
+
     <div class="table-card">
-      <div class="toolbar"><b style="font-size:14px;">آخر الدرجات</b></div>
+      <div class="toolbar"><b style="font-size:14px;display:flex;align-items:center;gap:6px;"><i data-lucide="bar-chart-3" style="width:15px;height:15px;color:var(--primary);"></i> آخر الدرجات</b></div>
+      ${scores.length ? `
       <div class="table-wrap"><table>
-        <thead><tr><th>الكويز</th><th>التاريخ</th><th>الدرجة</th></tr></thead>
+        <thead><tr><th>الكورس</th><th>التاريخ</th><th>الدرجة</th></tr></thead>
         <tbody>
-          ${scores.slice(0,6).map(s=>`<tr><td class="td-name">${s.title}</td><td>${s.quiz_date||"—"}</td><td>${s.score??"—"} / ${s.max_score}</td></tr>`).join("") || `<tr><td colspan="3" style="text-align:center;color:var(--text-3);padding:20px;">لا يوجد درجات بعد</td></tr>`}
+          ${scores.slice(0,6).map(s=>`<tr><td class="td-name">${s.title}</td><td>${s.quiz_date||"—"}</td><td>${s.score??"—"} / ${s.max_score}</td></tr>`).join("")}
         </tbody>
-      </table></div>
+      </table></div>` : `
+      <div class="empty-state">
+        <div class="empty-icon"><i data-lucide="inbox" style="width:24px;height:24px;"></i></div>
+        <div class="empty-title">لا يوجد درجات بعد</div>
+      </div>`}
     </div>
   `;
+  icons();
+}
+
+async function renderStudentMorePage(){
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header"><div><h1>المزيد</h1><p>باقي صفحاتك وإعدادات حسابك</p></div></div>
+    <div class="table-card" style="padding:6px 12px;margin-bottom:14px;">
+      <div class="student-more-item" onclick="navigateTo('myscores')">
+        <div class="student-more-ic"><i data-lucide="file-check-2" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">درجاتي</div><div style="font-size:11.5px;color:var(--text-3);">كل درجات الكويزات اللي خدتها</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
+      <div class="student-more-item" onclick="navigateTo('myhomework')">
+        <div class="student-more-ic"><i data-lucide="clipboard-list" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">واجباتي</div><div style="font-size:11.5px;color:var(--text-3);">واجبات مجموعتك حصة بحصة</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
+    </div>
+    <div class="table-card" style="padding:6px 12px;">
+      <div class="student-more-item" onclick="openAccountModal()">
+        <div class="student-more-ic"><i data-lucide="settings" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">إعدادات الحساب</div><div style="font-size:11.5px;color:var(--text-3);">تغيير كلمة المرور وبيانات حسابك</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
+      <div class="student-more-item" onclick="logout()">
+        <div class="student-more-ic" style="background:var(--danger-bg);color:var(--danger);"><i data-lucide="log-out" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;color:var(--danger);">تسجيل الخروج</div></div>
+      </div>
+    </div>
+  `;
+  icons();
 }
 
 async function renderMyScoresPage(){
