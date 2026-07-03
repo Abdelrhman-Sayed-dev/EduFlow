@@ -1,3 +1,14 @@
+"""
+backend.py
+الباك اند الرئيسي للسيستم - مبني على FastAPI
+يوفر API كامل لإدارة:
+  المراحل - المحافظات - المجموعات - الطلاب - الكويزات - الدرجات - الحضور
+  + نظام تسجيل دخول بـ 3 أدوار (أدمن - مدرس - مشرف) + دخول الطالب بكود خاص
+  + المشرفين (تعيين كل مشرف على مجموعة/مجموعات معينة بس)
+  + جدول مواعيد المدرس
+  + سبورة الحصة (صور شرح كل حصة، خاصة بكل مجموعة)
+"""
+
 import os
 import base64
 import uuid
@@ -1522,14 +1533,26 @@ def delete_homework(hw_id: int, session=Depends(require_roles("admin", "teacher"
 
 
 @app.get("/api/homework/{hw_id}/submissions")
-def get_homework_submissions(hw_id: int, session=Depends(require_roles("admin", "teacher", "supervisor"))):
-    """جلب حالة تسليم الواجب لكل طلاب المجموعة"""
+def get_homework_submissions(hw_id: int, session=Depends(require_roles("admin", "teacher", "supervisor", "student"))):
+    """جلب حالة تسليم الواجب لكل طلاب المجموعة (الطالب بيشوف حالته هو بس)"""
     with get_connection() as conn:
         hw = conn.execute("SELECT group_id FROM homework WHERE id=?", (hw_id,)).fetchone()
         if not hw:
             raise HTTPException(status_code=404, detail="الواجب غير موجود")
         if session["role"] == "supervisor":
             assert_supervisor_owns_group(conn, session, hw["group_id"])
+        if session["role"] == "student":
+            # الطالب يشوف حالة تسليمه هو بس، ومن مجموعته هو بس
+            if session.get("group_id") != hw["group_id"]:
+                raise HTTPException(status_code=403, detail="مش مسموح لك تشوف واجبات مجموعة تانية")
+            rows = conn.execute("""
+                SELECT s.id as student_id, s.full_name,
+                       hs.done, hs.notes
+                FROM students s
+                LEFT JOIN homework_submissions hs ON hs.student_id=s.id AND hs.homework_id=?
+                WHERE s.id=? AND s.is_active=1
+            """, (hw_id, session["id"])).fetchall()
+            return [dict(r) for r in rows]
         rows = conn.execute("""
             SELECT s.id as student_id, s.full_name,
                    hs.done, hs.notes
