@@ -345,14 +345,14 @@ tbody tr:hover{background:var(--primary-10);}
   .header-actions{gap:6px;}
   .btn-block{width:100%;justify-content:center;}
 }
-/* ============ STUDENT MOBILE SHELL ============ */
-body.is-student .sidebar,
-body.is-student .sidebar-backdrop{display:none !important;}
-body.is-student .main{width:100%;}
-body.is-student .topbar{padding:0 16px;}
+/* ============ STUDENT / SUPERVISOR / TEACHER MOBILE SHELL ============ */
+body.is-student .sidebar, body.is-supervisor .sidebar, body.is-teacher .sidebar,
+body.is-student .sidebar-backdrop, body.is-supervisor .sidebar-backdrop, body.is-teacher .sidebar-backdrop{display:none !important;}
+body.is-student .main, body.is-supervisor .main, body.is-teacher .main{width:100%;}
+body.is-student .topbar, body.is-supervisor .topbar, body.is-teacher .topbar{padding:0 16px;}
 .topbar .student-only{display:none;align-items:center;}
-body.is-student .topbar .default-only{display:none;}
-body.is-student .topbar .student-only{display:flex;}
+body.is-student .topbar .default-only, body.is-supervisor .topbar .default-only, body.is-teacher .topbar .default-only{display:none;}
+body.is-student .topbar .student-only, body.is-supervisor .topbar .student-only, body.is-teacher .topbar .student-only{display:flex;}
 .student-topbar-brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px;color:var(--text);}
 .student-topbar-brand .brand-mark{width:26px;height:26px;border-radius:8px;overflow:hidden;flex-shrink:0;background:var(--primary-10);display:flex;align-items:center;justify-content:center;}
 .student-topbar-brand .brand-mark img{width:100%;height:100%;object-fit:contain;}
@@ -361,10 +361,10 @@ body.is-student .topbar .student-only{display:flex;}
 .student-icon-btn .dot{position:absolute;top:5px;left:6px;width:7px;height:7px;border-radius:50%;background:var(--warning);border:1.5px solid var(--surface);}
 .student-avatar-btn{width:34px;height:34px;border-radius:50%;background:var(--primary-80);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;cursor:pointer;border:none;flex-shrink:0;}
 
-body.is-student .page{padding:16px 16px 100px;}
+body.is-student .page, body.is-supervisor .page, body.is-teacher .page{padding:16px 16px 100px;}
 
 .bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--border);padding:8px 4px calc(6px + env(safe-area-inset-bottom));z-index:40;box-shadow:0 -4px 18px rgba(46,45,41,.07);}
-body.is-student .bottom-nav{display:flex;}
+body.is-student .bottom-nav, body.is-supervisor .bottom-nav, body.is-teacher .bottom-nav{display:flex;}
 .bottom-nav-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;background:none;border:none;cursor:pointer;color:var(--text-3);padding:4px 2px;font-family:'Cairo',sans-serif;transition:color .12s var(--ease);}
 .bottom-nav-item span{font-size:10px;font-weight:600;}
 .bottom-nav-item.active{color:var(--warning);}
@@ -486,7 +486,7 @@ body.is-student .bottom-nav{display:flex;}
       </div>
 
       <div class="topbar-left student-only">
-        <button class="action-btn" onclick="navigateTo('student_more')"><i data-lucide="menu"></i></button>
+        <button class="action-btn" onclick="openMobileMoreMenu()"><i data-lucide="menu"></i></button>
       </div>
       <div class="student-only" style="position:absolute;top:0;bottom:0;left:50%;transform:translateX(-50%);align-items:center;">
         <div class="student-topbar-brand">
@@ -668,7 +668,7 @@ function onLoginSuccess(data){
 function doLogout(silent){
   TOKEN = null; SESSION = null;
   localStorage.removeItem("token"); localStorage.removeItem("session");
-  document.body.classList.remove("is-student");
+  document.body.classList.remove("is-student", "is-supervisor", "is-teacher");
   document.getElementById("app").classList.add("hidden");
   document.getElementById("loginScreen").classList.remove("hidden");
   const u = document.getElementById("loginUsername"); if (u) u.value = "";
@@ -786,10 +786,37 @@ const STUDENT_BOTTOM_NAV = [
   {id:"student_more", label:"المزيد", icon:"layout-grid"},
 ];
 
+// عناصر الناف بار السفلي الخاص بواجهة المشرف (موبايل)
+const SUPERVISOR_BOTTOM_NAV = [
+  {id:"mygroup", label:"مجموعتي", icon:"users"},
+  {id:"boards", label:"سبورة الحصة", icon:"presentation"},
+  {id:"attendance", label:"الحضور", icon:"calendar-check"},
+  {id:"quizzes", label:"الكويزات", icon:"file-check-2"},
+  {id:"supervisor_more", label:"المزيد", icon:"layout-grid"},
+];
+
+// عناصر الناف بار السفلي الخاص بواجهة المدرس (موبايل)
+const TEACHER_BOTTOM_NAV = [
+  {id:"dashboard", label:"الرئيسية", icon:"home"},
+  {id:"teacher_analytics", label:"التحليلات", icon:"bar-chart-3"},
+  {id:"teacher_ranking", label:"الترتيب", icon:"trophy"},
+  {id:"teacher_schedule", label:"جدولي", icon:"calendar-clock"},
+  {id:"teacher_more", label:"المزيد", icon:"layout-grid"},
+];
+
+const MOBILE_BOTTOM_NAV_BY_ROLE = {student: STUDENT_BOTTOM_NAV, supervisor: SUPERVISOR_BOTTOM_NAV, teacher: TEACHER_BOTTOM_NAV};
+
+// اسم صفحة "المزيد" حسب الدور، لاستخدامها في زر المنيو بالتوب بار
+const MOBILE_MORE_PAGE_BY_ROLE = {student: "student_more", supervisor: "supervisor_more", teacher: "teacher_more"};
+function openMobileMoreMenu(){
+  navigateTo(MOBILE_MORE_PAGE_BY_ROLE[SESSION.role] || "student_more");
+}
+
 function buildBottomNav(){
   const el = document.getElementById("bottomNav");
   if (!el) return;
-  el.innerHTML = STUDENT_BOTTOM_NAV.map(n=>`
+  const items = MOBILE_BOTTOM_NAV_BY_ROLE[SESSION.role] || [];
+  el.innerHTML = items.map(n=>`
     <button class="bottom-nav-item" data-page="${n.id}" onclick="navigateTo('${n.id}')">
       <span class="bn-ic-wrap"><i data-lucide="${n.icon}" style="width:20px;height:20px;"></i></span>
       <span>${n.label}</span>
@@ -833,11 +860,13 @@ async function boot(){
   document.getElementById("loginScreen").classList.add("hidden");
   document.getElementById("app").classList.remove("hidden");
   document.body.classList.toggle("is-student", SESSION.role === "student");
+  document.body.classList.toggle("is-supervisor", SESSION.role === "supervisor");
+  document.body.classList.toggle("is-teacher", SESSION.role === "teacher");
   document.getElementById("topbarDate").textContent = new Date().toLocaleDateString("ar-EG", {weekday:"long", year:"numeric", month:"long", day:"numeric"});
   buildNav();
   const avatarEl = document.getElementById("studentTopbarAvatar");
   if (avatarEl) avatarEl.textContent = (SESSION.full_name || "؟").trim()[0] || "؟";
-  if (SESSION.role === "student") buildBottomNav();
+  if (MOBILE_BOTTOM_NAV_BY_ROLE[SESSION.role]) buildBottomNav();
   icons();
   const first = SESSION.role === "student" ? "mydashboard" : (NAV_BY_ROLE[SESSION.role] || [{id:"dashboard"}])[0].id;
   navigateTo(first);
@@ -859,7 +888,7 @@ const PAGE_TITLES = {
   quizzes:"الكويزات", attendance:"الحضور والغياب", boards:"سبورة الحصص",
   mygroup:"مجموعتي", mydashboard:"لوحتي", myscores:"درجاتي", myhomework:"واجباتي",
   myattendance:"حضوري", myboard:"سبورة مجموعتي", student_more:"المزيد",
-  student_search:"بحث عن طالب",
+  student_search:"بحث عن طالب", supervisor_more:"المزيد", teacher_more:"المزيد",
   teacher_analytics:"التحليلات", teacher_compare:"مقارنة المجموعات",
   teacher_ranking:"الترتيب المتقدم", teacher_reports:"التقارير", teacher_schedule:"جدولي",
 };
@@ -887,6 +916,8 @@ async function renderPage(page){
       myhomework: renderMyHomeworkPage,
       myboard: renderMyBoardPage,
       student_more: renderStudentMorePage,
+      supervisor_more: renderSupervisorMorePage,
+      teacher_more: renderTeacherMorePage,
       student_search: renderStudentSearchPage,
       teacher_analytics: renderTeacherAnalyticsPage,
       teacher_compare: renderTeacherComparePage,
@@ -1079,8 +1110,12 @@ async function renderTeacherDashboardPage(){
   const sortedByScore = [...stats.groups_overview].filter(g=>g.avg_score_percent!=null).sort((a,b)=>b.avg_score_percent-a.avg_score_percent);
 
   c.innerHTML = `
-    <div class="page-header">
-      <div><h1>أهلاً، ${SESSION.full_name} 👋</h1><p>نظرة تنفيذية سريعة على أداء المنصة دلوقتي</p></div>
+    <div class="student-hero">
+      <div>
+        <h1>👋 أهلاً، ${SESSION.full_name}</h1>
+        <p>نظرة تنفيذية سريعة على أداء المنصة دلوقتي</p>
+      </div>
+      <div class="student-hero-ic"><i data-lucide="presentation" style="width:26px;height:26px;"></i></div>
     </div>
     ${todayScheduleHtml}
 
@@ -3519,6 +3554,63 @@ async function renderStudentDashboardPage(){
         <div class="empty-icon"><i data-lucide="inbox" style="width:24px;height:24px;"></i></div>
         <div class="empty-title">لا يوجد درجات بعد</div>
       </div>`}
+    </div>
+  `;
+  icons();
+}
+
+async function renderTeacherMorePage(){
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header"><div><h1>المزيد</h1><p>باقي صفحاتك وإعدادات حسابك</p></div></div>
+    <div class="table-card" style="padding:6px 12px;margin-bottom:14px;">
+      <div class="student-more-item" onclick="navigateTo('teacher_compare')">
+        <div class="student-more-ic"><i data-lucide="git-compare" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">مقارنة المجموعات</div><div style="font-size:11.5px;color:var(--text-3);">قارن أداء مجموعاتك ببعض</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
+      <div class="student-more-item" onclick="navigateTo('teacher_reports')">
+        <div class="student-more-ic"><i data-lucide="file-text" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">التقارير</div><div style="font-size:11.5px;color:var(--text-3);">تقارير تفصيلية عن أداء طلابك</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
+    </div>
+    <div class="table-card" style="padding:6px 12px;">
+      <div class="student-more-item" onclick="openAccountModal()">
+        <div class="student-more-ic"><i data-lucide="settings" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">إعدادات الحساب</div><div style="font-size:11.5px;color:var(--text-3);">تغيير كلمة المرور وبيانات حسابك</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
+      <div class="student-more-item" onclick="logout()">
+        <div class="student-more-ic" style="background:var(--danger-bg);color:var(--danger);"><i data-lucide="log-out" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;color:var(--danger);">تسجيل الخروج</div></div>
+      </div>
+    </div>
+  `;
+  icons();
+}
+
+async function renderSupervisorMorePage(){
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header"><div><h1>المزيد</h1><p>باقي صفحاتك وإعدادات حسابك</p></div></div>
+    <div class="table-card" style="padding:6px 12px;margin-bottom:14px;">
+      <div class="student-more-item" onclick="navigateTo('student_search')">
+        <div class="student-more-ic"><i data-lucide="search" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">بحث عن طالب</div><div style="font-size:11.5px;color:var(--text-3);">دور على أي طالب بالاسم أو الكود</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
+    </div>
+    <div class="table-card" style="padding:6px 12px;">
+      <div class="student-more-item" onclick="openAccountModal()">
+        <div class="student-more-ic"><i data-lucide="settings" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">إعدادات الحساب</div><div style="font-size:11.5px;color:var(--text-3);">تغيير كلمة المرور وبيانات حسابك</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
+      <div class="student-more-item" onclick="logout()">
+        <div class="student-more-ic" style="background:var(--danger-bg);color:var(--danger);"><i data-lucide="log-out" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;color:var(--danger);">تسجيل الخروج</div></div>
+      </div>
     </div>
   `;
   icons();
