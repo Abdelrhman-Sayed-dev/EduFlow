@@ -91,7 +91,19 @@ class QuizIn(BaseModel):
     description: Optional[str] = None
     quiz_date: Optional[str] = None
     max_score: float = 100
-    group_id: Optional[int] = None  # لو فاضي يبقى الكويز عام لكل المجموعات
+    group_id: Optional[int] = None  # نظام قديم للتوافق - كويز خاص بمجموعة واحدة
+    stage_id: Optional[int] = None  # كويز عام على مستوى مرحلة كاملة (النظام الجديد)
+    session_number: Optional[int] = None
+    image_data: Optional[str] = None  # صورة الكويز/الامتحان (base64)
+    version_label: Optional[str] = None  # اسم النموذج لو فيه أكتر من نموذج امتحان
+
+
+class NotificationOut(BaseModel):
+    id: int
+    title: str
+    body: Optional[str] = None
+    is_read: bool
+    created_at: str
 
 
 class HomeworkIn(BaseModel):
@@ -262,6 +274,17 @@ def assert_supervisor_owns_group(conn, session, group_id):
         grp = conn.execute("SELECT supervisor_id FROM groups WHERE id=?", (group_id,)).fetchone()
         if not grp or grp["supervisor_id"] != session["id"]:
             raise HTTPException(status_code=403, detail="مش مسموح لك تتعامل مع مجموعة غير مجموعتك")
+
+
+def create_notification(conn, student_id: int, title: str, body: str = None):
+    """إنشاء إشعار جديد للطالب - بيتنادى تلقائي بعد أي عملية مشرف تخص الطالب"""
+    try:
+        conn.execute(
+            "INSERT INTO notifications (user_type, user_id, title, body) VALUES ('student', ?, ?, ?)",
+            (student_id, title, body)
+        )
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -589,7 +612,7 @@ def delete_group(group_id: int, session=Depends(require_roles("admin"))):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/students/search")
-def search_students(q: str = "", session=Depends(require_roles("admin", "teacher", "supervisor"))):
+def search_students(q: str = "", session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
     """البحث عن طالب بالاسم أو الـ ID - يرجع بياناته + كل درجاته في الكويزات"""
     with get_connection() as conn:
         query = """
@@ -741,7 +764,7 @@ def delete_student(student_id: int, session=Depends(require_roles("admin"))):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/users")
-def get_users(role: Optional[str] = None, session=Depends(require_roles("admin"))):
+def get_users(role: Optional[str] = None, session=Depends(require_roles("admin", "head_supervisor"))):
     query = """
         SELECT u.id, u.username, u.full_name, u.phone, u.role, u.access_code, u.is_active, u.created_at,
                u.governorate_id, gov.name as governorate_name
@@ -770,8 +793,8 @@ def get_users(role: Optional[str] = None, session=Depends(require_roles("admin")
 
 @app.post("/api/users")
 def add_user(user: UserIn, session=Depends(require_roles("admin"))):
-    if user.role not in ("supervisor", "teacher"):
-        raise HTTPException(status_code=400, detail="الدور المسموح بيه هنا: مشرف أو مدرس بس")
+    if user.role not in ("supervisor", "teacher", "head_supervisor"):
+        raise HTTPException(status_code=400, detail="الدور المسموح بيه هنا: مشرف أو مدرس أو مشرف مشرفين بس")
     with get_connection() as conn:
         existing = conn.execute("SELECT id FROM users WHERE username=?", (user.username,)).fetchone()
         if existing:
@@ -785,7 +808,7 @@ def add_user(user: UserIn, session=Depends(require_roles("admin"))):
             password = generated_password
 
         # كود دخول سريع (بديل ليوزر وباسورد) - مفيد للمشرفين اللي مش مرتاحين للتعامل مع باسورد
-        prefix = "SUP" if user.role == "supervisor" else "TCH"
+        prefix = "SUP" if user.role == "supervisor" else ("HSV" if user.role == "head_supervisor" else "TCH")
         code = gen_access_code(prefix)
         while conn.execute("SELECT id FROM users WHERE access_code=?", (code,)).fetchone():
             code = gen_access_code(prefix)
@@ -857,9 +880,10 @@ def get_schedule(session=Depends(get_current_session)):
     """كل الأدوار تقدر تشوف الجدول (متابعة)، التعديل للمدرس والأدمن بس"""
     with get_connection() as conn:
         query = """
-            SELECT sc.*, g.name as group_name
+            SELECT sc.*, g.name as group_name, st.name as stage_name
             FROM teacher_schedule sc
             LEFT JOIN groups g ON g.id = sc.group_id
+            LEFT JOIN stages st ON st.id = g.stage_id
             WHERE 1=1
         """
         params = []
@@ -980,6 +1004,14 @@ def add_board_image(data: BoardImageIn, session=Depends(require_roles("superviso
             (data.group_id, data.session_number, data.session_date, image_url,
              data.caption, session["id"])
         )
+        group_students = conn.execute(
+            "SELECT id FROM students WHERE group_id=? AND is_active=1", (data.group_id,)
+        ).fetchall()
+        for st in group_students:
+            create_notification(
+                conn, st["id"], "تم رفع صور السبورة 🖼️",
+                f"صور شرح الحصة رقم {data.session_number} بقت متاحة"
+            )
         return {"id": cur.lastrowid, "message": "تم رفع صورة السبورة بنجاح"}
 
 
@@ -1010,54 +1042,95 @@ def delete_board_image(image_id: int, session=Depends(require_roles("supervisor"
 # ---------------------------------------------------------------------------
 
 @app.get("/api/quizzes")
-def get_quizzes(group_id: Optional[int] = None, session=Depends(get_current_session)):
+def get_quizzes(group_id: Optional[int] = None, stage_id: Optional[int] = None,
+                 session=Depends(get_current_session)):
     query = """
-        SELECT q.*, g.name as group_name
+        SELECT q.*, g.name as group_name, st.name as stage_name,
+               u.full_name as created_by_name
         FROM quizzes q
         LEFT JOIN groups g ON g.id = q.group_id
+        LEFT JOIN stages st ON st.id = q.stage_id
+        LEFT JOIN users u ON u.id = q.created_by
         WHERE 1=1
     """
     params = []
     if group_id:
         query += " AND (q.group_id = ? OR q.group_id IS NULL)"
         params.append(group_id)
-
-    if session["role"] == "supervisor":
-        query += " AND (q.group_id IS NULL OR q.group_id IN (SELECT id FROM groups WHERE supervisor_id=?))"
-        params.append(session["id"])
-    elif session["role"] == "student":
-        query += " AND (q.group_id IS NULL OR q.group_id = ?)"
-        params.append(session["group_id"])
-
-    query += " ORDER BY q.quiz_date DESC, q.id DESC"
+    if stage_id:
+        query += " AND (q.stage_id = ? OR q.stage_id IS NULL)"
+        params.append(stage_id)
 
     with get_connection() as conn:
+        if session["role"] == "supervisor":
+            my_stage_ids = [r["stage_id"] for r in conn.execute(
+                "SELECT DISTINCT stage_id FROM groups WHERE supervisor_id=?", (session["id"],)
+            ).fetchall()]
+            my_stage_ids = my_stage_ids or [-1]
+            placeholders = ",".join("?" * len(my_stage_ids))
+            query += f""" AND (
+                (q.group_id IS NULL AND q.stage_id IS NULL)
+                OR q.group_id IN (SELECT id FROM groups WHERE supervisor_id=?)
+                OR q.stage_id IN ({placeholders})
+            )"""
+            params.append(session["id"])
+            params.extend(my_stage_ids)
+        elif session["role"] == "student":
+            student = conn.execute("SELECT group_id FROM students WHERE id=?", (session["id"],)).fetchone()
+            student_stage = None
+            if student:
+                grp = conn.execute("SELECT stage_id FROM groups WHERE id=?", (student["group_id"],)).fetchone()
+                student_stage = grp["stage_id"] if grp else None
+            query += """ AND (
+                (q.group_id IS NULL AND q.stage_id IS NULL)
+                OR q.group_id = ?
+                OR q.stage_id = ?
+            )"""
+            params.append(session.get("group_id"))
+            params.append(student_stage)
+
+        query += " ORDER BY q.quiz_date DESC, q.id DESC"
         rows = conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
 
 
 @app.post("/api/quizzes")
-def add_quiz(quiz: QuizIn, session=Depends(require_roles("admin", "teacher", "supervisor"))):
+def add_quiz(quiz: QuizIn, session=Depends(require_roles("admin", "head_supervisor"))):
+    """إنشاء كويز/امتحان شامل جديد - مشرف المشرفين أو الأدمن بس، وبيوصل تلقائي لكل مشرفي المرحلة"""
+    if not quiz.stage_id and not quiz.group_id:
+        raise HTTPException(status_code=400, detail="لازم تحدد المرحلة الدراسية للكويز")
     with get_connection() as conn:
-        if session["role"] == "supervisor":
-            if not quiz.group_id:
-                raise HTTPException(status_code=403, detail="المشرف لازم يحدد مجموعته")
-            assert_supervisor_owns_group(conn, session, quiz.group_id)
-        cur = conn.execute(
-            "INSERT INTO quizzes (title, description, quiz_date, max_score, group_id) VALUES (?, ?, ?, ?, ?)",
-            (quiz.title, quiz.description, quiz.quiz_date, quiz.max_score, quiz.group_id)
-        )
-        return {"id": cur.lastrowid, "message": "تم إضافة الكويز بنجاح"}
+        cur = conn.execute("""
+            INSERT INTO quizzes (title, description, quiz_date, max_score, group_id,
+                                  stage_id, session_number, image_data, version_label, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (quiz.title, quiz.description, quiz.quiz_date, quiz.max_score, quiz.group_id,
+              quiz.stage_id, quiz.session_number, quiz.image_data, quiz.version_label, session["id"]))
+        return {"id": cur.lastrowid, "message": "تم إضافة الكويز بنجاح، ووصل لكل مشرفي المرحلة"}
+
+
+@app.put("/api/quizzes/{quiz_id}")
+def update_quiz(quiz_id: int, quiz: QuizIn, session=Depends(require_roles("admin", "head_supervisor"))):
+    with get_connection() as conn:
+        existing = conn.execute("SELECT id FROM quizzes WHERE id=?", (quiz_id,)).fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="الكويز غير موجود")
+        conn.execute("""
+            UPDATE quizzes SET title=?, description=?, quiz_date=?, max_score=?, group_id=?,
+                                stage_id=?, session_number=?, image_data=COALESCE(?, image_data),
+                                version_label=?
+            WHERE id=?
+        """, (quiz.title, quiz.description, quiz.quiz_date, quiz.max_score, quiz.group_id,
+              quiz.stage_id, quiz.session_number, quiz.image_data, quiz.version_label, quiz_id))
+        return {"message": "تم تعديل الكويز"}
 
 
 @app.delete("/api/quizzes/{quiz_id}")
-def delete_quiz(quiz_id: int, session=Depends(require_roles("admin", "teacher", "supervisor"))):
+def delete_quiz(quiz_id: int, session=Depends(require_roles("admin", "head_supervisor"))):
     with get_connection() as conn:
         quiz = conn.execute("SELECT * FROM quizzes WHERE id=?", (quiz_id,)).fetchone()
         if not quiz:
             raise HTTPException(status_code=404, detail="الكويز غير موجود")
-        if session["role"] == "supervisor" and quiz["group_id"]:
-            assert_supervisor_owns_group(conn, session, quiz["group_id"])
         conn.execute("DELETE FROM quizzes WHERE id=?", (quiz_id,))
         return {"message": "تم حذف الكويز"}
 
@@ -1070,8 +1143,9 @@ def delete_quiz(quiz_id: int, session=Depends(require_roles("admin", "teacher", 
 def get_quiz_scores(quiz_id: int, session=Depends(get_current_session)):
     """
     جلب طلاب الكويز مع درجاتهم.
-    لو الكويز مرتبط بمجموعة معينة، يظهر طلاب المجموعة بس.
-    لو الكويز عام (group_id = NULL)، يظهر كل الطلاب (أو طلاب المشرف/الطالب بس حسب الدور).
+    - كويز مرحلة (stage_id): المشرف يشوف طلاب مجموعته بس، الأدمن/مشرف المشرفين يشوفوا كل طلاب المرحلة.
+    - كويز مجموعة قديم (group_id): يظهر طلاب المجموعة بس.
+    - كويز عام (مفيهوش لا مجموعة ولا مرحلة): كل الطلاب (أو حسب دور المستخدم).
     """
     with get_connection() as conn:
         quiz = conn.execute("SELECT * FROM quizzes WHERE id=?", (quiz_id,)).fetchone()
@@ -1086,15 +1160,33 @@ def get_quiz_scores(quiz_id: int, session=Depends(get_current_session)):
                 SELECT s.id as student_id, s.full_name, qs.score, qs.notes, qs.id as score_id
                 FROM students s
                 LEFT JOIN quiz_scores qs ON qs.student_id = s.id AND qs.quiz_id = ?
-                WHERE s.group_id = ?
+                WHERE s.group_id = ? AND s.is_active=1
                 ORDER BY s.full_name
             """, (quiz_id, quiz["group_id"])).fetchall()
+        elif quiz["stage_id"]:
+            base_query = """
+                SELECT s.id as student_id, s.full_name, qs.score, qs.notes, qs.id as score_id,
+                       s.group_id, g.name as group_name
+                FROM students s
+                JOIN groups g ON g.id = s.group_id
+                LEFT JOIN quiz_scores qs ON qs.student_id = s.id AND qs.quiz_id = ?
+                WHERE g.stage_id = ? AND s.is_active=1
+            """
+            params = [quiz_id, quiz["stage_id"]]
+            if session["role"] == "supervisor":
+                base_query += " AND s.group_id IN (SELECT id FROM groups WHERE supervisor_id=?)"
+                params.append(session["id"])
+            elif session["role"] == "student":
+                base_query += " AND s.id = ?"
+                params.append(session["id"])
+            base_query += " ORDER BY g.name, s.full_name"
+            rows = conn.execute(base_query, params).fetchall()
         else:
             base_query = """
                 SELECT s.id as student_id, s.full_name, qs.score, qs.notes, qs.id as score_id, s.group_id
                 FROM students s
                 LEFT JOIN quiz_scores qs ON qs.student_id = s.id AND qs.quiz_id = ?
-                WHERE 1=1
+                WHERE s.is_active=1
             """
             params = [quiz_id]
             if session["role"] == "supervisor":
@@ -1109,13 +1201,28 @@ def get_quiz_scores(quiz_id: int, session=Depends(get_current_session)):
 
 
 @app.post("/api/scores")
-def set_score(score: QuizScoreIn, session=Depends(require_roles("admin", "teacher", "supervisor"))):
+def set_score(score: QuizScoreIn, session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
     with get_connection() as conn:
+        quiz = conn.execute("SELECT * FROM quizzes WHERE id=?", (score.quiz_id,)).fetchone()
+        if not quiz:
+            raise HTTPException(status_code=404, detail="الكويز غير موجود")
+        student = conn.execute("SELECT group_id FROM students WHERE id=?", (score.student_id,)).fetchone()
+        if not student:
+            raise HTTPException(status_code=404, detail="الطالب غير موجود")
+
         if session["role"] == "supervisor":
-            student = conn.execute("SELECT group_id FROM students WHERE id=?", (score.student_id,)).fetchone()
-            if not student:
-                raise HTTPException(status_code=404, detail="الطالب غير موجود")
+            # المشرف يسجل درجات طلاب مجموعته بس
             assert_supervisor_owns_group(conn, session, student["group_id"])
+            if quiz["group_id"] and quiz["group_id"] != student["group_id"]:
+                raise HTTPException(status_code=403, detail="الكويز ده مش لمجموعتك")
+            if quiz["stage_id"]:
+                grp = conn.execute("SELECT stage_id FROM groups WHERE id=?", (student["group_id"],)).fetchone()
+                if not grp or grp["stage_id"] != quiz["stage_id"]:
+                    raise HTTPException(status_code=403, detail="الكويز ده مش لمرحلة مجموعتك")
+
+        is_new = conn.execute(
+            "SELECT id FROM quiz_scores WHERE student_id=? AND quiz_id=?", (score.student_id, score.quiz_id)
+        ).fetchone() is None
 
         conn.execute("""
             INSERT INTO quiz_scores (student_id, quiz_id, score, notes)
@@ -1123,6 +1230,12 @@ def set_score(score: QuizScoreIn, session=Depends(require_roles("admin", "teache
             ON CONFLICT(student_id, quiz_id)
             DO UPDATE SET score=excluded.score, notes=excluded.notes
         """, (score.student_id, score.quiz_id, score.score, score.notes))
+
+        create_notification(
+            conn, score.student_id,
+            "تمت إضافة درجة جديدة ✅" if is_new else "تم تعديل درجتك 📝",
+            f"{quiz['title']}: {score.score} / {quiz['max_score']}"
+        )
         return {"message": "تم حفظ الدرجة"}
 
 
@@ -1186,7 +1299,7 @@ def get_attendance_by_date(session_date: str, group_id: Optional[int] = None,
 
 
 @app.post("/api/attendance")
-def set_attendance(att: AttendanceIn, session=Depends(require_roles("admin", "teacher", "supervisor"))):
+def set_attendance(att: AttendanceIn, session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
     with get_connection() as conn:
         if session["role"] == "supervisor":
             student = conn.execute("SELECT group_id FROM students WHERE id=?", (att.student_id,)).fetchone()
@@ -1204,7 +1317,7 @@ def set_attendance(att: AttendanceIn, session=Depends(require_roles("admin", "te
 
 
 @app.get("/api/students/find-by-code")
-def find_student_by_code(code: str, session=Depends(require_roles("admin", "teacher", "supervisor"))):
+def find_student_by_code(code: str, session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
     """البحث عن طالب بكود الدخول الخاص بيه - يستخدم في تسجيل الحضور السريع"""
     with get_connection() as conn:
         student = conn.execute(
@@ -1221,7 +1334,7 @@ def find_student_by_code(code: str, session=Depends(require_roles("admin", "teac
 
 
 @app.post("/api/attendance/by-code")
-def set_attendance_by_code(data: AttendanceCodeIn, session=Depends(require_roles("admin", "teacher", "supervisor"))):
+def set_attendance_by_code(data: AttendanceCodeIn, session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
     """تسجيل حضور سريع بكود الطالب - المشرف بيدوّر بالكود ويسجل الحالة على طول"""
     with get_connection() as conn:
         student = conn.execute(
@@ -1264,7 +1377,7 @@ def get_student_attendance(student_id: int, session=Depends(get_current_session)
 # ---------------------------------------------------------------------------
 
 @app.get("/api/students/{student_id}/behavior-notes")
-def get_behavior_notes(student_id: int, session=Depends(require_roles("admin", "teacher", "supervisor"))):
+def get_behavior_notes(student_id: int, session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
     """ملحوظة: الطالب ميقدرش يشوف ملاحظاته السلوكية - دي بين المشرف والمدرس والأدمن بس"""
     with get_connection() as conn:
         student = conn.execute("SELECT group_id FROM students WHERE id=?", (student_id,)).fetchone()
@@ -1284,7 +1397,7 @@ def get_behavior_notes(student_id: int, session=Depends(require_roles("admin", "
 
 
 @app.post("/api/behavior-notes")
-def add_behavior_note(data: BehaviorNoteIn, session=Depends(require_roles("admin", "teacher", "supervisor"))):
+def add_behavior_note(data: BehaviorNoteIn, session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
     if data.note_type not in ("positive", "negative", "neutral"):
         raise HTTPException(status_code=400, detail="نوع الملاحظة غير صحيح")
     with get_connection() as conn:
@@ -1302,7 +1415,7 @@ def add_behavior_note(data: BehaviorNoteIn, session=Depends(require_roles("admin
 
 
 @app.delete("/api/behavior-notes/{note_id}")
-def delete_behavior_note(note_id: int, session=Depends(require_roles("admin", "teacher", "supervisor"))):
+def delete_behavior_note(note_id: int, session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
     with get_connection() as conn:
         note = conn.execute("SELECT * FROM behavior_notes WHERE id=?", (note_id,)).fetchone()
         if not note:
@@ -1338,7 +1451,7 @@ def get_student_payments(student_id: int, session=Depends(get_current_session)):
 
 @app.get("/api/payments")
 def get_payments(group_id: Optional[int] = None, month: Optional[str] = None,
-                  session=Depends(require_roles("admin", "teacher", "supervisor"))):
+                  session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
     """جلب حالة المدفوعات لشهر معين، لمجموعة معينة أو كل الطلاب"""
     with get_connection() as conn:
         if session["role"] == "supervisor" and group_id:
@@ -1366,7 +1479,7 @@ def get_payments(group_id: Optional[int] = None, month: Optional[str] = None,
 
 
 @app.post("/api/payments")
-def set_payment(data: PaymentIn, session=Depends(require_roles("admin", "teacher", "supervisor"))):
+def set_payment(data: PaymentIn, session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
     with get_connection() as conn:
         student = conn.execute("SELECT group_id FROM students WHERE id=?", (data.student_id,)).fetchone()
         if not student:
@@ -1489,7 +1602,7 @@ def get_homework(group_id: Optional[int] = None, session=Depends(get_current_ses
 
 
 @app.post("/api/homework")
-def add_homework(data: HomeworkIn, session=Depends(require_roles("admin", "teacher", "supervisor"))):
+def add_homework(data: HomeworkIn, session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
     with get_connection() as conn:
         if session["role"] == "supervisor":
             assert_supervisor_owns_group(conn, session, data.group_id)
@@ -1514,7 +1627,7 @@ def add_homework(data: HomeworkIn, session=Depends(require_roles("admin", "teach
 
 
 @app.put("/api/homework/{hw_id}")
-def update_homework(hw_id: int, data: HomeworkIn, session=Depends(require_roles("admin", "teacher", "supervisor"))):
+def update_homework(hw_id: int, data: HomeworkIn, session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
     with get_connection() as conn:
         if session["role"] == "supervisor":
             assert_supervisor_owns_group(conn, session, data.group_id)
@@ -1526,14 +1639,14 @@ def update_homework(hw_id: int, data: HomeworkIn, session=Depends(require_roles(
 
 
 @app.delete("/api/homework/{hw_id}")
-def delete_homework(hw_id: int, session=Depends(require_roles("admin", "teacher", "supervisor"))):
+def delete_homework(hw_id: int, session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
     with get_connection() as conn:
         conn.execute("DELETE FROM homework WHERE id=?", (hw_id,))
         return {"message": "تم حذف الواجب"}
 
 
 @app.get("/api/homework/{hw_id}/submissions")
-def get_homework_submissions(hw_id: int, session=Depends(require_roles("admin", "teacher", "supervisor", "student"))):
+def get_homework_submissions(hw_id: int, session=Depends(require_roles("admin", "head_supervisor", "supervisor", "student"))):
     """جلب حالة تسليم الواجب لكل طلاب المجموعة (الطالب بيشوف حالته هو بس)"""
     with get_connection() as conn:
         hw = conn.execute("SELECT group_id FROM homework WHERE id=?", (hw_id,)).fetchone()
@@ -1566,9 +1679,9 @@ def get_homework_submissions(hw_id: int, session=Depends(require_roles("admin", 
 
 @app.post("/api/homework/{hw_id}/submissions")
 def save_homework_submission(hw_id: int, data: HomeworkSubmissionIn,
-                              session=Depends(require_roles("admin", "teacher", "supervisor"))):
+                              session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
     with get_connection() as conn:
-        hw = conn.execute("SELECT group_id FROM homework WHERE id=?", (hw_id,)).fetchone()
+        hw = conn.execute("SELECT group_id, session_number FROM homework WHERE id=?", (hw_id,)).fetchone()
         if not hw:
             raise HTTPException(status_code=404, detail="الواجب غير موجود")
         if session["role"] == "supervisor":
@@ -1590,7 +1703,54 @@ def save_homework_submission(hw_id: int, data: HomeworkSubmissionIn,
                 "INSERT INTO homework_submissions (homework_id, student_id, done, notes) VALUES (?,?,?,?)",
                 (hw_id, data.student_id, data.done, data.notes)
             )
+        create_notification(
+            conn, data.student_id,
+            "تم تسليم الواجب ✅" if data.done else "لسه ملسلمتش الواجب ❌",
+            f"الحصة رقم {hw['session_number']}"
+        )
         return {"message": "تم الحفظ"}
+
+
+# ---------------------------------------------------------------------------
+# الإشعارات - Notifications (للطالب حالياً)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/notifications")
+def get_notifications(session=Depends(get_current_session)):
+    user_type = "student" if session["role"] == "student" else "user"
+    with get_connection() as conn:
+        rows = conn.execute(
+            """SELECT id, title, body, is_read, created_at FROM notifications
+               WHERE user_type=? AND user_id=? ORDER BY created_at DESC LIMIT 50""",
+            (user_type, session["id"])
+        ).fetchall()
+        unread = conn.execute(
+            "SELECT COUNT(*) as c FROM notifications WHERE user_type=? AND user_id=? AND is_read=0",
+            (user_type, session["id"])
+        ).fetchone()["c"]
+        return {"items": [dict(r) for r in rows], "unread_count": unread}
+
+
+@app.put("/api/notifications/{notif_id}/read")
+def mark_notification_read(notif_id: int, session=Depends(get_current_session)):
+    user_type = "student" if session["role"] == "student" else "user"
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE notifications SET is_read=1 WHERE id=? AND user_type=? AND user_id=?",
+            (notif_id, user_type, session["id"])
+        )
+        return {"message": "تم التعليم كمقروء"}
+
+
+@app.put("/api/notifications/read-all")
+def mark_all_notifications_read(session=Depends(get_current_session)):
+    user_type = "student" if session["role"] == "student" else "user"
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE notifications SET is_read=1 WHERE user_type=? AND user_id=? AND is_read=0",
+            (user_type, session["id"])
+        )
+        return {"message": "تم تعليم كل الإشعارات كمقروءة"}
 
 
 # ---------------------------------------------------------------------------
@@ -1598,7 +1758,7 @@ def save_homework_submission(hw_id: int, data: HomeworkSubmissionIn,
 # ---------------------------------------------------------------------------
 
 @app.get("/api/stats/overview")
-def get_stats_overview(session=Depends(require_roles("admin", "teacher"))):
+def get_stats_overview(session=Depends(require_roles("admin", "teacher", "head_supervisor"))):
     """
     إندبوينت واحد بيجمع كل البيانات اللازمة للوحة المدرس التنفيذية:
     إجماليات، أداء المجموعات، أفضل الطلاب، مقارنة بالمراحل، واتجاه آخر الكويزات.
@@ -1702,6 +1862,21 @@ def get_stats_overview(session=Depends(require_roles("admin", "teacher"))):
         for t in score_trend:
             t["avg_score_percent"] = round(t["avg_score_percent"], 1) if t["avg_score_percent"] is not None else None
 
+        # أكثر الطلاب غيابًا - ما يظهرش إلا اللي غاب 3 حصص أو أكتر
+        most_absent_students = conn.execute("""
+            SELECT s.id, s.full_name, g.name as group_name,
+                   SUM(CASE WHEN a.status='absent' THEN 1 ELSE 0 END) as absent_count
+            FROM students s
+            JOIN attendance a ON a.student_id=s.id
+            JOIN groups g ON g.id=s.group_id
+            WHERE s.is_active=1
+            GROUP BY s.id
+            HAVING absent_count >= 3
+            ORDER BY absent_count DESC
+            LIMIT 10
+        """).fetchall()
+        most_absent_students = [dict(r) for r in most_absent_students]
+
         return {
             "totals": {
                 "groups": groups_count,
@@ -1712,6 +1887,7 @@ def get_stats_overview(session=Depends(require_roles("admin", "teacher"))):
             },
             "groups_overview": groups_overview,
             "top_students": top_students,
+            "most_absent_students": most_absent_students,
             "stage_breakdown": stage_breakdown,
             "score_trend": score_trend,
         }
@@ -1732,7 +1908,7 @@ def _date_clause(column, date_from, date_to, params):
 @app.get("/api/stats/stage-overview")
 def get_stage_overview(stage_id: int, governorate_id: Optional[int] = None,
                         date_from: Optional[str] = None, date_to: Optional[str] = None,
-                        session=Depends(require_roles("admin", "teacher"))):
+                        session=Depends(require_roles("admin", "teacher", "head_supervisor"))):
     """
     نظرة عامة على سنة دراسية كاملة (مرحلة) - مع إمكانية التصفية بمحافظة وفترة زمنية.
     كل المقارنات والترتيبات هنا محصورة داخل نفس السنة الدراسية المختارة فقط.
@@ -1871,6 +2047,7 @@ def get_stage_overview(stage_id: int, governorate_id: Optional[int] = None,
         students_attendance = conn.execute(f"""
             SELECT s.id, s.full_name, g.name as group_name, gov.name as governorate_name,
                    SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END)*100.0/COUNT(*) as attendance_rate,
+                   SUM(CASE WHEN a.status='absent' THEN 1 ELSE 0 END) as absent_count,
                    COUNT(*) as records_count
             FROM students s
             JOIN attendance a ON a.student_id=s.id
@@ -1883,7 +2060,10 @@ def get_stage_overview(stage_id: int, governorate_id: Optional[int] = None,
         for s in students_attendance:
             s["attendance_rate"] = round(s["attendance_rate"], 1)
         most_committed_students = sorted(students_attendance, key=lambda x: x["attendance_rate"], reverse=True)[:10]
-        most_absent_students = sorted(students_attendance, key=lambda x: x["attendance_rate"])[:10]
+        most_absent_students = sorted(
+            [s for s in students_attendance if s["absent_count"] >= 3],
+            key=lambda x: x["absent_count"], reverse=True
+        )[:10]
 
         # ---- اتجاه متوسط الدرجات لآخر 10 كويزات داخل السنة الدراسية ----
         t_score_params = base_params()
@@ -1922,7 +2102,7 @@ def get_stage_overview(stage_id: int, governorate_id: Optional[int] = None,
 
 @app.get("/api/stats/group-detail")
 def get_group_detail(group_id: int, date_from: Optional[str] = None, date_to: Optional[str] = None,
-                      session=Depends(require_roles("admin", "teacher"))):
+                      session=Depends(require_roles("admin", "teacher", "head_supervisor"))):
     """تفاصيل أداء مجموعة واحدة + ترتيبها بين باقي مجموعات نفس السنة الدراسية"""
     with get_connection() as conn:
         group = conn.execute("""
@@ -2015,6 +2195,7 @@ def get_group_detail(group_id: int, date_from: Optional[str] = None, date_to: Op
         att_students_clause = _date_clause("a.session_date", date_from, date_to, att_students_params)
         students_attendance = conn.execute(f"""
             SELECT s.id, s.full_name, SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END)*100.0/COUNT(*) as attendance_rate,
+                   SUM(CASE WHEN a.status='absent' THEN 1 ELSE 0 END) as absent_count,
                    COUNT(*) as records_count
             FROM students s JOIN attendance a ON a.student_id=s.id
             WHERE s.group_id=? AND s.is_active=1{att_students_clause}
@@ -2024,7 +2205,10 @@ def get_group_detail(group_id: int, date_from: Optional[str] = None, date_to: Op
         for s in students_attendance:
             s["attendance_rate"] = round(s["attendance_rate"], 1)
         most_committed_students = sorted(students_attendance, key=lambda x: x["attendance_rate"], reverse=True)[:10]
-        most_absent_students = sorted(students_attendance, key=lambda x: x["attendance_rate"])[:10]
+        most_absent_students = sorted(
+            [s for s in students_attendance if s["absent_count"] >= 3],
+            key=lambda x: x["absent_count"], reverse=True
+        )[:10]
 
         return {
             "group": group,
@@ -2062,7 +2246,7 @@ def _stddev(values):
 def get_rankings(stage_id: int, governorate_id: Optional[int] = None,
                  date_from: Optional[str] = None, date_to: Optional[str] = None,
                  pass_threshold: int = 50,
-                 session=Depends(require_roles("admin", "teacher"))):
+                 session=Depends(require_roles("admin", "teacher", "head_supervisor"))):
     """
     Ranking متقدم لكل الأبعاد — الطلاب والمجموعات داخل نفس السنة الدراسية فقط.
     يرجع ترتيبات منفصلة لكل بُعد.

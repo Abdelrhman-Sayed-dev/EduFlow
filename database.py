@@ -137,6 +137,51 @@ def _migrate_stages(cur):
             cur.execute("DELETE FROM stages WHERE id=?", (old_sec["id"],))
 
 
+def _migrate_users_role_check(cur):
+    """
+    لو جدول users موجود من نسخة قديمة (قيد CHECK بتاعه لسه مش شامل head_supervisor)،
+    نعيد بناء الجدول بنفس البيانات لكن بقيد CHECK جديد يسمح بالدور الجديد.
+    """
+    row = cur.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
+    ).fetchone()
+    if not row or not row["sql"] or "head_supervisor" in row["sql"]:
+        return  # جدول جديد أصلاً، أو لسه معملوش create
+
+    cur.execute("ALTER TABLE users RENAME TO users_old_migrating")
+    cur.execute("""
+        CREATE TABLE users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('admin','teacher','supervisor','head_supervisor')),
+            full_name TEXT NOT NULL,
+            phone TEXT,
+            access_code TEXT UNIQUE,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            governorate_id INTEGER REFERENCES governorates(id)
+        )
+    """)
+    cur.execute("""
+        INSERT INTO users (id, username, password_hash, role, full_name, phone,
+                            access_code, is_active, created_at, governorate_id)
+        SELECT id, username, password_hash, role, full_name, phone,
+               access_code, is_active, created_at, governorate_id
+        FROM users_old_migrating
+    """)
+    cur.execute("DROP TABLE users_old_migrating")
+
+
+def _migrate_quizzes_columns(cur):
+    """إضافة أعمدة الكويز الجديدة (المرحلة/رقم الحصة/الصورة/النموذج/المنشئ) على القواعد القديمة"""
+    _safe_alter(cur, "ALTER TABLE quizzes ADD COLUMN stage_id INTEGER REFERENCES stages(id)")
+    _safe_alter(cur, "ALTER TABLE quizzes ADD COLUMN session_number INTEGER")
+    _safe_alter(cur, "ALTER TABLE quizzes ADD COLUMN image_data TEXT")
+    _safe_alter(cur, "ALTER TABLE quizzes ADD COLUMN version_label TEXT")
+    _safe_alter(cur, "ALTER TABLE quizzes ADD COLUMN created_by INTEGER REFERENCES users(id)")
+
+
 def cleanup_expired_sessions(conn):
     """مسح الجلسات اللي انتهت صلاحيتها (يتنفذ بهدوء عند كل تسجيل دخول)"""
     now = datetime.utcnow().isoformat(timespec="seconds")
@@ -175,7 +220,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL,
-            role TEXT NOT NULL CHECK(role IN ('admin','teacher','supervisor')),
+            role TEXT NOT NULL CHECK(role IN ('admin','teacher','supervisor','head_supervisor')),
             full_name TEXT NOT NULL,
             phone TEXT,
             access_code TEXT UNIQUE,
@@ -272,7 +317,8 @@ def init_db():
         )
         """)
 
-        # جدول الكويزات - كل كويز ممكن يكون عام أو مرتبط بمجموعة معينة
+        # جدول الكويزات - كويز عام على مستوى المرحلة الدراسية (بيشوفه كل مشرفي المرحلة)
+        # أو مرتبط بمجموعة معينة (النظام القديم، لسه متاح للتوافق)
         cur.execute("""
         CREATE TABLE IF NOT EXISTS quizzes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -281,10 +327,18 @@ def init_db():
             quiz_date TEXT,
             max_score REAL NOT NULL DEFAULT 100,
             group_id INTEGER,
+            stage_id INTEGER,
+            session_number INTEGER,
+            image_data TEXT,
+            version_label TEXT,
+            created_by INTEGER,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE
+            FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+            FOREIGN KEY (stage_id) REFERENCES stages(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
         )
         """)
+        _migrate_quizzes_columns(cur)
 
         # جدول درجات الكويزات (طالب - كويز - درجة)
         cur.execute("""
@@ -382,6 +436,25 @@ def init_db():
             FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL
         )
         """)
+
+        # ---------------------------------------------------------------
+        # الإشعارات - كل عملية يعملها المشرف بتوصل للطالب (درجة/واجب/سبورة...)
+        # ---------------------------------------------------------------
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_type TEXT NOT NULL DEFAULT 'student' CHECK(user_type IN ('student','user')),
+            user_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            body TEXT,
+            is_read INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_type, user_id, is_read)")
+
+        # ترحيل قيد الأدوار القديم عشان يسمح بدور head_supervisor الجديد
+        _migrate_users_role_check(cur)
 
         # ترحيل المراحل القديمة (حذف الإعدادي بالكامل + تحويل الثانوي العامة لأول صف)
         _migrate_stages(cur)

@@ -194,6 +194,11 @@ tbody tr:hover{background:var(--primary-10);}
 .badge-amber{background:var(--warning-bg);color:#92400E;}
 .badge-green{background:var(--success-bg);color:#065F46;}
 .badge-red{background:var(--danger-bg);color:#991B1B;}
+.seg-toggle{display:inline-flex;border:1px solid var(--border);border-radius:var(--radius-md);overflow:hidden;}
+.seg-btn{background:var(--surface);border:none;padding:6px 12px;font-size:12px;font-weight:700;font-family:'Cairo',sans-serif;cursor:pointer;color:var(--text-2);white-space:nowrap;}
+.seg-btn:first-child{border-left:1px solid var(--border);}
+.seg-btn.active-green{background:var(--success-bg);color:var(--success);}
+.seg-btn.active-red{background:var(--danger-bg);color:var(--danger);}
 .badge-gray{background:var(--surface-3);color:var(--text-2);}
 
 /* ============ SEGMENTED PILL CONTROL (status pickers) ============ */
@@ -210,6 +215,7 @@ tbody tr:hover{background:var(--primary-10);}
 
 /* ============ OVERLAY / MODAL ============ */
 .overlay{position:fixed;inset:0;background:rgba(15,23,42,.5);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;z-index:900;opacity:0;pointer-events:none;transition:opacity .18s var(--ease);}
+.lightbox-download-btn{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);background:var(--surface);color:var(--text);border:none;border-radius:999px;padding:10px 20px;font-size:13px;font-weight:700;font-family:'Cairo',sans-serif;display:flex;align-items:center;gap:6px;cursor:pointer;box-shadow:var(--shadow-lg,0 8px 24px rgba(0,0,0,.2));}
 .overlay.open{opacity:1;pointer-events:all;}
 .modal{background:var(--surface);border-radius:var(--radius-xl);box-shadow:var(--shadow-xl);width:530px;max-width:95vw;transform:scale(.97) translateY(8px);transition:transform .18s var(--ease),opacity .18s var(--ease);opacity:0;max-height:92vh;overflow-y:auto;}
 .overlay.open .modal{transform:scale(1) translateY(0);opacity:1;}
@@ -345,26 +351,86 @@ tbody tr:hover{background:var(--primary-10);}
   .header-actions{gap:6px;}
   .btn-block{width:100%;justify-content:center;}
 }
+
+/* ============ إصلاحات شاملة للموبايل: منع خروج العناصر خارج الشاشة على كل الأحجام ============ */
+html, body{max-width:100%;overflow-x:hidden;}
+* {box-sizing:border-box;}
+img, video, table{max-width:100%;}
+.cards-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;}
+.modal-body{overflow-x:hidden;}
+.modal-footer{flex-wrap:wrap;}
+
+@media (max-width:414px){
+  .page-header{gap:10px;}
+  .page-header h1{font-size:15.5px;}
+  .page-header p{font-size:11.5px;}
+  .stat-card{padding:12px;}
+  .stat-value{font-size:18px;}
+  .table-card{border-radius:var(--radius-md);}
+  .cards-grid{grid-template-columns:repeat(auto-fill,minmax(115px,1fr));gap:8px;}
+  .collapse-header{flex-wrap:wrap;gap:8px;padding:12px;}
+  .collapse-header > div{flex-basis:100%;}
+  .modal{width:calc(100vw - 16px);max-height:88vh;overflow-y:auto;}
+  .modal-footer{width:100%;}
+  .modal-footer .btn{flex:1;min-width:0;justify-content:center;}
+  .student-hero{flex-direction:row;padding:14px;}
+  .student-hero h1{font-size:15.5px;}
+  .student-hero-ic{width:42px;height:42px;}
+  .student-group-card{padding:14px;}
+  .bottom-nav-item span{font-size:9px;}
+  .form-input, .form-select, .form-textarea{font-size:16px;} /* يمنع تكبير الصفحة تلقائي في آيفون عند التركيز على حقل */
+  .seg-toggle{flex-direction:column;width:100%;}
+  .seg-btn{width:100%;border-left:none !important;border-bottom:1px solid var(--border);}
+  .notif-panel{width:calc(100vw - 24px);left:-8px;}
+}
+
+@media (max-width:360px){
+  .page{padding:10px 8px;}
+  .page-header h1{font-size:14.5px;}
+  .stat-value{font-size:16px;}
+  .cards-grid{grid-template-columns:repeat(auto-fill,minmax(100px,1fr));}
+  .student-stats-row{gap:6px;}
+  .student-stat-value{font-size:15px;}
+}
+
+@media (max-width:768px) and (min-width:415px){
+  .cards-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));}
+}
+
 /* ============ STUDENT / SUPERVISOR / TEACHER MOBILE SHELL ============ */
-body.is-student .sidebar, body.is-supervisor .sidebar, body.is-teacher .sidebar,
-body.is-student .sidebar-backdrop, body.is-supervisor .sidebar-backdrop, body.is-teacher .sidebar-backdrop{display:none !important;}
-body.is-student .main, body.is-supervisor .main, body.is-teacher .main{width:100%;}
-body.is-student .topbar, body.is-supervisor .topbar, body.is-teacher .topbar{padding:0 16px;}
+body.is-student .sidebar, body.is-supervisor .sidebar, body.is-teacher .sidebar, body.is-head-supervisor .sidebar,
+body.is-student .sidebar-backdrop, body.is-supervisor .sidebar-backdrop, body.is-teacher .sidebar-backdrop, body.is-head-supervisor .sidebar-backdrop{display:none !important;}
+body.is-student .main, body.is-supervisor .main, body.is-teacher .main, body.is-head-supervisor .main{width:100%;}
+body.is-student .topbar, body.is-supervisor .topbar, body.is-teacher .topbar, body.is-head-supervisor .topbar{padding:0 16px;}
 .topbar .student-only{display:none;align-items:center;}
-body.is-student .topbar .default-only, body.is-supervisor .topbar .default-only, body.is-teacher .topbar .default-only{display:none;}
-body.is-student .topbar .student-only, body.is-supervisor .topbar .student-only, body.is-teacher .topbar .student-only{display:flex;}
+body.is-student .topbar .default-only, body.is-supervisor .topbar .default-only, body.is-teacher .topbar .default-only, body.is-head-supervisor .topbar .default-only{display:none;}
+body.is-student .topbar .student-only, body.is-supervisor .topbar .student-only, body.is-teacher .topbar .student-only, body.is-head-supervisor .topbar .student-only{display:flex;}
 .student-topbar-brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px;color:var(--text);}
 .student-topbar-brand .brand-mark{width:26px;height:26px;border-radius:8px;overflow:hidden;flex-shrink:0;background:var(--primary-10);display:flex;align-items:center;justify-content:center;}
 .student-topbar-brand .brand-mark img{width:100%;height:100%;object-fit:contain;}
 .student-topbar-actions{display:flex;align-items:center;gap:8px;margin-right:auto;}
 .student-icon-btn{position:relative;width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--surface-3);color:var(--text-2);cursor:pointer;border:none;flex-shrink:0;}
 .student-icon-btn .dot{position:absolute;top:5px;left:6px;width:7px;height:7px;border-radius:50%;background:var(--warning);border:1.5px solid var(--surface);}
+
+.notif-panel{display:none;position:absolute;top:44px;left:0;width:320px;max-width:calc(100vw - 32px);max-height:420px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow-lg,0 12px 32px rgba(0,0,0,.14));z-index:80;overflow:hidden;flex-direction:column;}
+.notif-panel.open{display:flex;}
+.notif-panel-header{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--border);font-size:13.5px;flex-shrink:0;}
+.notif-mark-all{background:none;border:none;color:var(--primary);font-size:11.5px;font-weight:700;cursor:pointer;font-family:'Cairo',sans-serif;}
+.notif-panel-body{overflow-y:auto;flex:1;}
+.notif-item{display:flex;gap:10px;align-items:flex-start;padding:11px 14px;border-bottom:1px solid var(--border);cursor:pointer;}
+.notif-item:last-child{border-bottom:none;}
+.notif-item.unread{background:var(--primary-10);}
+.notif-item-dot{width:8px;height:8px;border-radius:50%;background:var(--primary);flex-shrink:0;margin-top:5px;}
+.notif-item.read .notif-item-dot{background:transparent;}
+.notif-item-title{font-weight:700;font-size:12.5px;margin-bottom:2px;}
+.notif-item-body{font-size:11.5px;color:var(--text-2);margin-bottom:3px;}
+.notif-item-time{font-size:10.5px;color:var(--text-3);}
 .student-avatar-btn{width:34px;height:34px;border-radius:50%;background:var(--primary-80);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;cursor:pointer;border:none;flex-shrink:0;}
 
-body.is-student .page, body.is-supervisor .page, body.is-teacher .page{padding:16px 16px 100px;}
+body.is-student .page, body.is-supervisor .page, body.is-teacher .page, body.is-head-supervisor .page{padding:16px 16px 100px;}
 
 .bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--border);padding:8px 4px calc(6px + env(safe-area-inset-bottom));z-index:40;box-shadow:0 -4px 18px rgba(46,45,41,.07);}
-body.is-student .bottom-nav, body.is-supervisor .bottom-nav, body.is-teacher .bottom-nav{display:flex;}
+body.is-student .bottom-nav, body.is-supervisor .bottom-nav, body.is-teacher .bottom-nav, body.is-head-supervisor .bottom-nav{display:flex;}
 .bottom-nav-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;background:none;border:none;cursor:pointer;color:var(--text-3);padding:4px 2px;font-family:'Cairo',sans-serif;transition:color .12s var(--ease);}
 .bottom-nav-item span{font-size:10px;font-weight:600;}
 .bottom-nav-item.active{color:var(--warning);}
@@ -495,9 +561,18 @@ body.is-student .bottom-nav, body.is-supervisor .bottom-nav, body.is-teacher .bo
         </div>
       </div>
       <div class="topbar-right student-only">
-        <div class="student-topbar-actions">
-          <button class="student-icon-btn" onclick="showToast('لا يوجد إشعارات جديدة حالياً','info')"><i data-lucide="bell" style="width:16px;height:16px;"></i><span class="dot"></span></button>
+        <div class="student-topbar-actions" style="position:relative;">
+          <button class="student-icon-btn" id="notifBellBtn" onclick="toggleNotificationsPanel()"><i data-lucide="bell" style="width:16px;height:16px;"></i><span class="dot" id="notifDot" style="display:none;"></span></button>
           <button class="student-avatar-btn" onclick="openAccountModal()" id="studentTopbarAvatar">؟</button>
+          <div class="notif-panel" id="notifPanel">
+            <div class="notif-panel-header">
+              <b>الإشعارات</b>
+              <button class="notif-mark-all" onclick="markAllNotificationsRead()">تعليم الكل كمقروء</button>
+            </div>
+            <div class="notif-panel-body" id="notifPanelBody">
+              <div class="empty-state" style="padding:24px 12px;"><div class="empty-title" style="font-size:12.5px;">بتحمّل...</div></div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -531,6 +606,7 @@ body.is-student .bottom-nav, body.is-supervisor .bottom-nav, body.is-teacher .bo
 <!-- لايت بوكس للصور -->
 <div class="overlay" id="imageLightbox" onclick="closeOverlay('imageLightbox')">
   <img id="lightboxImg" src="" style="max-width:90vw;max-height:90vh;border-radius:12px;box-shadow:var(--shadow-xl);">
+  <button class="lightbox-download-btn" id="lightboxDownloadBtn" onclick="event.stopPropagation();downloadLightboxImage()"><i data-lucide="download" style="width:15px;height:15px;"></i> تحميل الصورة</button>
 </div>
 
 <script>
@@ -608,9 +684,22 @@ function confirmAction(title, desc, onConfirm){
 
 function todayStr(){ return new Date().toISOString().slice(0,10); }
 
-function showImageLightbox(src){
+function showImageLightbox(src, filename){
   document.getElementById("lightboxImg").src = src;
+  window._lightboxCurrentSrc = src;
+  window._lightboxCurrentName = filename || "board-image.jpg";
   openOverlay("imageLightbox");
+}
+
+function downloadLightboxImage(){
+  const src = window._lightboxCurrentSrc;
+  if (!src) return;
+  const a = document.createElement("a");
+  a.href = src;
+  a.download = window._lightboxCurrentName || "board-image.jpg";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 /* =====================================================================
@@ -668,11 +757,16 @@ function onLoginSuccess(data){
 function doLogout(silent){
   TOKEN = null; SESSION = null;
   localStorage.removeItem("token"); localStorage.removeItem("session");
-  document.body.classList.remove("is-student", "is-supervisor", "is-teacher");
+  document.body.classList.remove("is-student", "is-supervisor", "is-teacher", "is-head-supervisor");
   document.getElementById("app").classList.add("hidden");
   document.getElementById("loginScreen").classList.remove("hidden");
+  // تصفير نموذج تسجيل الدخول بالكامل عشان الطالب اللي بعده ميلاقيش بيانات الطالب اللي فات
+  const form = document.getElementById("unifiedLoginForm");
+  if (form) form.reset();
+  const code = document.getElementById("loginAccessCode"); if (code) code.value = "";
   const u = document.getElementById("loginUsername"); if (u) u.value = "";
   const p = document.getElementById("loginPassword"); if (p) p.value = "";
+  const err = document.getElementById("loginError"); if (err) { err.textContent = ""; err.classList.remove("show"); }
   if (!silent) showToast("تم تسجيل الخروج", "info");
 }
 
@@ -680,6 +774,83 @@ async function logout(){
   try{ await api("/api/auth/logout", {method:"POST"}); }catch(e){}
   doLogout();
 }
+
+/* =====================================================================
+   الإشعارات - Notifications Dropdown
+===================================================================== */
+function timeAgoAr(dateStr){
+  if (!dateStr) return "";
+  const d = new Date(dateStr.replace(" ", "T") + "Z");
+  if (isNaN(d.getTime())) return dateStr;
+  const diffSec = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (diffSec < 60) return "دلوقتي";
+  if (diffSec < 3600) return `من ${Math.floor(diffSec/60)} دقيقة`;
+  if (diffSec < 86400) return `من ${Math.floor(diffSec/3600)} ساعة`;
+  return `من ${Math.floor(diffSec/86400)} يوم`;
+}
+
+async function refreshNotifBadge(){
+  if (!SESSION) return;
+  try{
+    const data = await api("/api/notifications");
+    const dot = document.getElementById("notifDot");
+    if (dot) dot.style.display = data.unread_count > 0 ? "block" : "none";
+    return data;
+  }catch(e){ return null; }
+}
+
+async function toggleNotificationsPanel(){
+  const panel = document.getElementById("notifPanel");
+  if (!panel) return;
+  const isOpen = panel.classList.contains("open");
+  if (isOpen){ panel.classList.remove("open"); return; }
+  panel.classList.add("open");
+  const body = document.getElementById("notifPanelBody");
+  body.innerHTML = `<div class="empty-state" style="padding:24px 12px;"><div class="empty-title" style="font-size:12.5px;">بتحمّل...</div></div>`;
+  const data = await api("/api/notifications").catch(()=>({items:[], unread_count:0}));
+  const dot = document.getElementById("notifDot");
+  if (dot) dot.style.display = data.unread_count > 0 ? "block" : "none";
+  if (!data.items.length){
+    body.innerHTML = `<div class="empty-state" style="padding:26px 12px;"><div class="empty-icon"><i data-lucide="bell-off" style="width:22px;height:22px;"></i></div><div class="empty-title" style="font-size:12.5px;">لا يوجد إشعارات بعد</div></div>`;
+    icons();
+    return;
+  }
+  body.innerHTML = data.items.map(n=>`
+    <div class="notif-item ${n.is_read?'read':'unread'}" onclick="markNotificationRead(${n.id}, this)">
+      <span class="notif-item-dot"></span>
+      <div style="flex:1;min-width:0;">
+        <div class="notif-item-title">${n.title}</div>
+        ${n.body?`<div class="notif-item-body">${n.body}</div>`:""}
+        <div class="notif-item-time">${timeAgoAr(n.created_at)}</div>
+      </div>
+    </div>
+  `).join("");
+  icons();
+}
+
+async function markNotificationRead(id, el){
+  if (el && el.classList.contains("unread")){
+    el.classList.remove("unread"); el.classList.add("read");
+    try{ await api(`/api/notifications/${id}/read`, {method:"PUT"}); }catch(e){}
+    refreshNotifBadge();
+  }
+}
+
+async function markAllNotificationsRead(){
+  try{ await api("/api/notifications/read-all", {method:"PUT"}); }catch(e){}
+  document.querySelectorAll(".notif-item.unread").forEach(el=>{ el.classList.remove("unread"); el.classList.add("read"); });
+  const dot = document.getElementById("notifDot");
+  if (dot) dot.style.display = "none";
+  showToast("تم تعليم كل الإشعارات كمقروءة", "success");
+}
+
+document.addEventListener("click", (e)=>{
+  const panel = document.getElementById("notifPanel");
+  const btn = document.getElementById("notifBellBtn");
+  if (!panel || !panel.classList.contains("open")) return;
+  if (panel.contains(e.target) || (btn && btn.contains(e.target))) return;
+  panel.classList.remove("open");
+});
 
 /* =====================================================================
    حسابي - تغيير كلمة المرور / تسجيل الخروج
@@ -745,6 +916,7 @@ const NAV_BY_ROLE = {
     {id:"groups", label:"المجموعات", icon:"users"},
     {id:"students", label:"الطلاب", icon:"user"},
     {id:"supervisors", label:"المشرفين", icon:"shield-check"},
+    {id:"head_supervisors", label:"مشرفي المشرفين", icon:"shield"},
     {id:"teachers", label:"المدرسين", icon:"presentation"},
     {id:"schedule", label:"جدول المواعيد", icon:"calendar-clock"},
     {id:"quizzes", label:"الكويزات", icon:"file-check-2"},
@@ -759,10 +931,19 @@ const NAV_BY_ROLE = {
     {id:"teacher_reports", label:"التقارير", icon:"file-text"},
     {id:"teacher_schedule", label:"جدولي", icon:"calendar-clock"},
   ],
+  head_supervisor: [
+    {id:"dashboard", label:"الرئيسية", icon:"layout-dashboard"},
+    {id:"hs_quizzes", label:"إدارة الكويزات", icon:"file-check-2"},
+    {id:"teacher_analytics", label:"التحليلات", icon:"bar-chart-3"},
+    {id:"teacher_compare", label:"مقارنة المجموعات", icon:"git-compare"},
+    {id:"teacher_ranking", label:"الترتيب المتقدم", icon:"trophy"},
+    {id:"supervisors", label:"المشرفين", icon:"shield-check"},
+  ],
   supervisor: [
     {id:"mygroup", label:"مجموعتي", icon:"users"},
     {id:"boards", label:"سبورة الحصة", icon:"presentation"},
-    {id:"quizzes", label:"الكويزات", icon:"file-check-2"},
+    {id:"quizzes", label:"تسجيل الدرجات", icon:"file-check-2"},
+    {id:"homework", label:"الواجبات", icon:"clipboard-list"},
     {id:"attendance", label:"الحضور والغياب", icon:"calendar-check"},
     {id:"student_search", label:"بحث عن طالب", icon:"search"},
   ],
@@ -775,14 +956,14 @@ const NAV_BY_ROLE = {
   ],
 };
 
-const ROLE_LABELS = {admin:"الأدمن العام", teacher:"المدرس", supervisor:"مشرف مجموعة", student:"طالب"};
+const ROLE_LABELS = {admin:"الأدمن العام", teacher:"المدرس", supervisor:"مشرف مجموعة", head_supervisor:"مشرف المشرفين", student:"طالب"};
 
 // عناصر الناف بار السفلي الخاص بواجهة الطالب (موبايل)
 const STUDENT_BOTTOM_NAV = [
   {id:"mydashboard", label:"الرئيسية", icon:"home"},
   {id:"myboard", label:"سبورة المجموعة", icon:"presentation"},
   {id:"myattendance", label:"حضوري", icon:"calendar-check"},
-  {id:"myscores", label:"دوراتي", icon:"book-open"},
+  {id:"myscores", label:"درجاتي", icon:"book-open"},
   {id:"student_more", label:"المزيد", icon:"layout-grid"},
 ];
 
@@ -791,8 +972,17 @@ const SUPERVISOR_BOTTOM_NAV = [
   {id:"mygroup", label:"مجموعتي", icon:"users"},
   {id:"boards", label:"سبورة الحصة", icon:"presentation"},
   {id:"attendance", label:"الحضور", icon:"calendar-check"},
-  {id:"quizzes", label:"الكويزات", icon:"file-check-2"},
+  {id:"homework", label:"الواجبات", icon:"clipboard-list"},
   {id:"supervisor_more", label:"المزيد", icon:"layout-grid"},
+];
+
+// عناصر الناف بار السفلي الخاص بواجهة مشرف المشرفين (موبايل)
+const HEAD_SUPERVISOR_BOTTOM_NAV = [
+  {id:"dashboard", label:"الرئيسية", icon:"home"},
+  {id:"hs_quizzes", label:"الكويزات", icon:"file-check-2"},
+  {id:"teacher_analytics", label:"التحليلات", icon:"bar-chart-3"},
+  {id:"supervisors", label:"المشرفين", icon:"shield-check"},
+  {id:"head_supervisor_more", label:"المزيد", icon:"layout-grid"},
 ];
 
 // عناصر الناف بار السفلي الخاص بواجهة المدرس (موبايل)
@@ -804,10 +994,10 @@ const TEACHER_BOTTOM_NAV = [
   {id:"teacher_more", label:"المزيد", icon:"layout-grid"},
 ];
 
-const MOBILE_BOTTOM_NAV_BY_ROLE = {student: STUDENT_BOTTOM_NAV, supervisor: SUPERVISOR_BOTTOM_NAV, teacher: TEACHER_BOTTOM_NAV};
+const MOBILE_BOTTOM_NAV_BY_ROLE = {student: STUDENT_BOTTOM_NAV, supervisor: SUPERVISOR_BOTTOM_NAV, teacher: TEACHER_BOTTOM_NAV, head_supervisor: HEAD_SUPERVISOR_BOTTOM_NAV};
 
 // اسم صفحة "المزيد" حسب الدور، لاستخدامها في زر المنيو بالتوب بار
-const MOBILE_MORE_PAGE_BY_ROLE = {student: "student_more", supervisor: "supervisor_more", teacher: "teacher_more"};
+const MOBILE_MORE_PAGE_BY_ROLE = {student: "student_more", supervisor: "supervisor_more", teacher: "teacher_more", head_supervisor: "head_supervisor_more"};
 function openMobileMoreMenu(){
   navigateTo(MOBILE_MORE_PAGE_BY_ROLE[SESSION.role] || "student_more");
 }
@@ -862,12 +1052,14 @@ async function boot(){
   document.body.classList.toggle("is-student", SESSION.role === "student");
   document.body.classList.toggle("is-supervisor", SESSION.role === "supervisor");
   document.body.classList.toggle("is-teacher", SESSION.role === "teacher");
+  document.body.classList.toggle("is-head-supervisor", SESSION.role === "head_supervisor");
   document.getElementById("topbarDate").textContent = new Date().toLocaleDateString("ar-EG", {weekday:"long", year:"numeric", month:"long", day:"numeric"});
   buildNav();
   const avatarEl = document.getElementById("studentTopbarAvatar");
   if (avatarEl) avatarEl.textContent = (SESSION.full_name || "؟").trim()[0] || "؟";
   if (MOBILE_BOTTOM_NAV_BY_ROLE[SESSION.role]) buildBottomNav();
   icons();
+  refreshNotifBadge();
   const first = SESSION.role === "student" ? "mydashboard" : (NAV_BY_ROLE[SESSION.role] || [{id:"dashboard"}])[0].id;
   navigateTo(first);
 }
@@ -885,10 +1077,13 @@ window.addEventListener("DOMContentLoaded", ()=>{
 const PAGE_TITLES = {
   dashboard:"لوحة التحكم", groups:"المجموعات", students:"الطلاب",
   supervisors:"المشرفين", teachers:"المدرسين", schedule:"جدول المواعيد",
-  quizzes:"الكويزات", attendance:"الحضور والغياب", boards:"سبورة الحصص",
+  head_supervisors:"مشرفي المشرفين",
+  quizzes:"تسجيل الدرجات", attendance:"الحضور والغياب", boards:"سبورة الحصص",
+  homework:"الواجبات",
   mygroup:"مجموعتي", mydashboard:"لوحتي", myscores:"درجاتي", myhomework:"واجباتي",
   myattendance:"حضوري", myboard:"سبورة مجموعتي", student_more:"المزيد",
   student_search:"بحث عن طالب", supervisor_more:"المزيد", teacher_more:"المزيد",
+  head_supervisor_more:"المزيد", hs_quizzes:"إدارة الكويزات",
   teacher_analytics:"التحليلات", teacher_compare:"مقارنة المجموعات",
   teacher_ranking:"الترتيب المتقدم", teacher_reports:"التقارير", teacher_schedule:"جدولي",
 };
@@ -905,8 +1100,11 @@ async function renderPage(page){
       students: renderStudentsPage,
       supervisors: ()=>renderUsersPage("supervisor"),
       teachers: ()=>renderUsersPage("teacher"),
+      head_supervisors: ()=>renderUsersPage("head_supervisor"),
       schedule: renderSchedulePage,
       quizzes: renderQuizzesPage,
+      hs_quizzes: renderHsQuizzesPage,
+      homework: renderSupervisorHomeworkPage,
       attendance: renderAttendancePage,
       boards: renderBoardsPage,
       mygroup: renderMyGroupPage,
@@ -918,6 +1116,7 @@ async function renderPage(page){
       student_more: renderStudentMorePage,
       supervisor_more: renderSupervisorMorePage,
       teacher_more: renderTeacherMorePage,
+      head_supervisor_more: renderHeadSupervisorMorePage,
       student_search: renderStudentSearchPage,
       teacher_analytics: renderTeacherAnalyticsPage,
       teacher_compare: renderTeacherComparePage,
@@ -998,7 +1197,7 @@ function renderTodayScheduleCard(todayName, items){
           </div>
           <div style="flex:1;">
             <div style="font-weight:700;font-size:13.5px;">${it.title || "حصة"}</div>
-            <div style="font-size:12px;color:var(--text-3);">${it.group_name ? `مجموعة: ${it.group_name}` : "موعد عام"}${it.notes?(' • '+it.notes):''}</div>
+            <div style="font-size:12px;color:var(--text-3);">${it.group_name ? `مجموعة: ${it.group_name}${it.stage_name?` (${it.stage_name})`:''}` : "موعد عام"}${it.notes?(' • '+it.notes):''}</div>
           </div>
           <i data-lucide="arrow-left" style="width:14px;height:14px;color:var(--text-3);flex-shrink:0;"></i>
         </div>
@@ -1008,7 +1207,7 @@ function renderTodayScheduleCard(todayName, items){
 }
 
 async function renderDashboardPage(){
-  if (SESSION.role === "teacher"){
+  if (SESSION.role === "teacher" || SESSION.role === "head_supervisor"){
     return renderTeacherDashboardPage();
   }
   const [groups, students, quizzes] = await Promise.all([
@@ -1165,6 +1364,11 @@ async function renderTeacherDashboardPage(){
         <div style="font-weight:700;font-size:13.5px;margin-bottom:4px;display:flex;align-items:center;gap:6px;"><i data-lucide="trophy" style="width:15px;height:15px;color:var(--primary);"></i> أفضل المجموعات</div>
         ${renderMiniRankList(sortedByScore, "name", "avg_score_percent", "stage_name", "%")}
       </div>
+    </div>
+
+    <div class="table-card" style="padding:14px 16px;margin-bottom:18px;">
+      <div style="font-weight:700;font-size:13.5px;margin-bottom:4px;display:flex;align-items:center;gap:6px;"><i data-lucide="user-x" style="width:15px;height:15px;color:var(--danger);"></i> أكثر الطلاب غيابًا (٣ غيابات أو أكتر)</div>
+      ${renderMiniRankList(stats.most_absent_students||[], "full_name", "absent_count", "group_name", " غياب")}
     </div>
 
     <div class="table-card" style="padding:14px 16px;">
@@ -1974,7 +2178,7 @@ async function renderTeacherSchedulePage(){
             <div class="schedule-time">${it.start_time}${it.end_time?` - ${it.end_time}`:""}</div>
             <div class="schedule-body">
               <b>${it.title || "حصة"}</b>
-              <div class="sub">${it.group_name ? `مجموعة: ${it.group_name}` : "موعد عام"} ${it.notes?(' • '+it.notes):''}</div>
+              <div class="sub">${it.group_name ? `مجموعة: ${it.group_name}${it.stage_name?` (${it.stage_name})`:''}` : "موعد عام"} ${it.notes?(' • '+it.notes):''}</div>
             </div>
           </div>
         `).join("")}
@@ -2434,20 +2638,23 @@ function deleteStudent(id, name){
    المشرفين والمدرسين - Users Management (أدمن فقط)
 ===================================================================== */
 async function renderUsersPage(role){
+  const canManage = SESSION.role === "admin";
   const [users, govs] = await Promise.all([api(`/api/users?role=${role}`), loadGovernorates()]);
   CACHE_GOVS = govs;
-  const roleLabel = role === "supervisor" ? "المشرف" : "المدرس";
+  const roleLabels = {supervisor: "المشرف", teacher: "المدرس", head_supervisor: "مشرف المشرفين"};
+  const roleTitles = {supervisor: "المشرفين", teacher: "المدرسين", head_supervisor: "مشرفي المشرفين"};
+  const roleLabel = roleLabels[role] || "المستخدم";
   const c = document.getElementById("pageContainer");
   c.innerHTML = `
     <div class="page-header">
-      <div><h1>${role==="supervisor"?"المشرفين":"المدرسين"}</h1><p>إدارة حسابات ${role==="supervisor"?"المشرفين المسؤولين عن المجموعات":"المدرسين"}</p></div>
+      <div><h1>${roleTitles[role]||"المستخدمين"}</h1><p>${canManage ? `إدارة حسابات ${role==="supervisor"?"المشرفين المسؤولين عن المجموعات":roleTitles[role]}` : `متابعة ${roleTitles[role]||''}`}</p></div>
       <div class="header-actions">
-        <button class="btn btn-primary btn-sm" onclick="openAddUserModal('${role}')"><i data-lucide="user-plus" style="width:14px;height:14px;"></i> إضافة ${roleLabel}</button>
+        ${canManage ? `<button class="btn btn-primary btn-sm" onclick="openAddUserModal('${role}')"><i data-lucide="user-plus" style="width:14px;height:14px;"></i> إضافة ${roleLabel}</button>` : ""}
       </div>
     </div>
     <div class="table-card">
       <div class="table-wrap"><table>
-        <thead><tr><th>#</th><th>الاسم</th><th>اسم المستخدم</th><th>كود الدخول</th><th>الهاتف</th>${role==='supervisor'?'<th>المحافظة</th><th>المجموعات المسؤول عنها</th>':''}<th>الحالة</th><th></th></tr></thead>
+        <thead><tr><th>#</th><th>الاسم</th><th>اسم المستخدم</th><th>كود الدخول</th><th>الهاتف</th>${role==='supervisor'?'<th>المحافظة</th><th>المجموعات المسؤول عنها</th>':''}<th>الحالة</th>${canManage?'<th></th>':''}</tr></thead>
         <tbody>
           ${users.map(u=>`
             <tr>
@@ -2460,12 +2667,13 @@ async function renderUsersPage(role){
               <td>${u.governorate_name ? `<span class="badge badge-blue"><i data-lucide="map-pin" style="width:11px;height:11px;"></i> ${u.governorate_name}</span>` : `<span class="badge badge-gray">بدون محافظة</span>`}</td>
               <td>${(u.groups&&u.groups.length) ? u.groups.map(g=>`<span class="badge badge-teal" style="margin:2px;">${g.name}</span>`).join("") : `<span class="badge badge-gray">بدون مجموعة</span>`}</td>` : ''}
               <td>${u.is_active ? `<span class="badge badge-green">مفعّل</span>` : `<span class="badge badge-red">موقوف</span>`}</td>
+              ${canManage ? `
               <td class="td-actions">
                 ${u.phone ? `<button class="action-btn" title="تواصل" onclick="openContactPopup('${u.full_name.replace(/'/g,"")}', '${u.phone}')"><i data-lucide="phone" style="width:15px;height:15px;"></i></button><span class="act-divider"></span>` : ""}
                 <button class="act-btn ${u.is_active?'act-pause':'act-play'}" title="${u.is_active?`إيقاف ${roleLabel}`:`تفعيل ${roleLabel}`}" onclick="toggleUserActive(${u.id}, ${u.is_active}, '${role}')"><i data-lucide="${u.is_active?'pause':'play'}" style="width:13px;height:13px;"></i>${u.is_active?'إيقاف':'تفعيل'}</button>
                 <button class="act-btn act-edit" title="تعديل بيانات ${roleLabel}" onclick="openEditUserModal(${u.id}, '${role}')"><i data-lucide="pencil" style="width:13px;height:13px;"></i>تعديل</button>
                 <button class="act-btn act-del" title="حذف ${roleLabel} نهائيًا" onclick="deleteUser(${u.id}, '${u.full_name.replace(/'/g,"")}', '${role}')"><i data-lucide="trash-2" style="width:13px;height:13px;"></i>حذف</button>
-              </td>
+              </td>` : ''}
             </tr>`).join("") || `<tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:30px;">لا يوجد ${roleLabel.replace('ال','')}ين بعد</td></tr>`}
         </tbody>
       </table></div>
@@ -2714,37 +2922,244 @@ function deleteScheduleItem(id){
    الكويزات - Quizzes
 ===================================================================== */
 async function renderQuizzesPage(){
-  const canManage = SESSION.role !== "student";
+  const canCreate = SESSION.role === "admin";
+  const canScore = SESSION.role !== "student";
   const [quizzes, groups] = await Promise.all([api("/api/quizzes"), loadGroups()]);
   CACHE_ALL_GROUPS = groups;
 
   const c = document.getElementById("pageContainer");
   c.innerHTML = `
     <div class="page-header">
-      <div><h1>الكويزات</h1><p>كويزات المجموعات ودرجات الطلاب</p></div>
+      <div><h1>${SESSION.role==="supervisor"?"تسجيل الدرجات":"الكويزات"}</h1><p>${SESSION.role==="supervisor"?"اختار الكويز وسجّل درجات طلاب مجموعتك":"كويزات المراحل الدراسية ودرجات الطلاب"}</p></div>
       <div class="header-actions">
-        ${canManage ? `<button class="btn btn-primary btn-sm" onclick="openAddQuizModal()"><i data-lucide="plus" style="width:14px;height:14px;"></i> إنشاء كويز</button>` : ""}
+        ${canCreate ? `<button class="btn btn-primary btn-sm" onclick="openAddQuizModal()"><i data-lucide="plus" style="width:14px;height:14px;"></i> إنشاء كويز</button>` : ""}
       </div>
     </div>
     <div class="table-card">
       <div class="table-wrap"><table>
-        <thead><tr><th>الكويز</th><th>المجموعة</th><th>التاريخ</th><th>الدرجة القصوى</th><th></th></tr></thead>
+        <thead><tr><th>الكويز</th><th>المرحلة/المجموعة</th><th>التاريخ</th><th>الدرجة القصوى</th><th></th></tr></thead>
         <tbody>
           ${quizzes.map(q=>`
             <tr>
-              <td class="td-name">${q.title}${q.description?`<div class="td-sub">${q.description}</div>`:""}</td>
-              <td>${q.group_name ? `<span class="badge badge-teal">${q.group_name}</span>` : `<span class="badge badge-gray">عام لكل المجموعات</span>`}</td>
+              <td class="td-name">${q.title}${q.version_label?` <span class="badge badge-gray">${q.version_label}</span>`:""}${q.description?`<div class="td-sub">${q.description}</div>`:""}</td>
+              <td>${q.stage_name ? `<span class="badge badge-blue">${q.stage_name}</span>` : (q.group_name ? `<span class="badge badge-teal">${q.group_name}</span>` : `<span class="badge badge-gray">عام لكل المجموعات</span>`)}</td>
               <td>${q.quiz_date||"—"}</td>
               <td>${q.max_score}</td>
               <td class="td-actions">
-                <button class="btn btn-ghost btn-sm" onclick="openQuizScoresModal(${q.id}, '${q.title.replace(/'/g,"")}', ${q.max_score})"><i data-lucide="list-checks" style="width:14px;height:14px;"></i> الدرجات</button>
-                ${canManage ? `<button class="action-btn del" onclick="deleteQuiz(${q.id})"><i data-lucide="trash-2" style="width:15px;height:15px;"></i></button>` : ""}
+                ${canScore ? `<button class="btn btn-ghost btn-sm" onclick="openQuizScoresModal(${q.id}, '${q.title.replace(/'/g,"")}', ${q.max_score})"><i data-lucide="list-checks" style="width:14px;height:14px;"></i> الدرجات</button>` : ""}
+                ${canCreate ? `<button class="action-btn del" onclick="deleteQuiz(${q.id})"><i data-lucide="trash-2" style="width:15px;height:15px;"></i></button>` : ""}
               </td>
             </tr>`).join("") || `<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:30px;">لا يوجد كويزات بعد</td></tr>`}
         </tbody>
       </table></div>
     </div>
   `;
+  icons();
+}
+
+/* =====================================================================
+   إدارة الكويزات - مشرف المشرفين (Head Supervisor)
+===================================================================== */
+async function renderHsQuizzesPage(){
+  const [quizzes, stages] = await Promise.all([api("/api/quizzes"), loadStages()]);
+  CACHE_STAGES = stages;
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>إدارة الكويزات</h1><p>إنشاء كويز أو امتحان شامل يوصل تلقائيًا لكل مشرفي المرحلة</p></div>
+      <div class="header-actions">
+        <button class="btn btn-primary btn-sm" onclick="openHsQuizModal()"><i data-lucide="plus" style="width:14px;height:14px;"></i> إنشاء كويز</button>
+      </div>
+    </div>
+    <div class="table-card">
+      <div class="table-wrap"><table>
+        <thead><tr><th>الكويز</th><th>المرحلة</th><th>الحصة</th><th>التاريخ</th><th>الدرجة القصوى</th><th></th></tr></thead>
+        <tbody>
+          ${quizzes.map(q=>`
+            <tr>
+              <td class="td-name">${q.image_data?`<i data-lucide="image" style="width:13px;height:13px;color:var(--primary);"></i> `:""}${q.title}${q.version_label?` <span class="badge badge-gray">${q.version_label}</span>`:""}${q.description?`<div class="td-sub">${q.description}</div>`:""}</td>
+              <td>${q.stage_name ? `<span class="badge badge-blue">${q.stage_name}</span>` : `<span class="badge badge-gray">عام</span>`}</td>
+              <td>${q.session_number ?? "—"}</td>
+              <td>${q.quiz_date||"—"}</td>
+              <td>${q.max_score}</td>
+              <td class="td-actions">
+                <button class="btn btn-ghost btn-sm" onclick="openQuizScoresModal(${q.id}, '${q.title.replace(/'/g,"")}', ${q.max_score})"><i data-lucide="list-checks" style="width:14px;height:14px;"></i> الدرجات</button>
+                <button class="action-btn" onclick='openHsQuizModal(${JSON.stringify(q).replace(/'/g,"&#39;")})'><i data-lucide="pencil" style="width:14px;height:14px;"></i></button>
+                <button class="action-btn del" onclick="deleteQuiz(${q.id})"><i data-lucide="trash-2" style="width:15px;height:15px;"></i></button>
+              </td>
+            </tr>`).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:30px;">لا يوجد كويزات بعد</td></tr>`}
+        </tbody>
+      </table></div>
+    </div>
+  `;
+  icons();
+}
+
+function openHsQuizModal(quiz){
+  const isEdit = !!quiz;
+  openModal(isEdit ? "تعديل الكويز" : "إنشاء كويز / امتحان شامل", `
+    <input type="hidden" id="f_hq_id" value="${isEdit?quiz.id:""}">
+    <div class="form-group"><label class="form-label">اسم الكويز أو الامتحان <span class="req">*</span></label><input class="form-input" id="f_hq_title" value="${isEdit?quiz.title.replace(/"/g,'&quot;'):""}"></div>
+    <div class="form-row-2">
+      <div class="form-group"><label class="form-label">المرحلة الدراسية <span class="req">*</span></label>
+        <select class="form-select" id="f_hq_stage">${(CACHE_STAGES||[]).map(s=>`<option value="${s.id}" ${isEdit&&quiz.stage_id==s.id?"selected":""}>${s.name}</option>`).join("")}</select>
+      </div>
+      <div class="form-group"><label class="form-label">رقم الحصة</label><input class="form-input" id="f_hq_session" type="number" min="1" value="${isEdit&&quiz.session_number!=null?quiz.session_number:""}"></div>
+    </div>
+    <div class="form-row-2">
+      <div class="form-group"><label class="form-label">التاريخ</label><input class="form-input" id="f_hq_date" type="date" value="${isEdit&&quiz.quiz_date?quiz.quiz_date:todayStr()}"></div>
+      <div class="form-group"><label class="form-label">الدرجة النهائية</label><input class="form-input" id="f_hq_max" type="number" value="${isEdit?quiz.max_score:100}"></div>
+    </div>
+    <div class="form-group"><label class="form-label">اسم النموذج (لو فيه أكتر من نموذج امتحان)</label><input class="form-input" id="f_hq_version" placeholder="مثال: نموذج A" value="${isEdit&&quiz.version_label?quiz.version_label.replace(/"/g,'&quot;'):""}"></div>
+    <div class="form-group"><label class="form-label">وصف الكويز/الامتحان</label><textarea class="form-textarea" id="f_hq_desc">${isEdit&&quiz.description?quiz.description:""}</textarea></div>
+    <div class="form-group">
+      <label class="form-label">صورة الكويز/الامتحان (اختياري)</label>
+      <input class="form-input" id="f_hq_image" type="file" accept="image/*">
+      ${isEdit&&quiz.image_data?`<div class="form-hint">فيه صورة متحفوظة بالفعل، اختار صورة جديدة بس لو عايز تستبدلها</div>`:""}
+    </div>
+  `, `
+    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+    <button class="btn btn-primary" onclick="submitHsQuiz(${isEdit})"><i data-lucide="check" style="width:14px;height:14px;"></i> ${isEdit?"حفظ التعديلات":"إنشاء"}</button>
+  `);
+}
+
+async function submitHsQuiz(isEdit){
+  const title = document.getElementById("f_hq_title").value.trim();
+  const stageId = document.getElementById("f_hq_stage").value;
+  if (!title){ showToast("لازم تكتب اسم الكويز", "error"); return; }
+  if (!stageId){ showToast("لازم تحدد المرحلة الدراسية", "error"); return; }
+
+  let imageData = null;
+  const fileInput = document.getElementById("f_hq_image");
+  if (fileInput && fileInput.files[0]){
+    imageData = await readFileAsDataURL(fileInput.files[0]);
+  }
+
+  const body = {
+    title,
+    stage_id: parseInt(stageId),
+    session_number: document.getElementById("f_hq_session").value ? parseInt(document.getElementById("f_hq_session").value) : null,
+    quiz_date: document.getElementById("f_hq_date").value || null,
+    max_score: parseFloat(document.getElementById("f_hq_max").value) || 100,
+    version_label: document.getElementById("f_hq_version").value.trim() || null,
+    description: document.getElementById("f_hq_desc").value.trim() || null,
+    image_data: imageData,
+  };
+
+  const id = document.getElementById("f_hq_id").value;
+  if (isEdit && id){
+    await api(`/api/quizzes/${id}`, {method:"PUT", body: JSON.stringify(body)});
+    showToast("تم تعديل الكويز", "success");
+  } else {
+    await api("/api/quizzes", {method:"POST", body: JSON.stringify(body)});
+    showToast("تم إنشاء الكويز، ووصل لكل مشرفي المرحلة ✅", "success");
+  }
+  closeOverlay("genericModal");
+  renderHsQuizzesPage();
+}
+
+/* =====================================================================
+   الواجبات - إدارة المشرف (تحديد تم التسليم / لم يتم لكل طالب)
+===================================================================== */
+async function renderSupervisorHomeworkPage(){
+  const groups = SESSION.role === "supervisor" ? await loadGroups() : [];
+  const myGroup = groups[0] || null;
+  const groupId = myGroup ? myGroup.id : null;
+
+  const c = document.getElementById("pageContainer");
+  if (!groupId){
+    c.innerHTML = `<div class="empty-state"><div class="empty-icon"><i data-lucide="users" style="width:26px;height:26px;"></i></div><div class="empty-title">معندكش مجموعة لسه</div><div class="empty-desc">كلم الأدمن عشان يعينك على مجموعة.</div></div>`;
+    return;
+  }
+  c.innerHTML = `
+    <div class="page-header"><div><h1>الواجبات</h1><p>حدد لكل طالب: تم تسليم الواجب أو لأ</p></div>
+      <div class="header-actions"><button class="btn btn-primary btn-sm" onclick="openAddHomeworkModal(${groupId})"><i data-lucide="plus" style="width:14px;height:14px;"></i> إضافة واجب حصة</button></div>
+    </div>
+    <div id="supHomeworkWrap"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>
+  `;
+  await loadSupervisorHomework(groupId);
+}
+
+async function loadSupervisorHomework(groupId){
+  const homeworks = await api(`/api/homework?group_id=${groupId}`);
+  const wrap = document.getElementById("supHomeworkWrap");
+  if (!wrap) return;
+  if (!homeworks.length){
+    wrap.innerHTML = `<div class="empty-state"><div class="empty-icon"><i data-lucide="clipboard-list" style="width:26px;height:26px;"></i></div><div class="empty-title">لسه مفيش واجبات مضافة</div></div>`;
+    return;
+  }
+  const sorted = [...homeworks].sort((a,b)=>b.session_number-a.session_number);
+  const subsLists = await Promise.all(sorted.map(hw=>api(`/api/homework/${hw.id}/submissions`).catch(()=>[])));
+
+  wrap.innerHTML = sorted.map((hw, idx)=>{
+    const subs = subsLists[idx] || [];
+    return `
+    <div class="table-card" style="margin-bottom:14px;">
+      <div class="toolbar" style="justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <i data-lucide="presentation" style="width:14px;height:14px;color:var(--primary);"></i>
+          <b style="font-size:13.5px;">الحصة ${hw.session_number}</b>
+          ${hw.session_date?`<span style="font-size:12px;color:var(--text-3);">${hw.session_date}</span>`:""}
+          <span style="font-size:12px;color:var(--text-2);">${hw.description||""}</span>
+        </div>
+        <button class="action-btn del" onclick="deleteHomeworkItem(${hw.id}, ${JSON.stringify(hw.group_id)})"><i data-lucide="trash-2" style="width:14px;height:14px;"></i></button>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>الطالب</th><th>الحالة</th></tr></thead>
+        <tbody>
+          ${subs.map(s=>`
+            <tr>
+              <td class="td-name">${s.full_name}</td>
+              <td>
+                <div class="seg-toggle">
+                  <button class="seg-btn ${s.done?'active-green':''}" onclick="setHomeworkStatus(${hw.id}, ${s.student_id}, true, ${hw.group_id})">✅ تم التسليم</button>
+                  <button class="seg-btn ${!s.done?'active-red':''}" onclick="setHomeworkStatus(${hw.id}, ${s.student_id}, false, ${hw.group_id})">❌ لم يسلم</button>
+                </div>
+              </td>
+            </tr>`).join("") || `<tr><td colspan="2" style="text-align:center;color:var(--text-3);">لا يوجد طلاب</td></tr>`}
+        </tbody>
+      </table></div>
+    </div>`;
+  }).join("");
+  icons();
+}
+
+function openAddHomeworkModal(groupId){
+  openModal("إضافة واجب حصة", `
+    <div class="form-group"><label class="form-label">رقم الحصة <span class="req">*</span></label><input class="form-input" id="f_hw_session" type="number" min="1"></div>
+    <div class="form-group"><label class="form-label">تاريخ الحصة</label><input class="form-input" id="f_hw_date" type="date" value="${todayStr()}"></div>
+    <div class="form-group"><label class="form-label">وصف الواجب <span class="req">*</span></label><textarea class="form-textarea" id="f_hw_desc"></textarea></div>
+  `, `
+    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+    <button class="btn btn-primary" onclick="submitAddHomework(${groupId})"><i data-lucide="check" style="width:14px;height:14px;"></i> إضافة</button>
+  `);
+}
+
+async function submitAddHomework(groupId){
+  const sessionNumber = document.getElementById("f_hw_session").value;
+  const description = document.getElementById("f_hw_desc").value.trim();
+  if (!sessionNumber || !description){ showToast("لازم تحدد رقم الحصة ووصف الواجب", "error"); return; }
+  await api("/api/homework", {method:"POST", body: JSON.stringify({
+    group_id: groupId, session_number: parseInt(sessionNumber),
+    session_date: document.getElementById("f_hw_date").value || null, description
+  })});
+  showToast("تم إضافة الواجب", "success");
+  closeOverlay("genericModal");
+  loadSupervisorHomework(groupId);
+}
+
+function deleteHomeworkItem(hwId, groupId){
+  confirmAction("حذف الواجب", "متأكد إنك عايز تحذف الواجب ده؟", async ()=>{
+    await api(`/api/homework/${hwId}`, {method:"DELETE"});
+    showToast("تم الحذف", "success");
+    loadSupervisorHomework(groupId);
+  });
+}
+
+async function setHomeworkStatus(hwId, studentId, done, groupId){
+  await api(`/api/homework/${hwId}/submissions`, {method:"POST", body: JSON.stringify({student_id: studentId, done})});
+  showToast(done ? "تم تسجيل: تم التسليم ✅" : "تم تسجيل: لم يسلم ❌", "success");
+  loadSupervisorHomework(groupId);
 }
 
 function openAddQuizModal(){
@@ -2850,6 +3265,7 @@ async function renderAttendancePage(){
   QUICK_ATT_STATUS_BY_SESSION = {};
   ATT_ROWS_CACHE_BY_SESSION = {};
   const c = document.getElementById("pageContainer");
+  const savedSessions = canEdit ? loadAttSessionsFromStorage() : [];
   c.innerHTML = `
     <div class="page-header">
       <div><h1>الحضور والغياب</h1><p>اختار المجموعة والحصة وابدأ تاخد الغياب بتاريخ النهارده</p></div>
@@ -2866,6 +3282,13 @@ async function renderAttendancePage(){
     <div id="attSessionsWrap">${canEdit ? ATT_EMPTY_STATE_HTML : `<div class="empty-state"><div class="empty-icon"><i data-lucide="lock" style="width:26px;height:26px;"></i></div><div class="empty-title">مفيش صلاحية</div><div class="empty-desc">أخذ الغياب متاح للمشرف بس.</div></div>`}</div>
   `;
   icons();
+
+  // استرجاع الحصص اللي كانت متفتحة قبل كده (تفضل ظاهرة بعد الحفظ أو تحديث الصفحة)
+  if (canEdit && savedSessions.length){
+    for (const s of savedSessions){
+      await openAttendancePanel(s.group_id, s.group_name, s.session_number);
+    }
+  }
 }
 
 async function renderAttendanceStatsOnlyPage(){
@@ -2961,6 +3384,16 @@ async function startTakeAttendance(){
   await openAttendancePanel(groupId, groupName, sn);
 }
 
+function attSessionsStorageKey(){
+  return `att_open_sessions_${SESSION.role}_${SESSION.id}`;
+}
+function saveAttSessionsToStorage(){
+  try{ localStorage.setItem(attSessionsStorageKey(), JSON.stringify(ATT_ACTIVE_SESSIONS)); }catch(e){}
+}
+function loadAttSessionsFromStorage(){
+  try{ return JSON.parse(localStorage.getItem(attSessionsStorageKey())) || []; }catch(e){ return []; }
+}
+
 async function openAttendancePanel(groupId, groupName, sn){
   const key = `${groupId}_${sn}`;
   const exists = ATT_ACTIVE_SESSIONS.find(s=>s.group_id===groupId && s.session_number===sn);
@@ -2971,6 +3404,7 @@ async function openAttendancePanel(groupId, groupName, sn){
     return;
   }
   ATT_ACTIVE_SESSIONS.push({group_id: groupId, group_name: groupName, session_number: sn});
+  saveAttSessionsToStorage();
   const emptyState = document.getElementById("attEmptyState");
   if (emptyState) emptyState.remove();
   const wrap = document.getElementById("attSessionsWrap");
@@ -2988,6 +3422,7 @@ async function openAttendancePanel(groupId, groupName, sn){
 function closeAttendancePanel(groupId, sn){
   const key = `${groupId}_${sn}`;
   ATT_ACTIVE_SESSIONS = ATT_ACTIVE_SESSIONS.filter(s=>!(s.group_id===groupId && s.session_number===sn));
+  saveAttSessionsToStorage();
   const card = document.getElementById(`att_panel_${key}`);
   if (card) card.remove();
   if (!ATT_ACTIVE_SESSIONS.length){
@@ -3198,7 +3633,7 @@ async function loadBoardImages(){
   document.getElementById("boardCardsWrap").innerHTML = sessions.length ? sessions.map((sn, idx)=>{
     const sec = bySession[sn];
     const hw = sec.hw;
-    const isOpen = idx === 0; // أول حصة مفتوحة افتراضياً
+    const isOpen = isCollapseOpenByDefault(`session_body_${sn}`, idx === 0); // أول حصة مفتوحة افتراضيًا، والباقي بيفضل زي ما سايبه المستخدم
     const hwDoneCount = hw ? hw.done_count : 0;
     const hwTotalCount = hw ? hw.total_count : 0;
     const hwPct = hwTotalCount ? Math.round(hwDoneCount/hwTotalCount*100) : null;
@@ -3248,11 +3683,23 @@ async function loadBoardImages(){
   icons();
 }
 
+// تتبع حالة الكولابسات المفتوحة/المغلقة يدويًا، عشان تفضل زي ما المستخدم سايبها
+// حتى لو الصفحة اتعمللها إعادة تحميل بعد حفظ أو رفع صورة جديدة
+let COLLAPSE_OPEN_IDS = new Set();
+let COLLAPSE_CLOSED_IDS = new Set();
+function isCollapseOpenByDefault(id, defaultOpen){
+  if (COLLAPSE_OPEN_IDS.has(id)) return true;
+  if (COLLAPSE_CLOSED_IDS.has(id)) return false;
+  return defaultOpen;
+}
+
 function toggleCollapse(bodyId, headerEl){
   const body = document.getElementById(bodyId);
   if (!body) return;
   const isOpen = body.style.display !== 'none';
   body.style.display = isOpen ? 'none' : 'block';
+  if (isOpen){ COLLAPSE_OPEN_IDS.delete(bodyId); COLLAPSE_CLOSED_IDS.add(bodyId); }
+  else { COLLAPSE_CLOSED_IDS.delete(bodyId); COLLAPSE_OPEN_IDS.add(bodyId); }
   const icon = headerEl.querySelector('.collapse-icon');
   if (icon){
     icon.setAttribute('data-lucide', isOpen ? 'chevron-down' : 'chevron-up');
@@ -3559,6 +4006,42 @@ async function renderStudentDashboardPage(){
   icons();
 }
 
+async function renderHeadSupervisorMorePage(){
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header"><div><h1>المزيد</h1><p>باقي صفحاتك وإعدادات حسابك</p></div></div>
+    <div class="table-card" style="padding:6px 12px;margin-bottom:14px;">
+      <div class="student-more-item" onclick="navigateTo('teacher_ranking')">
+        <div class="student-more-ic"><i data-lucide="trophy" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">الترتيب المتقدم</div><div style="font-size:11.5px;color:var(--text-3);">ترتيب الطلاب والمجموعات</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
+      <div class="student-more-item" onclick="navigateTo('teacher_compare')">
+        <div class="student-more-ic"><i data-lucide="git-compare" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">مقارنة المجموعات</div><div style="font-size:11.5px;color:var(--text-3);">قارن أداء المجموعات ببعض</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
+      <div class="student-more-item" onclick="navigateTo('supervisors')">
+        <div class="student-more-ic"><i data-lucide="shield-check" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">المشرفين</div><div style="font-size:11.5px;color:var(--text-3);">متابعة كل المشرفين ومجموعاتهم</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
+    </div>
+    <div class="table-card" style="padding:6px 12px;">
+      <div class="student-more-item" onclick="openAccountModal()">
+        <div class="student-more-ic"><i data-lucide="settings" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">إعدادات الحساب</div><div style="font-size:11.5px;color:var(--text-3);">تغيير كلمة المرور وبيانات حسابك</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
+      <div class="student-more-item" onclick="logout()">
+        <div class="student-more-ic" style="background:var(--danger-bg);color:var(--danger);"><i data-lucide="log-out" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;color:var(--danger);">تسجيل الخروج</div></div>
+      </div>
+    </div>
+  `;
+  icons();
+}
+
 async function renderTeacherMorePage(){
   const c = document.getElementById("pageContainer");
   c.innerHTML = `
@@ -3747,25 +4230,51 @@ async function renderMyBoardPage(){
   const bySession = {};
   imgs.forEach(im=>{ (bySession[im.session_number] = bySession[im.session_number] || []).push(im); });
   const sessions = Object.keys(bySession).sort((a,b)=>b-a);
+  const sesNames = ["","الأولى","الثانية","الثالثة","الرابعة","الخامسة","السادسة","السابعة","الثامنة","التاسعة","العاشرة"];
   const c = document.getElementById("pageContainer");
   c.innerHTML = `
     <div class="page-header"><div><h1>سبورة مجموعتي</h1><p>صور شرح كل حصة في مجموعتك: ${SESSION.group_name||''}</p></div></div>
     <div id="myBoardWrap">
-      ${sessions.length ? sessions.map(sn=>`
-        <div style="margin-bottom:22px;">
-          <div class="day-col-title"><i data-lucide="presentation" style="width:14px;height:14px;"></i> الحصة رقم ${sn}</div>
-          <div class="cards-grid">
-            ${bySession[sn].map(im=>`
-              <div class="session-card">
-                <img class="thumb" src="${im.image_data}" onclick="showImageLightbox('${im.image_data}')">
-                <div class="info"><b>${im.session_date||''}</b></div>
-              </div>
-            `).join("")}
+      ${sessions.length ? sessions.map((sn, idx)=>{
+        const isOpen = isCollapseOpenByDefault(`my_board_body_${sn}`, idx === 0); // أول حصة مفتوحة افتراضيًا، والباقي بيفضل زي ما سايبه المستخدم
+        return `
+        <div class="collapse-card" id="my_board_card_${sn}">
+          <div class="collapse-header" onclick="toggleCollapse('my_board_body_${sn}', this)">
+            <div style="display:flex;align-items:center;gap:10px;flex:1;flex-wrap:wrap;">
+              <i data-lucide="presentation" style="width:15px;height:15px;color:var(--primary);flex-shrink:0;"></i>
+              <span style="font-weight:700;font-size:14px;">الحصة ${sesNames[sn] || '#'+sn}</span>
+              ${bySession[sn][0]?.session_date ? `<span style="font-size:12px;color:var(--text-3);">${bySession[sn][0].session_date}</span>` : ""}
+              <span class="badge badge-teal" style="margin-right:auto;">${bySession[sn].length} صورة</span>
+            </div>
+            <i data-lucide="${isOpen?'chevron-up':'chevron-down'}" class="collapse-icon" style="width:16px;height:16px;color:var(--text-3);transition:transform .2s;"></i>
           </div>
-        </div>
-      `).join("") : `<div class="empty-state"><div class="empty-icon"><i data-lucide="image-off" style="width:26px;height:26px;"></i></div><div class="empty-title">لا يوجد صور سبورة لسه</div></div>`}
+          <div class="collapse-body" id="my_board_body_${sn}" style="display:${isOpen?'block':'none'};">
+            <div class="cards-grid" style="padding:14px 16px;">
+              ${bySession[sn].map((im,i)=>`
+                <div class="session-card">
+                  <img class="thumb" src="${im.image_data}" onclick="showImageLightbox('${im.image_data}', 'حصة-${sn}-صورة-${i+1}.jpg')">
+                  <div class="info">
+                    <b>${im.session_date||''}</b>
+                    <button class="action-btn" title="تحميل" onclick="downloadImageDirect('${im.image_data}','حصة-${sn}-صورة-${i+1}.jpg')"><i data-lucide="download" style="width:14px;height:14px;"></i></button>
+                  </div>
+                </div>
+              `).join("")}
+            </div>
+          </div>
+        </div>`;
+      }).join("") : `<div class="empty-state"><div class="empty-icon"><i data-lucide="image-off" style="width:26px;height:26px;"></i></div><div class="empty-title">لا يوجد صور سبورة لسه</div></div>`}
     </div>
   `;
+  icons();
+}
+
+function downloadImageDirect(src, filename){
+  const a = document.createElement("a");
+  a.href = src;
+  a.download = filename || "board-image.jpg";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 /* =====================================================================
