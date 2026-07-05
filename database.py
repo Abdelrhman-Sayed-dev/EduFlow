@@ -174,12 +174,13 @@ def _migrate_users_role_check(cur):
 
 
 def _migrate_quizzes_columns(cur):
-    """إضافة أعمدة الكويز الجديدة (المرحلة/رقم الحصة/الصورة/النموذج/المنشئ) على القواعد القديمة"""
+    """إضافة أعمدة الكويز الجديدة (المرحلة/رقم الحصة/الصورة/النموذج/المنشئ/النوع) على القواعد القديمة"""
     _safe_alter(cur, "ALTER TABLE quizzes ADD COLUMN stage_id INTEGER REFERENCES stages(id)")
     _safe_alter(cur, "ALTER TABLE quizzes ADD COLUMN session_number INTEGER")
     _safe_alter(cur, "ALTER TABLE quizzes ADD COLUMN image_data TEXT")
     _safe_alter(cur, "ALTER TABLE quizzes ADD COLUMN version_label TEXT")
     _safe_alter(cur, "ALTER TABLE quizzes ADD COLUMN created_by INTEGER REFERENCES users(id)")
+    _safe_alter(cur, "ALTER TABLE quizzes ADD COLUMN quiz_type TEXT NOT NULL DEFAULT 'quiz'")
 
 
 def cleanup_expired_sessions(conn):
@@ -332,6 +333,7 @@ def init_db():
             image_data TEXT,
             version_label TEXT,
             created_by INTEGER,
+            quiz_type TEXT NOT NULL DEFAULT 'quiz',
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
             FOREIGN KEY (stage_id) REFERENCES stages(id) ON DELETE CASCADE,

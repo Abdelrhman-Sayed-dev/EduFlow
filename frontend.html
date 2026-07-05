@@ -217,24 +217,24 @@ tbody tr:hover{background:var(--primary-10);}
 .overlay{position:fixed;inset:0;background:rgba(15,23,42,.5);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;z-index:900;opacity:0;pointer-events:none;transition:opacity .18s var(--ease);}
 .lightbox-download-btn{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);background:var(--surface);color:var(--text);border:none;border-radius:999px;padding:10px 20px;font-size:13px;font-weight:700;font-family:'Cairo',sans-serif;display:flex;align-items:center;gap:6px;cursor:pointer;box-shadow:var(--shadow-lg,0 8px 24px rgba(0,0,0,.2));}
 .overlay.open{opacity:1;pointer-events:all;}
-.modal{background:var(--surface);border-radius:var(--radius-xl);box-shadow:var(--shadow-xl);width:530px;max-width:95vw;transform:scale(.97) translateY(8px);transition:transform .18s var(--ease),opacity .18s var(--ease);opacity:0;max-height:92vh;overflow-y:auto;}
+.modal{background:var(--surface);border-radius:var(--radius-xl);box-shadow:var(--shadow-xl);width:660px;max-width:95vw;transform:scale(.97) translateY(8px);transition:transform .18s var(--ease),opacity .18s var(--ease);opacity:0;max-height:92vh;overflow-y:auto;}
 .overlay.open .modal{transform:scale(1) translateY(0);opacity:1;}
-.modal-header{padding:18px 22px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);}
-.modal-title{font-size:15px;font-weight:700;color:var(--text);}
+.modal-header{padding:22px 28px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);}
+.modal-title{font-size:17px;font-weight:700;color:var(--text);}
 .modal-close{width:28px;height:28px;border-radius:var(--radius-sm);border:none;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--text-3);transition:background .1s;}
 .modal-close:hover{background:var(--surface-3);color:var(--text);}
-.modal-body{padding:20px 22px;}
-.modal-footer{padding:14px 20px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;background:var(--surface-2);}
+.modal-body{padding:26px 28px;}
+.modal-footer{padding:16px 28px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end;background:var(--surface-2);}
 
 /* ============ FORMS ============ */
-.form-group{margin-bottom:13px;display:flex;flex-direction:column;}
+.form-group{margin-bottom:17px;display:flex;flex-direction:column;}
 .form-group > .form-input,
 .form-group > .form-select,
 .form-group > .searchable-select,
 .form-group > .searchable-select > .form-input,
 .form-group > input,
 .form-group > select{width:100%;box-sizing:border-box;}
-.form-label{display:block;font-size:12.5px;font-weight:600;color:var(--text);margin-bottom:5px;flex-shrink:0;}
+.form-label{display:block;font-size:13.5px;font-weight:600;color:var(--text);margin-bottom:7px;flex-shrink:0;}
 .form-label .req{color:var(--danger);margin-right:2px;}
 .form-input{width:100%;height:var(--control-h);min-height:var(--control-h);box-sizing:border-box;padding:0 13px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13.5px;font-family:'Cairo',sans-serif;background:var(--surface);color:var(--text);transition:border-color .12s var(--ease),box-shadow .12s var(--ease);vertical-align:middle;}
 .form-input:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px rgba(15,118,110,.1);}
@@ -242,6 +242,11 @@ tbody tr:hover{background:var(--primary-10);}
 .form-textarea:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px rgba(15,118,110,.1);}
 .form-hint{font-size:11px;color:var(--text-3);margin-top:4px;}
 .form-row-2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+
+/* تكبير حقول الفورم جوه المودالز بس */
+.modal .form-input, .modal .form-select{height:44px;min-height:44px;font-size:14.5px;padding:0 14px;}
+.modal .form-textarea{font-size:14px;padding:11px 14px;min-height:78px;}
+.modal .form-group{margin-bottom:18px;}
 .form-fieldset{border:1px solid var(--border);border-radius:var(--radius-md);padding:12px 14px;margin-bottom:13px;background:var(--surface-2);}
 .form-fieldset-title{font-size:11.5px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px;}
 
@@ -588,7 +593,7 @@ body.is-student .bottom-nav, body.is-supervisor .bottom-nav, body.is-teacher .bo
 </div>
 
 <div class="overlay" id="confirmModal">
-  <div class="modal confirm-modal" style="width:380px;">
+  <div class="modal confirm-modal" style="width:440px;">
     <div class="modal-body">
       <div class="confirm-icon danger" style="width:52px;height:52px;border-radius:16px;display:flex;align-items:center;justify-content:center;margin-bottom:14px;background:var(--danger-bg);color:var(--danger);">
         <i data-lucide="alert-triangle" style="width:24px;height:24px;"></i>
@@ -942,7 +947,7 @@ const NAV_BY_ROLE = {
   supervisor: [
     {id:"mygroup", label:"مجموعتي", icon:"users"},
     {id:"boards", label:"سبورة الحصة", icon:"presentation"},
-    {id:"quizzes", label:"تسجيل الدرجات", icon:"file-check-2"},
+    {id:"quizzes", label:"درجات الطلاب", icon:"file-check-2"},
     {id:"homework", label:"الواجبات", icon:"clipboard-list"},
     {id:"attendance", label:"الحضور والغياب", icon:"calendar-check"},
     {id:"student_search", label:"بحث عن طالب", icon:"search"},
@@ -2930,18 +2935,19 @@ async function renderQuizzesPage(){
   const c = document.getElementById("pageContainer");
   c.innerHTML = `
     <div class="page-header">
-      <div><h1>${SESSION.role==="supervisor"?"تسجيل الدرجات":"الكويزات"}</h1><p>${SESSION.role==="supervisor"?"اختار الكويز وسجّل درجات طلاب مجموعتك":"كويزات المراحل الدراسية ودرجات الطلاب"}</p></div>
+      <div><h1>${SESSION.role==="supervisor"?"درجات الطلاب":"الكويزات"}</h1><p>${SESSION.role==="supervisor"?"اختار الكويز أو الامتحان وسجّل درجات طلاب مجموعتك":"كويزات المراحل الدراسية ودرجات الطلاب"}</p></div>
       <div class="header-actions">
         ${canCreate ? `<button class="btn btn-primary btn-sm" onclick="openAddQuizModal()"><i data-lucide="plus" style="width:14px;height:14px;"></i> إنشاء كويز</button>` : ""}
       </div>
     </div>
     <div class="table-card">
       <div class="table-wrap"><table>
-        <thead><tr><th>الكويز</th><th>المرحلة/المجموعة</th><th>التاريخ</th><th>الدرجة القصوى</th><th></th></tr></thead>
+        <thead><tr><th>الكويز</th><th>النوع</th><th>المرحلة/المجموعة</th><th>التاريخ</th><th>الدرجة القصوى</th><th></th></tr></thead>
         <tbody>
           ${quizzes.map(q=>`
             <tr>
               <td class="td-name">${q.title}${q.version_label?` <span class="badge badge-gray">${q.version_label}</span>`:""}${q.description?`<div class="td-sub">${q.description}</div>`:""}</td>
+              <td>${q.quiz_type==='exam' ? `<span class="badge badge-red">📋 امتحان شامل</span>` : `<span class="badge badge-green">📝 كويز</span>`}</td>
               <td>${q.stage_name ? `<span class="badge badge-blue">${q.stage_name}</span>` : (q.group_name ? `<span class="badge badge-teal">${q.group_name}</span>` : `<span class="badge badge-gray">عام لكل المجموعات</span>`)}</td>
               <td>${q.quiz_date||"—"}</td>
               <td>${q.max_score}</td>
@@ -2949,7 +2955,7 @@ async function renderQuizzesPage(){
                 ${canScore ? `<button class="btn btn-ghost btn-sm" onclick="openQuizScoresModal(${q.id}, '${q.title.replace(/'/g,"")}', ${q.max_score})"><i data-lucide="list-checks" style="width:14px;height:14px;"></i> الدرجات</button>` : ""}
                 ${canCreate ? `<button class="action-btn del" onclick="deleteQuiz(${q.id})"><i data-lucide="trash-2" style="width:15px;height:15px;"></i></button>` : ""}
               </td>
-            </tr>`).join("") || `<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:30px;">لا يوجد كويزات بعد</td></tr>`}
+            </tr>`).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:30px;">لا يوجد كويزات بعد</td></tr>`}
         </tbody>
       </table></div>
     </div>
@@ -2973,11 +2979,12 @@ async function renderHsQuizzesPage(){
     </div>
     <div class="table-card">
       <div class="table-wrap"><table>
-        <thead><tr><th>الكويز</th><th>المرحلة</th><th>الحصة</th><th>التاريخ</th><th>الدرجة القصوى</th><th></th></tr></thead>
+        <thead><tr><th>الكويز</th><th>النوع</th><th>المرحلة</th><th>الحصة</th><th>التاريخ</th><th>الدرجة القصوى</th><th></th></tr></thead>
         <tbody>
           ${quizzes.map(q=>`
             <tr>
               <td class="td-name">${q.image_data?`<i data-lucide="image" style="width:13px;height:13px;color:var(--primary);"></i> `:""}${q.title}${q.version_label?` <span class="badge badge-gray">${q.version_label}</span>`:""}${q.description?`<div class="td-sub">${q.description}</div>`:""}</td>
+              <td>${q.quiz_type==='exam' ? `<span class="badge badge-red">📋 امتحان شامل</span>` : `<span class="badge badge-green">📝 كويز</span>`}</td>
               <td>${q.stage_name ? `<span class="badge badge-blue">${q.stage_name}</span>` : `<span class="badge badge-gray">عام</span>`}</td>
               <td>${q.session_number ?? "—"}</td>
               <td>${q.quiz_date||"—"}</td>
@@ -2987,7 +2994,7 @@ async function renderHsQuizzesPage(){
                 <button class="action-btn" onclick='openHsQuizModal(${JSON.stringify(q).replace(/'/g,"&#39;")})'><i data-lucide="pencil" style="width:14px;height:14px;"></i></button>
                 <button class="action-btn del" onclick="deleteQuiz(${q.id})"><i data-lucide="trash-2" style="width:15px;height:15px;"></i></button>
               </td>
-            </tr>`).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:30px;">لا يوجد كويزات بعد</td></tr>`}
+            </tr>`).join("") || `<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:30px;">لا يوجد كويزات بعد</td></tr>`}
         </tbody>
       </table></div>
     </div>
@@ -2997,8 +3004,17 @@ async function renderHsQuizzesPage(){
 
 function openHsQuizModal(quiz){
   const isEdit = !!quiz;
+  const qType = isEdit && quiz.quiz_type ? quiz.quiz_type : "quiz";
   openModal(isEdit ? "تعديل الكويز" : "إنشاء كويز / امتحان شامل", `
     <input type="hidden" id="f_hq_id" value="${isEdit?quiz.id:""}">
+    <div class="form-group">
+      <label class="form-label">نوع التقييم <span class="req">*</span></label>
+      <div class="seg-toggle" id="f_hq_type_toggle" style="width:100%;">
+        <button type="button" class="seg-btn ${qType==='quiz'?'active-green':''}" data-val="quiz" onclick="selectHqQuizType('quiz')" style="flex:1;">📝 كويز</button>
+        <button type="button" class="seg-btn ${qType==='exam'?'active-red':''}" data-val="exam" onclick="selectHqQuizType('exam')" style="flex:1;">📋 امتحان شامل</button>
+      </div>
+      <input type="hidden" id="f_hq_type" value="${qType}">
+    </div>
     <div class="form-group"><label class="form-label">اسم الكويز أو الامتحان <span class="req">*</span></label><input class="form-input" id="f_hq_title" value="${isEdit?quiz.title.replace(/"/g,'&quot;'):""}"></div>
     <div class="form-row-2">
       <div class="form-group"><label class="form-label">المرحلة الدراسية <span class="req">*</span></label>
@@ -3023,6 +3039,15 @@ function openHsQuizModal(quiz){
   `);
 }
 
+function selectHqQuizType(val){
+  document.getElementById("f_hq_type").value = val;
+  const toggle = document.getElementById("f_hq_type_toggle");
+  toggle.querySelectorAll(".seg-btn").forEach(b=>{
+    b.classList.remove("active-green", "active-red");
+    if (b.dataset.val === val) b.classList.add(val === "exam" ? "active-red" : "active-green");
+  });
+}
+
 async function submitHsQuiz(isEdit){
   const title = document.getElementById("f_hq_title").value.trim();
   const stageId = document.getElementById("f_hq_stage").value;
@@ -3044,6 +3069,7 @@ async function submitHsQuiz(isEdit){
     version_label: document.getElementById("f_hq_version").value.trim() || null,
     description: document.getElementById("f_hq_desc").value.trim() || null,
     image_data: imageData,
+    quiz_type: document.getElementById("f_hq_type").value || "quiz",
   };
 
   const id = document.getElementById("f_hq_id").value;
@@ -3359,9 +3385,7 @@ function openTakeAttendanceModal(){
     </div>
     <div style="margin-bottom:14px;">
       <label class="form-label">رقم الحصة</label>
-      <select class="form-input" id="take_att_session_num">
-        ${[1,2,3,4].map(sn=>`<option value="${sn}">الحصة ${ATT_SESSION_NAMES[sn]}</option>`).join("")}
-      </select>
+      <input class="form-input" id="take_att_session_num" type="number" min="1" step="1" value="1" placeholder="مثال: 1">
     </div>
     <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:10px 14px;font-size:13px;color:var(--text-2);display:flex;align-items:center;gap:8px;">
       <i data-lucide="calendar" style="width:14px;height:14px;color:var(--primary);"></i>
@@ -3380,6 +3404,7 @@ async function startTakeAttendance(){
   const groupId = parseInt(groupIdRaw);
   const sn = parseInt(document.getElementById("take_att_session_num").value);
   if (!groupId){ showToast("لازم تختار مجموعة من القائمة", "error"); return; }
+  if (!sn || sn < 1){ showToast("لازم تكتب رقم حصة صحيح", "error"); return; }
   closeOverlay("genericModal");
   await openAttendancePanel(groupId, groupName, sn);
 }
@@ -3610,7 +3635,7 @@ async function loadBoardImages(){
     groupId ? api(`/api/homework?group_id=${groupId}`).catch(()=>[]) : Promise.resolve([])
   ]);
   const canDelete = SESSION.role === "supervisor" || SESSION.role === "admin";
-  const canManageHW = SESSION.role === "supervisor" || SESSION.role === "admin" || SESSION.role === "teacher";
+  const canManageHW = SESSION.role === "supervisor" || SESSION.role === "admin" || SESSION.role === "head_supervisor";
 
   // تجميع الصور والواجبات تحت رقم الحصة
   const bySession = {};
@@ -3927,7 +3952,7 @@ async function renderStudentDashboardPage(){
     api(`/api/students/${SESSION.id}/attendance`),
     SESSION.group_id ? api(`/api/groups/${SESSION.group_id}/info`).catch(()=>null) : Promise.resolve(null)
   ]);
-  const present = attendance.filter(a=>a.status==='present').length;
+  const present = attendance.filter(a=>a.status==='present'||a.status==='late').length;
   const avg = scores.length ? (scores.reduce((s,x)=>s+(x.score||0)/x.max_score*100,0)/scores.length).toFixed(0) : "—";
   const attendanceRate = attendance.length ? Math.round(present/attendance.length*100) : null;
 
@@ -4226,16 +4251,46 @@ async function loadMyHomework(){
 
 async function renderMyBoardPage(){
   const groupId = SESSION.group_id;
-  const imgs = await api(`/api/board-images?group_id=${groupId}`);
+  const [imgs, homeworks] = await Promise.all([
+    api(`/api/board-images?group_id=${groupId}`),
+    api(`/api/homework?group_id=${groupId}`).catch(()=>[])
+  ]);
+
+  // تجميع الصور والواجبات تحت رقم الحصة (زي بالظبط منطق صفحة المشرف)
   const bySession = {};
-  imgs.forEach(im=>{ (bySession[im.session_number] = bySession[im.session_number] || []).push(im); });
+  imgs.forEach(im=>{
+    const k = im.session_number;
+    if (!bySession[k]) bySession[k] = {imgs:[], hw: null, date: im.session_date};
+    bySession[k].imgs.push(im);
+    if (im.session_date) bySession[k].date = im.session_date;
+  });
+  homeworks.forEach(hw=>{
+    const k = hw.session_number;
+    if (!bySession[k]) bySession[k] = {imgs:[], hw: null, date: hw.session_date};
+    bySession[k].hw = hw;
+    if (hw.session_date) bySession[k].date = hw.session_date;
+  });
+
   const sessions = Object.keys(bySession).sort((a,b)=>b-a);
   const sesNames = ["","الأولى","الثانية","الثالثة","الرابعة","الخامسة","السادسة","السابعة","الثامنة","التاسعة","العاشرة"];
+
+  // نجيب حالة تسليمي لكل واجب (الطالب بيشوف حالته هو بس - الـ API بترجع سجله بس)
+  const hwList = sessions.map(sn=>bySession[sn].hw).filter(Boolean);
+  const subsLists = await Promise.all(hwList.map(hw=>api(`/api/homework/${hw.id}/submissions`).catch(()=>[])));
+  const myDoneByHwId = {};
+  hwList.forEach((hw, i)=>{
+    const mine = (subsLists[i]||[]).find(s=>s.student_id===SESSION.id);
+    myDoneByHwId[hw.id] = mine ? mine.done : null;
+  });
+
   const c = document.getElementById("pageContainer");
   c.innerHTML = `
-    <div class="page-header"><div><h1>سبورة مجموعتي</h1><p>صور شرح كل حصة في مجموعتك: ${SESSION.group_name||''}</p></div></div>
+    <div class="page-header"><div><h1>سبورة مجموعتي</h1><p>صور شرح كل حصة وواجباتها في مجموعتك: ${SESSION.group_name||''}</p></div></div>
     <div id="myBoardWrap">
       ${sessions.length ? sessions.map((sn, idx)=>{
+        const sec = bySession[sn];
+        const hw = sec.hw;
+        const done = hw ? myDoneByHwId[hw.id] : null;
         const isOpen = isCollapseOpenByDefault(`my_board_body_${sn}`, idx === 0); // أول حصة مفتوحة افتراضيًا، والباقي بيفضل زي ما سايبه المستخدم
         return `
         <div class="collapse-card" id="my_board_card_${sn}">
@@ -4243,14 +4298,23 @@ async function renderMyBoardPage(){
             <div style="display:flex;align-items:center;gap:10px;flex:1;flex-wrap:wrap;">
               <i data-lucide="presentation" style="width:15px;height:15px;color:var(--primary);flex-shrink:0;"></i>
               <span style="font-weight:700;font-size:14px;">الحصة ${sesNames[sn] || '#'+sn}</span>
-              ${bySession[sn][0]?.session_date ? `<span style="font-size:12px;color:var(--text-3);">${bySession[sn][0].session_date}</span>` : ""}
-              <span class="badge badge-teal" style="margin-right:auto;">${bySession[sn].length} صورة</span>
+              ${sec.date ? `<span style="font-size:12px;color:var(--text-3);">${sec.date}</span>` : ""}
+              <div style="display:flex;gap:6px;margin-right:auto;">
+                ${sec.imgs.length ? `<span class="badge badge-teal">${sec.imgs.length} صورة</span>` : ""}
+                ${hw ? `<span class="badge ${done?'badge-green':'badge-red'}">${done?'تم تسليم الواجب ✅':'لسه ملسلمتوش ❌'}</span>` : ""}
+              </div>
             </div>
             <i data-lucide="${isOpen?'chevron-up':'chevron-down'}" class="collapse-icon" style="width:16px;height:16px;color:var(--text-3);transition:transform .2s;"></i>
           </div>
           <div class="collapse-body" id="my_board_body_${sn}" style="display:${isOpen?'block':'none'};">
+            ${hw ? `
+            <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:12px 16px;margin:12px 16px 0;border-right:3px solid var(--primary);">
+              <div style="font-size:12px;font-weight:700;color:var(--text-3);margin-bottom:4px;">الواجب</div>
+              <div style="font-size:13.5px;color:var(--text);">${hw.description||'واجب الحصة'}</div>
+            </div>` : ""}
+            ${sec.imgs.length ? `
             <div class="cards-grid" style="padding:14px 16px;">
-              ${bySession[sn].map((im,i)=>`
+              ${sec.imgs.map((im,i)=>`
                 <div class="session-card">
                   <img class="thumb" src="${im.image_data}" onclick="showImageLightbox('${im.image_data}', 'حصة-${sn}-صورة-${i+1}.jpg')">
                   <div class="info">
@@ -4259,10 +4323,10 @@ async function renderMyBoardPage(){
                   </div>
                 </div>
               `).join("")}
-            </div>
+            </div>` : (!hw ? "" : `<div style="padding:0 16px 14px;font-size:12px;color:var(--text-3);">لسه مفيش صور مضافة للحصة دي</div>`)}
           </div>
         </div>`;
-      }).join("") : `<div class="empty-state"><div class="empty-icon"><i data-lucide="image-off" style="width:26px;height:26px;"></i></div><div class="empty-title">لا يوجد صور سبورة لسه</div></div>`}
+      }).join("") : `<div class="empty-state"><div class="empty-icon"><i data-lucide="image-off" style="width:26px;height:26px;"></i></div><div class="empty-title">لا يوجد صور سبورة أو واجبات لسه</div></div>`}
     </div>
   `;
   icons();

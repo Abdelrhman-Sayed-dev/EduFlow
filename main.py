@@ -96,6 +96,7 @@ class QuizIn(BaseModel):
     session_number: Optional[int] = None
     image_data: Optional[str] = None  # صورة الكويز/الامتحان (base64)
     version_label: Optional[str] = None  # اسم النموذج لو فيه أكتر من نموذج امتحان
+    quiz_type: str = "quiz"  # "quiz" كويز عادي أو "exam" امتحان شامل
 
 
 class NotificationOut(BaseModel):
@@ -1102,10 +1103,10 @@ def add_quiz(quiz: QuizIn, session=Depends(require_roles("admin", "head_supervis
     with get_connection() as conn:
         cur = conn.execute("""
             INSERT INTO quizzes (title, description, quiz_date, max_score, group_id,
-                                  stage_id, session_number, image_data, version_label, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  stage_id, session_number, image_data, version_label, created_by, quiz_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (quiz.title, quiz.description, quiz.quiz_date, quiz.max_score, quiz.group_id,
-              quiz.stage_id, quiz.session_number, quiz.image_data, quiz.version_label, session["id"]))
+              quiz.stage_id, quiz.session_number, quiz.image_data, quiz.version_label, session["id"], quiz.quiz_type))
         return {"id": cur.lastrowid, "message": "تم إضافة الكويز بنجاح، ووصل لكل مشرفي المرحلة"}
 
 
@@ -1118,10 +1119,10 @@ def update_quiz(quiz_id: int, quiz: QuizIn, session=Depends(require_roles("admin
         conn.execute("""
             UPDATE quizzes SET title=?, description=?, quiz_date=?, max_score=?, group_id=?,
                                 stage_id=?, session_number=?, image_data=COALESCE(?, image_data),
-                                version_label=?
+                                version_label=?, quiz_type=?
             WHERE id=?
         """, (quiz.title, quiz.description, quiz.quiz_date, quiz.max_score, quiz.group_id,
-              quiz.stage_id, quiz.session_number, quiz.image_data, quiz.version_label, quiz_id))
+              quiz.stage_id, quiz.session_number, quiz.image_data, quiz.version_label, quiz.quiz_type, quiz_id))
         return {"message": "تم تعديل الكويز"}
 
 
@@ -1311,7 +1312,7 @@ def set_attendance(att: AttendanceIn, session=Depends(require_roles("admin", "he
             INSERT INTO attendance (student_id, session_date, session_number, status, notes)
             VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(student_id, session_date, session_number)
-            DO UPDATE SET status=excluded.status, notes=excluded.notes
+            DO UPDATE SET status=excluded.status, notes=COALESCE(excluded.notes, attendance.notes)
         """, (att.student_id, att.session_date, att.session_number, att.status, att.notes))
         return {"message": "تم حفظ الحضور"}
 
@@ -1771,7 +1772,7 @@ def get_stats_overview(session=Depends(require_roles("admin", "teacher", "head_s
 
         att_row = conn.execute("""
             SELECT
-              SUM(CASE WHEN status='present' THEN 1 ELSE 0 END) as present_c,
+              SUM(CASE WHEN status IN ('present','late') THEN 1 ELSE 0 END) as present_c,
               COUNT(*) as total_c
             FROM attendance
         """).fetchone()
@@ -1793,7 +1794,7 @@ def get_stats_overview(session=Depends(require_roles("admin", "teacher", "head_s
                       FROM quiz_scores qs JOIN quizzes q ON q.id=qs.quiz_id
                       JOIN students s2 ON s2.id=qs.student_id
                       WHERE s2.group_id=g.id AND q.max_score>0) as avg_score_percent,
-                   (SELECT (SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END)*100.0/COUNT(*))
+                   (SELECT (SUM(CASE WHEN a.status IN ('present','late') THEN 1 ELSE 0 END)*100.0/COUNT(*))
                       FROM attendance a JOIN students s3 ON s3.id=a.student_id
                       WHERE s3.group_id=g.id) as attendance_rate
             FROM groups g
@@ -1938,7 +1939,7 @@ def get_stage_overview(stage_id: int, governorate_id: Optional[int] = None,
         att_params = base_params()
         att_clause = _date_clause("a.session_date", date_from, date_to, att_params)
         att_row = conn.execute(f"""
-            SELECT SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END) as present_c, COUNT(*) as total_c
+            SELECT SUM(CASE WHEN a.status IN ('present','late') THEN 1 ELSE 0 END) as present_c, COUNT(*) as total_c
             FROM attendance a JOIN students s ON s.id=a.student_id JOIN groups g ON g.id=s.group_id
             WHERE g.stage_id=?{gov_filter_sql}{att_clause}
         """, att_params).fetchone()
@@ -1977,7 +1978,7 @@ def get_stage_overview(stage_id: int, governorate_id: Optional[int] = None,
                       JOIN quizzes q ON q.id=qs.quiz_id AND q.max_score>0
                       JOIN students s2 ON s2.id=qs.student_id JOIN groups g2 ON g2.id=s2.group_id
                       WHERE g2.stage_id=? AND g2.governorate_id=gov.id{gov_score_clause}) as avg_score_percent,
-                   (SELECT SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END)*100.0/COUNT(*)
+                   (SELECT SUM(CASE WHEN a.status IN ('present','late') THEN 1 ELSE 0 END)*100.0/COUNT(*)
                       FROM attendance a JOIN students s3 ON s3.id=a.student_id JOIN groups g3 ON g3.id=s3.group_id
                       WHERE g3.stage_id=? AND g3.governorate_id=gov.id{gov_att_clause}) as attendance_rate
             FROM governorates gov
@@ -2006,7 +2007,7 @@ def get_stage_overview(stage_id: int, governorate_id: Optional[int] = None,
                       JOIN quizzes q ON q.id=qs.quiz_id AND q.max_score>0
                       JOIN students s2 ON s2.id=qs.student_id
                       WHERE s2.group_id=g.id{g_score_clause}) as avg_score_percent,
-                   (SELECT SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END)*100.0/COUNT(*)
+                   (SELECT SUM(CASE WHEN a.status IN ('present','late') THEN 1 ELSE 0 END)*100.0/COUNT(*)
                       FROM attendance a JOIN students s3 ON s3.id=a.student_id
                       WHERE s3.group_id=g.id{g_att_clause}) as attendance_rate,
                    (SELECT SUM(CASE WHEN hs.done=1 THEN 1 ELSE 0 END)*100.0/COUNT(*)
@@ -2046,7 +2047,7 @@ def get_stage_overview(stage_id: int, governorate_id: Optional[int] = None,
         s_att_clause = _date_clause("a.session_date", date_from, date_to, s_att_params)
         students_attendance = conn.execute(f"""
             SELECT s.id, s.full_name, g.name as group_name, gov.name as governorate_name,
-                   SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END)*100.0/COUNT(*) as attendance_rate,
+                   SUM(CASE WHEN a.status IN ('present','late') THEN 1 ELSE 0 END)*100.0/COUNT(*) as attendance_rate,
                    SUM(CASE WHEN a.status='absent' THEN 1 ELSE 0 END) as absent_count,
                    COUNT(*) as records_count
             FROM students s
@@ -2133,7 +2134,7 @@ def get_group_detail(group_id: int, date_from: Optional[str] = None, date_to: Op
         att_params = [group_id]
         att_clause = _date_clause("a.session_date", date_from, date_to, att_params)
         att_row = conn.execute(f"""
-            SELECT SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END) as present_c, COUNT(*) as total_c
+            SELECT SUM(CASE WHEN a.status IN ('present','late') THEN 1 ELSE 0 END) as present_c, COUNT(*) as total_c
             FROM attendance a JOIN students s ON s.id=a.student_id
             WHERE s.group_id=?{att_clause}
         """, att_params).fetchone()
@@ -2194,7 +2195,7 @@ def get_group_detail(group_id: int, date_from: Optional[str] = None, date_to: Op
         att_students_params = [group_id]
         att_students_clause = _date_clause("a.session_date", date_from, date_to, att_students_params)
         students_attendance = conn.execute(f"""
-            SELECT s.id, s.full_name, SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END)*100.0/COUNT(*) as attendance_rate,
+            SELECT s.id, s.full_name, SUM(CASE WHEN a.status IN ('present','late') THEN 1 ELSE 0 END)*100.0/COUNT(*) as attendance_rate,
                    SUM(CASE WHEN a.status='absent' THEN 1 ELSE 0 END) as absent_count,
                    COUNT(*) as records_count
             FROM students s JOIN attendance a ON a.student_id=s.id
@@ -2289,7 +2290,7 @@ def get_rankings(stage_id: int, governorate_id: Optional[int] = None,
         att_clause = _date_clause("a.session_date", date_from, date_to, att_params)
         att_rows = conn.execute(f"""
             SELECT s.id as sid, s.full_name, g.name as group_name, gov.name as governorate_name,
-                   SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END)*100.0/COUNT(*) as rate,
+                   SUM(CASE WHEN a.status IN ('present','late') THEN 1 ELSE 0 END)*100.0/COUNT(*) as rate,
                    COUNT(*) as total
             FROM attendance a
             JOIN students s ON s.id=a.student_id AND s.is_active=1
@@ -2412,7 +2413,7 @@ def get_rankings(stage_id: int, governorate_id: Optional[int] = None,
         grp_att_clause = _date_clause("a.session_date", date_from, date_to, grp_att_params)
         grp_att_rows = conn.execute(f"""
             SELECT g.id as gid, g.name as gname, gov.name as govname,
-                   SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END)*100.0/COUNT(*) as rate,
+                   SUM(CASE WHEN a.status IN ('present','late') THEN 1 ELSE 0 END)*100.0/COUNT(*) as rate,
                    COUNT(*) as total
             FROM attendance a
             JOIN students s ON s.id=a.student_id AND s.is_active=1
