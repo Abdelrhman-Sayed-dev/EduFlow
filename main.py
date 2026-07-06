@@ -22,7 +22,7 @@ from typing import Optional
 
 from database import (
     get_connection, init_db, hash_password, verify_password, gen_token,
-    gen_access_code, gen_temp_password, session_expiry, cleanup_expired_sessions
+    gen_access_code, gen_numeric_code, gen_temp_password, session_expiry, cleanup_expired_sessions
 )
 
 app = FastAPI(title="منصة المدرس - نظام إدارة الطلاب والمجموعات")
@@ -578,6 +578,17 @@ def update_group(group_id: int, group: GroupIn, session=Depends(require_roles("a
         )
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="المجموعة غير موجودة")
+
+        # لو الأدمن بعت مواعيد للمجموعة، نمسح القديم المرتبط بيها ونسجل الجديد
+        # (عشان تظهر صح في "جدول المواعيد" عند المدرس وباقي الأدوار)
+        if group.schedule_slots is not None:
+            conn.execute("DELETE FROM teacher_schedule WHERE group_id=?", (group_id,))
+            for slot in group.schedule_slots:
+                conn.execute(
+                    """INSERT INTO teacher_schedule (day_of_week, start_time, end_time, group_id, title)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (slot.day_of_week, slot.start_time, slot.end_time, group_id, f"حصة {group.name}")
+                )
         return {"message": "تم تعديل المجموعة"}
 
 
@@ -660,7 +671,8 @@ def get_students(group_id: Optional[int] = None, stage_id: Optional[int] = None,
                   governorate_id: Optional[int] = None, session=Depends(get_current_session)):
     """جلب الطلاب - المشرف يشوف طلاب مجموعاته بس، والطالب يشوف بياناته بس"""
     query = """
-        SELECT s.id, s.full_name, s.phone, s.parent_phone, s.notes, s.group_id, s.access_code, s.is_active,
+        SELECT s.id, s.full_name, s.phone, s.parent_phone, s.notes, s.group_id, s.access_code,
+               s.attendance_code, s.is_active,
                g.name as group_name, st.name as stage_name, gov.name as governorate_name
         FROM students s
         JOIN groups g ON g.id = s.group_id
@@ -695,6 +707,7 @@ def get_students(group_id: Optional[int] = None, stage_id: Optional[int] = None,
         if session["role"] == "student":
             for r in result:
                 r.pop("access_code", None)
+                r.pop("attendance_code", None)
         return result
 
 
@@ -705,13 +718,16 @@ def add_student(student: StudentIn, session=Depends(require_roles("admin"))):
         # تأكد إن الكود فريد (احتمالية تكرار شبه معدومة بس للأمان)
         while conn.execute("SELECT id FROM students WHERE access_code=?", (code,)).fetchone():
             code = gen_access_code()
+        att_code = gen_numeric_code()
+        while conn.execute("SELECT id FROM students WHERE attendance_code=?", (att_code,)).fetchone():
+            att_code = gen_numeric_code()
         cur = conn.execute(
-            """INSERT INTO students (full_name, phone, parent_phone, group_id, notes, access_code)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO students (full_name, phone, parent_phone, group_id, notes, access_code, attendance_code)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (student.full_name, student.phone, student.parent_phone,
-             student.group_id, student.notes, code)
+             student.group_id, student.notes, code, att_code)
         )
-        return {"id": cur.lastrowid, "access_code": code, "message": "تم إضافة الطالب بنجاح"}
+        return {"id": cur.lastrowid, "access_code": code, "attendance_code": att_code, "message": "تم إضافة الطالب بنجاح"}
 
 
 @app.put("/api/students/{student_id}")
@@ -738,6 +754,19 @@ def reset_student_code(student_id: int, session=Depends(require_roles("admin")))
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="الطالب غير موجود")
         return {"access_code": code, "message": "تم توليد كود جديد"}
+
+
+@app.put("/api/students/{student_id}/reset-attendance-code")
+def reset_student_attendance_code(student_id: int, session=Depends(require_roles("admin"))):
+    """توليد كود حضور رقمي جديد للطالب (لو ضاع منه مثلاً)"""
+    with get_connection() as conn:
+        att_code = gen_numeric_code()
+        while conn.execute("SELECT id FROM students WHERE attendance_code=?", (att_code,)).fetchone():
+            att_code = gen_numeric_code()
+        result = conn.execute("UPDATE students SET attendance_code=? WHERE id=?", (att_code, student_id))
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="الطالب غير موجود")
+        return {"attendance_code": att_code, "message": "تم توليد كود حضور جديد"}
 
 
 @app.put("/api/students/{student_id}/toggle-active")
@@ -1324,8 +1353,8 @@ def find_student_by_code(code: str, session=Depends(require_roles("admin", "head
         student = conn.execute(
             """SELECT s.id, s.full_name, s.group_id, g.name as group_name
                FROM students s JOIN groups g ON g.id = s.group_id
-               WHERE s.access_code = ?""",
-            (code.strip(),)
+               WHERE s.attendance_code = ? OR s.access_code = ?""",
+            (code.strip(), code.strip())
         ).fetchone()
         if not student:
             raise HTTPException(status_code=404, detail="مفيش طالب بالكود ده")
@@ -1339,8 +1368,8 @@ def set_attendance_by_code(data: AttendanceCodeIn, session=Depends(require_roles
     """تسجيل حضور سريع بكود الطالب - المشرف بيدوّر بالكود ويسجل الحالة على طول"""
     with get_connection() as conn:
         student = conn.execute(
-            "SELECT id, full_name, group_id FROM students WHERE access_code=?",
-            (data.access_code.strip(),)
+            "SELECT id, full_name, group_id FROM students WHERE attendance_code=? OR access_code=?",
+            (data.access_code.strip(), data.access_code.strip())
         ).fetchone()
         if not student:
             raise HTTPException(status_code=404, detail="مفيش طالب بالكود ده")

@@ -75,6 +75,11 @@ def gen_access_code(prefix: str = "ST") -> str:
     return f"{prefix}-" + secrets.token_hex(3).upper()
 
 
+def gen_numeric_code(length: int = 5) -> str:
+    """كود مميز أرقام بس لكل طالب - أسهل وأسرع في الكتابة من كود تسجيل الدخول، بيستخدم في أخذ الحضور السريع"""
+    return "".join(secrets.choice("0123456789") for _ in range(length))
+
+
 def gen_temp_password() -> str:
     """كلمة مرور مؤقتة سهلة القراءة، تتولّد تلقائيًا للمشرف/المدرس لو الأدمن سايب خانة كلمة المرور فاضية"""
     alphabet = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"
@@ -183,6 +188,16 @@ def _migrate_quizzes_columns(cur):
     _safe_alter(cur, "ALTER TABLE quizzes ADD COLUMN quiz_type TEXT NOT NULL DEFAULT 'quiz'")
 
 
+def _backfill_attendance_codes(cur):
+    """توليد كود حضور رقمي لأي طالب قديم لسه معندوش كود (بعد إضافة العمود لأول مرة)"""
+    rows = cur.execute("SELECT id FROM students WHERE attendance_code IS NULL OR attendance_code=''").fetchall()
+    for row in rows:
+        code = gen_numeric_code()
+        while cur.execute("SELECT id FROM students WHERE attendance_code=?", (code,)).fetchone():
+            code = gen_numeric_code()
+        cur.execute("UPDATE students SET attendance_code=? WHERE id=?", (code, row["id"]))
+
+
 def cleanup_expired_sessions(conn):
     """مسح الجلسات اللي انتهت صلاحيتها (يتنفذ بهدوء عند كل تسجيل دخول)"""
     now = datetime.utcnow().isoformat(timespec="seconds")
@@ -283,6 +298,8 @@ def init_db():
         """)
         _safe_alter(cur, "ALTER TABLE students ADD COLUMN access_code TEXT")
         _safe_alter(cur, "ALTER TABLE students ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
+        _safe_alter(cur, "ALTER TABLE students ADD COLUMN attendance_code TEXT")
+        _backfill_attendance_codes(cur)
 
         # ---------------------------------------------------------------
         # الملاحظات السلوكية - يكتبها المشرف، تظهر للمدرس والأدمن بس (مش الطالب)

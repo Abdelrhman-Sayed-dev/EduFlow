@@ -924,7 +924,7 @@ const NAV_BY_ROLE = {
     {id:"head_supervisors", label:"مشرفي المشرفين", icon:"shield"},
     {id:"teachers", label:"المدرسين", icon:"presentation"},
     {id:"schedule", label:"جدول المواعيد", icon:"calendar-clock"},
-    {id:"quizzes", label:"الكويزات", icon:"file-check-2"},
+    {id:"quizzes", label:"الكويزات والامتحانات", icon:"file-check-2"},
     {id:"attendance", label:"الحضور والغياب", icon:"calendar-check"},
     {id:"student_search", label:"بحث عن طالب", icon:"search"},
   ],
@@ -938,7 +938,7 @@ const NAV_BY_ROLE = {
   ],
   head_supervisor: [
     {id:"dashboard", label:"الرئيسية", icon:"layout-dashboard"},
-    {id:"hs_quizzes", label:"إدارة الكويزات", icon:"file-check-2"},
+    {id:"hs_quizzes", label:"إدارة الكويزات والامتحانات", icon:"file-check-2"},
     {id:"teacher_analytics", label:"التحليلات", icon:"bar-chart-3"},
     {id:"teacher_compare", label:"مقارنة المجموعات", icon:"git-compare"},
     {id:"teacher_ranking", label:"الترتيب المتقدم", icon:"trophy"},
@@ -967,6 +967,7 @@ const ROLE_LABELS = {admin:"الأدمن العام", teacher:"المدرس", su
 const STUDENT_BOTTOM_NAV = [
   {id:"mydashboard", label:"الرئيسية", icon:"home"},
   {id:"myboard", label:"سبورة المجموعة", icon:"presentation"},
+  {id:"myhomework", label:"واجباتي", icon:"clipboard-list"},
   {id:"myattendance", label:"حضوري", icon:"calendar-check"},
   {id:"myscores", label:"درجاتي", icon:"book-open"},
   {id:"student_more", label:"المزيد", icon:"layout-grid"},
@@ -984,7 +985,7 @@ const SUPERVISOR_BOTTOM_NAV = [
 // عناصر الناف بار السفلي الخاص بواجهة مشرف المشرفين (موبايل)
 const HEAD_SUPERVISOR_BOTTOM_NAV = [
   {id:"dashboard", label:"الرئيسية", icon:"home"},
-  {id:"hs_quizzes", label:"الكويزات", icon:"file-check-2"},
+  {id:"hs_quizzes", label:"الكويزات والامتحانات", icon:"file-check-2"},
   {id:"teacher_analytics", label:"التحليلات", icon:"bar-chart-3"},
   {id:"supervisors", label:"المشرفين", icon:"shield-check"},
   {id:"head_supervisor_more", label:"المزيد", icon:"layout-grid"},
@@ -1083,12 +1084,12 @@ const PAGE_TITLES = {
   dashboard:"لوحة التحكم", groups:"المجموعات", students:"الطلاب",
   supervisors:"المشرفين", teachers:"المدرسين", schedule:"جدول المواعيد",
   head_supervisors:"مشرفي المشرفين",
-  quizzes:"تسجيل الدرجات", attendance:"الحضور والغياب", boards:"سبورة الحصص",
+  quizzes:"الكويزات والامتحانات", attendance:"الحضور والغياب", boards:"سبورة الحصص",
   homework:"الواجبات",
   mygroup:"مجموعتي", mydashboard:"لوحتي", myscores:"درجاتي", myhomework:"واجباتي",
   myattendance:"حضوري", myboard:"سبورة مجموعتي", student_more:"المزيد",
   student_search:"بحث عن طالب", supervisor_more:"المزيد", teacher_more:"المزيد",
-  head_supervisor_more:"المزيد", hs_quizzes:"إدارة الكويزات",
+  head_supervisor_more:"المزيد", hs_quizzes:"إدارة الكويزات والامتحانات",
   teacher_analytics:"التحليلات", teacher_compare:"مقارنة المجموعات",
   teacher_ranking:"الترتيب المتقدم", teacher_reports:"التقارير", teacher_schedule:"جدولي",
 };
@@ -2378,12 +2379,14 @@ async function submitAddGroup(){
 }
 
 async function openEditGroupModal(id){
-  const [groups, stages, govs, supervisors] = await Promise.all([
-    loadGroups(), loadStages(), loadGovernorates(), loadSupervisorsList()
+  const [groups, stages, govs, supervisors, schedule] = await Promise.all([
+    loadGroups(), loadStages(), loadGovernorates(), loadSupervisorsList(), api("/api/schedule")
   ]);
   CACHE_STAGES = stages; CACHE_GOVS = govs; CACHE_SUPERVISORS = supervisors;
   const g = groups.find(x=>x.id===id);
   if (!g) return;
+  // مواعيد المجموعة الحالية (لو موجودة) عشان تتعرض جاهزة للتعديل
+  GROUP_SCHEDULE_SLOTS = schedule.filter(s=>s.group_id===id).map(s=>({day_of_week: s.day_of_week, start_time: s.start_time, end_time: s.end_time}));
   openModal("تعديل المجموعة", `
     <div class="form-group"><label class="form-label">اسم المجموعة</label><input class="form-input" id="f_g_name" value="${g.name}"></div>
     <div class="form-row-2">
@@ -2398,16 +2401,25 @@ async function openEditGroupModal(id){
       <div class="form-group"><label class="form-label">المشرف المسؤول</label><select class="form-select" id="f_g_sup">${supervisorOptions(g.supervisor_id)}</select></div>
     </div>
     <div class="form-group"><label class="form-label">ملاحظات</label><textarea class="form-textarea" id="f_g_notes">${g.notes||''}</textarea></div>
+    <div class="form-group">
+      <label class="form-label">مواعيد المجموعة (الأيام والأوقات)</label>
+      <div id="groupSlotsWrap"></div>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="addGroupScheduleSlotRow()" style="margin-top:6px;"><i data-lucide="plus" style="width:14px;height:14px;"></i> إضافة موعد</button>
+      <div class="form-hint">هتظهر تلقائي في "جدول المواعيد" وهيشوفها المدرس والطالب في مجموعته</div>
+    </div>
   `, `
     <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
     <button class="btn btn-primary" onclick="submitEditGroup(${id})"><i data-lucide="check" style="width:14px;height:14px;"></i> حفظ التغييرات</button>
   `);
   initSearchableSelect("f_g_gov", CACHE_GOVS);
+  renderGroupScheduleSlots();
+  if (!GROUP_SCHEDULE_SLOTS.length) addGroupScheduleSlotRow();
 }
 
 async function submitEditGroup(id){
   const governorate_id = document.getElementById("f_g_gov_value").value;
   if (!governorate_id){ showToast("لازم تختار المحافظة من القائمة", "error"); return; }
+  const validSlots = GROUP_SCHEDULE_SLOTS.filter(s => s.start_time);
   const body = {
     name: document.getElementById("f_g_name").value.trim(),
     stage_id: parseInt(document.getElementById("f_g_stage").value),
@@ -2415,6 +2427,7 @@ async function submitEditGroup(id){
     session_price: parseFloat(document.getElementById("f_g_price").value) || null,
     supervisor_id: document.getElementById("f_g_sup").value ? parseInt(document.getElementById("f_g_sup").value) : null,
     notes: document.getElementById("f_g_notes").value.trim() || null,
+    schedule_slots: validSlots,
   };
   await api(`/api/groups/${id}`, {method:"PUT", body: JSON.stringify(body)});
   showToast("تم حفظ التعديلات", "success");
@@ -2456,6 +2469,7 @@ function deleteGroup(id, name){
 ===================================================================== */
 async function renderStudentsPage(){
   const canManage = SESSION.role === "admin";
+  const canSeeCodes = canManage || SESSION.role === "supervisor";
   const [students, groups] = await Promise.all([loadStudents(), loadGroups()]);
   CACHE_ALL_GROUPS = groups;
   const canViewExtra = SESSION.role === "admin" || SESSION.role === "teacher";
@@ -2471,7 +2485,7 @@ async function renderStudentsPage(){
     </div>
     <div class="table-card">
       <div class="table-wrap"><table>
-        <thead><tr><th>#</th><th>الطالب</th><th>المجموعة</th><th>رقم الهاتف</th><th>ولي الأمر</th>${canManage?'<th>كود الدخول</th><th>الحالة</th>':''}<th></th></tr></thead>
+        <thead><tr><th>#</th><th>الطالب</th><th>المجموعة</th><th>رقم الهاتف</th><th>ولي الأمر</th>${canSeeCodes?'<th>كود الحضور</th>':''}${canManage?'<th>كود الدخول</th><th>الحالة</th>':''}<th></th></tr></thead>
         <tbody id="studentsTableBody">
           ${students.map(s=>`
             <tr data-search="${(s.id+' '+s.full_name).toLowerCase()}">
@@ -2480,6 +2494,7 @@ async function renderStudentsPage(){
               <td><span class="badge badge-teal">${s.group_name}</span></td>
               <td>${s.phone||"—"}</td>
               <td>${s.parent_phone||"—"}</td>
+              ${canSeeCodes ? `<td><code style="font-size:12px;background:var(--surface-3);padding:3px 8px;border-radius:6px;">${s.attendance_code||"—"}</code></td>` : ""}
               ${canManage ? `
               <td><code style="font-size:12px;background:var(--surface-3);padding:3px 8px;border-radius:6px;">${s.access_code||"—"}</code></td>
               <td>${s.is_active ? `<span class="badge badge-green">مفعّل</span>` : `<span class="badge badge-red">موقوف</span>`}</td>` : ""}
@@ -2489,7 +2504,8 @@ async function renderStudentsPage(){
                 <button class="action-btn" title="ملاحظات سلوكية" onclick="openBehaviorNotesModal(${s.id}, '${s.full_name.replace(/'/g,"")}')"><i data-lucide="message-square-text" style="width:15px;height:15px;"></i></button>
                 <button class="action-btn" title="تقرير شهري" onclick="openMonthlyReportModal(${s.id}, '${s.full_name.replace(/'/g,"")}')"><i data-lucide="file-bar-chart" style="width:15px;height:15px;"></i></button>` : ""}
                 ${canManage ? `
-                <button class="action-btn" title="كود جديد" onclick="resetStudentCode(${s.id})"><i data-lucide="refresh-cw" style="width:15px;height:15px;"></i></button>
+                <button class="action-btn" title="كود دخول جديد" onclick="resetStudentCode(${s.id})"><i data-lucide="refresh-cw" style="width:15px;height:15px;"></i></button>
+                <button class="action-btn" title="كود حضور جديد" onclick="resetStudentAttendanceCode(${s.id})"><i data-lucide="hash" style="width:15px;height:15px;"></i></button>
                 <span class="act-divider"></span>
                 <button class="act-btn ${s.is_active?'act-pause':'act-play'}" title="${s.is_active?'إيقاف الطالب':'تفعيل الطالب'}" onclick="toggleStudentActive(${s.id})"><i data-lucide="${s.is_active?'pause':'play'}" style="width:13px;height:13px;"></i>${s.is_active?'إيقاف':'تفعيل'}</button>
                 <button class="act-btn act-edit" title="تعديل بيانات الطالب" onclick="openEditStudentModal(${s.id})"><i data-lucide="pencil" style="width:13px;height:13px;"></i>تعديل</button>
@@ -2574,16 +2590,22 @@ async function submitAddStudent(){
   const res = await api("/api/students", {method:"POST", body: JSON.stringify(body)});
   closeOverlay("genericModal");
   renderStudentsPage();
-  showStudentCodeModal(res.access_code, full_name);
+  showStudentCodeModal(res.access_code, full_name, res.attendance_code);
 }
 
-function showStudentCodeModal(code, studentName){
+function showStudentCodeModal(code, studentName, attendanceCode){
   openModal(`تم إضافة "${studentName}" بنجاح ✅`, `
-    <p style="margin-bottom:14px;font-size:13.5px;color:var(--text-2);">ده كود دخول الطالب - انسخه وادّيه له يسجل دخول بيه من تاب "الدخول بكود":</p>
-    <div style="display:flex;gap:8px;">
+    <p style="margin-bottom:8px;font-size:13.5px;color:var(--text-2);">ده كود دخول الطالب - انسخه وادّيه له يسجل دخول بيه من تاب "الدخول بكود":</p>
+    <div style="display:flex;gap:8px;margin-bottom:${attendanceCode?'16px':'0'};">
       <input class="form-input" value="${code}" readonly onclick="this.select()" style="font-family:monospace;font-size:18px;font-weight:700;text-align:center;letter-spacing:2px;color:var(--primary-80);background:var(--primary-10);border-color:var(--primary-40);">
       <button class="btn btn-primary" onclick="navigator.clipboard.writeText('${code}');showToast('تم نسخ الكود','success')" style="flex-shrink:0;"><i data-lucide="copy" style="width:15px;height:15px;"></i> نسخ</button>
     </div>
+    ${attendanceCode ? `
+    <p style="margin-bottom:8px;font-size:13.5px;color:var(--text-2);">وده كود الحضور (أرقام بس) - بيستخدمه المشرف لأخذ حضور الطالب بسرعة:</p>
+    <div style="display:flex;gap:8px;">
+      <input class="form-input" value="${attendanceCode}" readonly onclick="this.select()" style="font-family:monospace;font-size:18px;font-weight:700;text-align:center;letter-spacing:2px;color:var(--success);background:var(--success-bg,var(--primary-10));border-color:var(--primary-40);">
+      <button class="btn btn-primary" onclick="navigator.clipboard.writeText('${attendanceCode}');showToast('تم نسخ الكود','success')" style="flex-shrink:0;"><i data-lucide="copy" style="width:15px;height:15px;"></i> نسخ</button>
+    </div>` : ""}
   `, `<button class="btn btn-primary btn-block" onclick="closeOverlay('genericModal')"><i data-lucide="check" style="width:14px;height:14px;"></i> تمام</button>`);
 }
 
@@ -2622,6 +2644,12 @@ async function submitEditStudent(id){
 async function resetStudentCode(id){
   const res = await api(`/api/students/${id}/reset-code`, {method:"PUT"});
   showStudentCodeModal(res.access_code, "الطالب");
+  renderStudentsPage();
+}
+
+async function resetStudentAttendanceCode(id){
+  const res = await api(`/api/students/${id}/reset-attendance-code`, {method:"PUT"});
+  showToast(`كود الحضور الجديد: ${res.attendance_code}`, "success");
   renderStudentsPage();
 }
 
@@ -2935,7 +2963,7 @@ async function renderQuizzesPage(){
   const c = document.getElementById("pageContainer");
   c.innerHTML = `
     <div class="page-header">
-      <div><h1>${SESSION.role==="supervisor"?"درجات الطلاب":"الكويزات"}</h1><p>${SESSION.role==="supervisor"?"اختار الكويز أو الامتحان وسجّل درجات طلاب مجموعتك":"كويزات المراحل الدراسية ودرجات الطلاب"}</p></div>
+      <div><h1>${SESSION.role==="supervisor"?"درجات الطلاب":"الكويزات والامتحانات"}</h1><p>${SESSION.role==="supervisor"?"اختار الكويز أو الامتحان وسجّل درجات طلاب مجموعتك":"كويزات وامتحانات المراحل الدراسية ودرجات الطلاب"}</p></div>
       <div class="header-actions">
         ${canCreate ? `<button class="btn btn-primary btn-sm" onclick="openAddQuizModal()"><i data-lucide="plus" style="width:14px;height:14px;"></i> إنشاء كويز</button>` : ""}
       </div>
@@ -2946,7 +2974,12 @@ async function renderQuizzesPage(){
         <tbody>
           ${quizzes.map(q=>`
             <tr>
-              <td class="td-name">${q.title}${q.version_label?` <span class="badge badge-gray">${q.version_label}</span>`:""}${q.description?`<div class="td-sub">${q.description}</div>`:""}</td>
+              <td class="td-name">
+                <div style="display:flex;align-items:center;gap:8px;">
+                  ${q.image_data?`<img src="${q.image_data}" onclick="showImageLightbox('${q.image_data}')" style="width:34px;height:34px;border-radius:6px;object-fit:cover;cursor:pointer;flex-shrink:0;border:1px solid var(--border);">`:""}
+                  <div>${q.title}${q.version_label?` <span class="badge badge-gray">${q.version_label}</span>`:""}${q.description?`<div class="td-sub">${q.description}</div>`:""}</div>
+                </div>
+              </td>
               <td>${q.quiz_type==='exam' ? `<span class="badge badge-red">📋 امتحان شامل</span>` : `<span class="badge badge-green">📝 كويز</span>`}</td>
               <td>${q.stage_name ? `<span class="badge badge-blue">${q.stage_name}</span>` : (q.group_name ? `<span class="badge badge-teal">${q.group_name}</span>` : `<span class="badge badge-gray">عام لكل المجموعات</span>`)}</td>
               <td>${q.quiz_date||"—"}</td>
@@ -2972,7 +3005,7 @@ async function renderHsQuizzesPage(){
   const c = document.getElementById("pageContainer");
   c.innerHTML = `
     <div class="page-header">
-      <div><h1>إدارة الكويزات</h1><p>إنشاء كويز أو امتحان شامل يوصل تلقائيًا لكل مشرفي المرحلة</p></div>
+      <div><h1>إدارة الكويزات والامتحانات</h1><p>إنشاء كويز أو امتحان شامل يوصل تلقائيًا لكل مشرفي المرحلة</p></div>
       <div class="header-actions">
         <button class="btn btn-primary btn-sm" onclick="openHsQuizModal()"><i data-lucide="plus" style="width:14px;height:14px;"></i> إنشاء كويز</button>
       </div>
@@ -2983,7 +3016,12 @@ async function renderHsQuizzesPage(){
         <tbody>
           ${quizzes.map(q=>`
             <tr>
-              <td class="td-name">${q.image_data?`<i data-lucide="image" style="width:13px;height:13px;color:var(--primary);"></i> `:""}${q.title}${q.version_label?` <span class="badge badge-gray">${q.version_label}</span>`:""}${q.description?`<div class="td-sub">${q.description}</div>`:""}</td>
+              <td class="td-name">
+                <div style="display:flex;align-items:center;gap:8px;">
+                  ${q.image_data?`<img src="${q.image_data}" onclick="showImageLightbox('${q.image_data}')" style="width:34px;height:34px;border-radius:6px;object-fit:cover;cursor:pointer;flex-shrink:0;border:1px solid var(--border);">`:""}
+                  <div>${q.title}${q.version_label?` <span class="badge badge-gray">${q.version_label}</span>`:""}${q.description?`<div class="td-sub">${q.description}</div>`:""}</div>
+                </div>
+              </td>
               <td>${q.quiz_type==='exam' ? `<span class="badge badge-red">📋 امتحان شامل</span>` : `<span class="badge badge-green">📝 كويز</span>`}</td>
               <td>${q.stage_name ? `<span class="badge badge-blue">${q.stage_name}</span>` : `<span class="badge badge-gray">عام</span>`}</td>
               <td>${q.session_number ?? "—"}</td>
@@ -3119,32 +3157,41 @@ async function loadSupervisorHomework(groupId){
 
   wrap.innerHTML = sorted.map((hw, idx)=>{
     const subs = subsLists[idx] || [];
+    const doneCount = subs.filter(s=>s.done).length;
+    const bodyId = `sup_hw_body_${hw.id}`;
+    const isOpen = isCollapseOpenByDefault(bodyId, idx === 0); // أول واجب مفتوح افتراضيًا، والباقي كولابس
     return `
-    <div class="table-card" style="margin-bottom:14px;">
-      <div class="toolbar" style="justify-content:space-between;flex-wrap:wrap;gap:8px;">
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-          <i data-lucide="presentation" style="width:14px;height:14px;color:var(--primary);"></i>
+    <div class="collapse-card" style="margin-bottom:14px;" id="sup_hw_card_${hw.id}">
+      <div class="collapse-header" onclick="toggleCollapse('${bodyId}', this)">
+        <div style="display:flex;align-items:center;gap:8px;flex:1;flex-wrap:wrap;">
+          <i data-lucide="presentation" style="width:14px;height:14px;color:var(--primary);flex-shrink:0;"></i>
           <b style="font-size:13.5px;">الحصة ${hw.session_number}</b>
           ${hw.session_date?`<span style="font-size:12px;color:var(--text-3);">${hw.session_date}</span>`:""}
           <span style="font-size:12px;color:var(--text-2);">${hw.description||""}</span>
+          <span class="badge ${doneCount===subs.length&&subs.length?'badge-green':doneCount>0?'badge-amber':'badge-gray'}" style="margin-right:auto;">${doneCount}/${subs.length} سلّموا</span>
         </div>
-        <button class="action-btn del" onclick="deleteHomeworkItem(${hw.id}, ${JSON.stringify(hw.group_id)})"><i data-lucide="trash-2" style="width:14px;height:14px;"></i></button>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button class="action-btn del" onclick="event.stopPropagation();deleteHomeworkItem(${hw.id}, ${JSON.stringify(hw.group_id)})"><i data-lucide="trash-2" style="width:14px;height:14px;"></i></button>
+          <i data-lucide="${isOpen?'chevron-up':'chevron-down'}" class="collapse-icon" style="width:16px;height:16px;color:var(--text-3);transition:transform .2s;"></i>
+        </div>
       </div>
-      <div class="table-wrap"><table>
-        <thead><tr><th>الطالب</th><th>الحالة</th></tr></thead>
-        <tbody>
-          ${subs.map(s=>`
-            <tr>
-              <td class="td-name">${s.full_name}</td>
-              <td>
-                <div class="seg-toggle">
-                  <button class="seg-btn ${s.done?'active-green':''}" onclick="setHomeworkStatus(${hw.id}, ${s.student_id}, true, ${hw.group_id})">✅ تم التسليم</button>
-                  <button class="seg-btn ${!s.done?'active-red':''}" onclick="setHomeworkStatus(${hw.id}, ${s.student_id}, false, ${hw.group_id})">❌ لم يسلم</button>
-                </div>
-              </td>
-            </tr>`).join("") || `<tr><td colspan="2" style="text-align:center;color:var(--text-3);">لا يوجد طلاب</td></tr>`}
-        </tbody>
-      </table></div>
+      <div class="collapse-body" id="${bodyId}" style="display:${isOpen?'block':'none'};">
+        <div class="table-wrap"><table>
+          <thead><tr><th>الطالب</th><th>الحالة</th></tr></thead>
+          <tbody>
+            ${subs.map(s=>`
+              <tr>
+                <td class="td-name">${s.full_name}</td>
+                <td>
+                  <div class="seg-toggle">
+                    <button class="seg-btn ${s.done?'active-green':''}" onclick="setHomeworkStatus(${hw.id}, ${s.student_id}, true, ${hw.group_id})">✅ تم التسليم</button>
+                    <button class="seg-btn ${!s.done?'active-red':''}" onclick="setHomeworkStatus(${hw.id}, ${s.student_id}, false, ${hw.group_id})">❌ لم يتم تسليم الواجب</button>
+                  </div>
+                </td>
+              </tr>`).join("") || `<tr><td colspan="2" style="text-align:center;color:var(--text-3);">لا يوجد طلاب</td></tr>`}
+          </tbody>
+        </table></div>
+      </div>
     </div>`;
   }).join("");
   icons();
@@ -3474,15 +3521,9 @@ function renderAttendanceSessionShell(groupId, groupName, sn, isOpen){
         <div style="padding:14px 16px;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;border-bottom:1px solid var(--border);">
           <div style="flex:1;min-width:200px;">
             <label class="form-label">كود الطالب</label>
-            <input class="form-input" id="quick_att_code_${key}" placeholder="مثال: ST-4F92AB" style="font-family:monospace;" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();submitQuickAttendance(${groupId}, ${sn});}">
+            <input class="form-input" id="quick_att_code_${key}" placeholder="مثال: 48213" style="font-family:monospace;" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();submitQuickAttendance(${groupId}, ${sn});}">
           </div>
-          <div>
-            <label class="form-label">الحالة</label>
-            <div class="pill-group" id="quickAttPills_${key}">
-              ${Object.keys(ATT_LABELS).map(k=>`<button type="button" class="pill-btn ${k==='present'?'active':''}" data-status="${k}" onclick="setQuickAttStatus('${key}', '${k}')"><span class="dot"></span>${ATT_LABELS[k]}</button>`).join("")}
-            </div>
-          </div>
-          <button class="btn btn-primary" onclick="submitQuickAttendance(${groupId}, ${sn})"><i data-lucide="check" style="width:14px;height:14px;"></i> تسجيل</button>
+          <button class="btn btn-primary" onclick="submitQuickAttendance(${groupId}, ${sn})"><i data-lucide="check" style="width:14px;height:14px;"></i> تسجيل حضور</button>
         </div>
         <div id="quick_att_result_${key}" style="padding:10px 16px 0;"></div>
         <div class="table-wrap">
@@ -3494,13 +3535,6 @@ function renderAttendanceSessionShell(groupId, groupName, sn, isOpen){
       </div>
     </div>
   `;
-}
-
-function setQuickAttStatus(key, status){
-  QUICK_ATT_STATUS_BY_SESSION[key] = status;
-  document.querySelectorAll(`#quickAttPills_${key} .pill-btn`).forEach(b=>{
-    b.classList.toggle("active", b.dataset.status === status);
-  });
 }
 
 async function loadAttendanceTableForSession(groupId, sn){
@@ -3585,7 +3619,7 @@ async function submitQuickAttendance(groupId, sn){
   const key = `${groupId}_${sn}`;
   const codeInput = document.getElementById(`quick_att_code_${key}`);
   const code = codeInput.value.trim();
-  const status = QUICK_ATT_STATUS_BY_SESSION[key] || "present";
+  const status = "present"; // البحث بالكود بيسجل "حاضر" على طول، وأي حالة تانية (غايب/متأخر...) بتتحدد من جدول الطلاب تحت
   const date = todayStr();
   const resultEl = document.getElementById(`quick_att_result_${key}`);
   if (!code){ showToast("لازم تكتب كود الطالب", "error"); return; }
@@ -3630,26 +3664,16 @@ async function renderBoardsPage(){
 
 async function loadBoardImages(){
   const groupId = document.getElementById("board_group").value;
-  const [imgs, homeworks] = await Promise.all([
-    api(`/api/board-images?group_id=${groupId}`),
-    groupId ? api(`/api/homework?group_id=${groupId}`).catch(()=>[]) : Promise.resolve([])
-  ]);
+  const imgs = await api(`/api/board-images?group_id=${groupId}`);
   const canDelete = SESSION.role === "supervisor" || SESSION.role === "admin";
-  const canManageHW = SESSION.role === "supervisor" || SESSION.role === "admin" || SESSION.role === "head_supervisor";
 
-  // تجميع الصور والواجبات تحت رقم الحصة
+  // تجميع الصور تحت رقم الحصة (الواجبات بقت ليها تاب خاص بيها "الواجبات")
   const bySession = {};
   imgs.forEach(im=>{
     const k = im.session_number;
-    if (!bySession[k]) bySession[k] = {imgs:[], hw: null, date: im.session_date};
+    if (!bySession[k]) bySession[k] = {imgs:[], date: im.session_date};
     bySession[k].imgs.push(im);
     if (im.session_date) bySession[k].date = im.session_date;
-  });
-  homeworks.forEach(hw=>{
-    const k = hw.session_number;
-    if (!bySession[k]) bySession[k] = {imgs:[], hw: null, date: hw.session_date};
-    bySession[k].hw = hw;
-    if (hw.session_date) bySession[k].date = hw.session_date;
   });
 
   const sessions = Object.keys(bySession).sort((a,b)=>b-a);
@@ -3657,11 +3681,7 @@ async function loadBoardImages(){
 
   document.getElementById("boardCardsWrap").innerHTML = sessions.length ? sessions.map((sn, idx)=>{
     const sec = bySession[sn];
-    const hw = sec.hw;
     const isOpen = isCollapseOpenByDefault(`session_body_${sn}`, idx === 0); // أول حصة مفتوحة افتراضيًا، والباقي بيفضل زي ما سايبه المستخدم
-    const hwDoneCount = hw ? hw.done_count : 0;
-    const hwTotalCount = hw ? hw.total_count : 0;
-    const hwPct = hwTotalCount ? Math.round(hwDoneCount/hwTotalCount*100) : null;
     return `
     <div class="collapse-card" id="session_card_${sn}">
       <div class="collapse-header" onclick="toggleCollapse('session_body_${sn}', this)">
@@ -3671,22 +3691,14 @@ async function loadBoardImages(){
           ${sec.date ? `<span style="font-size:12px;color:var(--text-3);">${sec.date}</span>` : ""}
           <div style="display:flex;gap:6px;margin-right:auto;">
             ${sec.imgs.length ? `<span class="badge badge-teal">${sec.imgs.length} صورة</span>` : ""}
-            ${hw ? `<span class="badge ${hwPct===100?'badge-green':hwPct>0?'badge-amber':'badge-gray'}">${hwDoneCount}/${hwTotalCount} واجب</span>` : ""}
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
-          ${canManageHW ? `<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openHomeworkModal('${groupId}', ${sn}, '${sec.date||todayStr()}', ${hw?hw.id:'null'}, \`${hw?(hw.description||'').replace(/`/g,'').replace(/'/g,''):''}\`)" style="font-size:12px;padding:4px 10px;"><i data-lucide="${hw?'clipboard-check':'clipboard-list'}" style="width:13px;height:13px;"></i> ${hw?'الواجب':'+ واجب'}</button>` : ""}
           ${(SESSION.role==='supervisor'||SESSION.role==='admin') ? `<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();prepareUploadForSession(${sn},'${sec.date||todayStr()}');" style="font-size:12px;padding:4px 10px;"><i data-lucide="upload" style="width:13px;height:13px;"></i> صور</button>` : ""}
           <i data-lucide="${isOpen?'chevron-up':'chevron-down'}" class="collapse-icon" style="width:16px;height:16px;color:var(--text-3);transition:transform .2s;"></i>
         </div>
       </div>
       <div class="collapse-body" id="session_body_${sn}" style="display:${isOpen?'block':'none'};">
-        ${hw ? `
-        <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:12px 16px;margin:12px 16px 0;border-right:3px solid var(--primary);">
-          <div style="font-size:12px;font-weight:700;color:var(--text-3);margin-bottom:4px;">الواجب</div>
-          <div style="font-size:13.5px;color:var(--text);margin-bottom:${canManageHW?'10px':'0'};">${hw.description||'واجب الحصة'}</div>
-          ${canManageHW ? `<button class="btn btn-primary btn-sm" onclick="openHomeworkStudentsModal(${hw.id}, '${hw.description||'الواجب'}')"><i data-lucide="users" style="width:13px;height:13px;"></i> متابعة تسليم الطلاب</button>` : ""}
-        </div>` : ""}
         ${sec.imgs.length ? `
         <div class="cards-grid" style="padding:14px 16px;">
           ${sec.imgs.map(im=>`
@@ -3704,7 +3716,7 @@ async function loadBoardImages(){
         </div>` : `<div style="padding:14px 16px;font-size:13px;color:var(--text-3);">لا يوجد صور سبورة لهذه الحصة بعد</div>`}
       </div>
     </div>
-  `}).join("") : `<div class="empty-state"><div class="empty-icon"><i data-lucide="image-off" style="width:26px;height:26px;"></i></div><div class="empty-title">لا يوجد حصص بعد</div><div class="empty-desc">ارفع صور السبورة أو أضف واجب عشان تظهر هنا.</div></div>`;
+  `}).join("") : `<div class="empty-state"><div class="empty-icon"><i data-lucide="image-off" style="width:26px;height:26px;"></i></div><div class="empty-title">لا يوجد حصص بعد</div><div class="empty-desc">ارفع صور السبورة عشان تظهر هنا.</div></div>`;
   icons();
 }
 
@@ -3743,86 +3755,9 @@ function prepareUploadForSession(sessionNum, sessionDate){
 }
 
 /* =====================================================================
-   الواجبات - Homework System
+   الواجبات - متابقة أن نظام رفع صور السبورة منفصل عن الواجبات
+   (إدارة الواجبات بقت كلها في تاب "الواجبات" - renderSupervisorHomeworkPage)
 ===================================================================== */
-function openHomeworkModal(groupId, sessionNum, sessionDate, hwId, currentDesc){
-  const isEdit = hwId && hwId !== 'null';
-  openModal(isEdit ? 'تعديل الواجب' : 'إضافة واجب', `
-    <div class="form-group">
-      <label class="form-label">وصف الواجب <span class="req">*</span></label>
-      <textarea class="form-textarea" id="hw_desc" placeholder="اكتب الواجب هنا..." style="min-height:80px;">${currentDesc||''}</textarea>
-    </div>
-  `, `
-    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
-    ${isEdit ? `<button class="btn btn-danger btn-sm" onclick="deleteHomework(${hwId}, '${groupId}')"><i data-lucide="trash-2" style="width:13px;height:13px;"></i> حذف</button>` : ''}
-    <button class="btn btn-primary" onclick="submitHomework('${groupId}', ${sessionNum}, '${sessionDate}', ${isEdit?hwId:'null'})"><i data-lucide="check" style="width:14px;height:14px;"></i> حفظ</button>
-  `);
-  setTimeout(()=>document.getElementById("hw_desc")?.focus(), 100);
-}
-
-async function submitHomework(groupId, sessionNum, sessionDate, hwId){
-  const desc = document.getElementById("hw_desc")?.value.trim();
-  if (!desc){ showToast("لازم تكتب الواجب", "error"); return; }
-  const isEdit = hwId && hwId !== 'null';
-  const body = {group_id: parseInt(groupId), session_number: parseInt(sessionNum), session_date: sessionDate, description: desc};
-  if (isEdit){
-    await api(`/api/homework/${hwId}`, {method:"PUT", body: JSON.stringify(body)});
-  } else {
-    await api("/api/homework", {method:"POST", body: JSON.stringify(body)});
-  }
-  showToast(isEdit ? "تم تعديل الواجب" : "تم إضافة الواجب ✅", "success");
-  closeOverlay("genericModal");
-  loadBoardImages();
-}
-
-async function deleteHomework(hwId, groupId){
-  await api(`/api/homework/${hwId}`, {method:"DELETE"});
-  showToast("تم حذف الواجب", "success");
-  closeOverlay("genericModal");
-  loadBoardImages();
-}
-
-async function openHomeworkStudentsModal(hwId, hwDesc){
-  const rows = await api(`/api/homework/${hwId}/submissions`);
-  const canEdit = SESSION.role !== "student";
-  openModal(`متابعة: ${hwDesc}`, `
-    <div class="table-wrap" style="margin:-10px -10px;">
-    <table style="font-size:13px;">
-      <thead><tr><th>الطالب</th><th>حالة التسليم</th><th>ملاحظات</th></tr></thead>
-      <tbody>
-        ${rows.map(r=>`
-          <tr>
-            <td class="td-name">${r.full_name}</td>
-            <td>
-              ${canEdit ? `
-              <div class="pill-group sm">
-                <button type="button" class="pill-btn ${r.done?'active':''}" onclick="saveHomeworkSubmission(${hwId}, ${r.student_id}, true, this)"><span class="dot" style="background:var(--success);"></span>عمله</button>
-                <button type="button" class="pill-btn ${r.done===false?'active':''}" onclick="saveHomeworkSubmission(${hwId}, ${r.student_id}, false, this)"><span class="dot" style="background:var(--danger);"></span>ملعملوش</button>
-              </div>` : `<span class="badge ${r.done?'badge-green':'badge-red'}">${r.done?'عمله':'ملعملوش'}</span>`}
-            </td>
-            <td>
-              ${canEdit ? `<input class="form-input" style="height:30px;font-size:12px;min-width:120px;" placeholder="ملاحظة..." value="${(r.notes||'').replace(/"/g,'&quot;')}" onchange="saveHomeworkNote(${hwId}, ${r.student_id}, this.value)">` : `<span class="td-sub">${r.notes||'—'}</span>`}
-            </td>
-          </tr>
-        `).join("") || `<tr><td colspan="3" style="text-align:center;color:var(--text-3);padding:20px;">لا يوجد طلاب</td></tr>`}
-      </tbody>
-    </table></div>
-  `, `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`);
-}
-
-async function saveHomeworkSubmission(hwId, studentId, done, btnEl){
-  if (btnEl){
-    btnEl.closest(".pill-group").querySelectorAll(".pill-btn").forEach(b=>b.classList.remove("active"));
-    btnEl.classList.add("active");
-  }
-  await api(`/api/homework/${hwId}/submissions`, {method:"POST", body: JSON.stringify({student_id: studentId, done})});
-  showToast(done ? "✅ تم تسجيل إنه عمل الواجب" : "تم تسجيل إنه ملعملوش", done?"success":"error");
-}
-
-async function saveHomeworkNote(hwId, studentId, notes){
-  await api(`/api/homework/${hwId}/submissions`, {method:"POST", body: JSON.stringify({student_id: studentId, notes})});
-}
-
 
 
 function openUploadBoardModal(){
@@ -4128,13 +4063,6 @@ async function renderStudentMorePage(){
   const c = document.getElementById("pageContainer");
   c.innerHTML = `
     <div class="page-header"><div><h1>المزيد</h1><p>باقي صفحاتك وإعدادات حسابك</p></div></div>
-    <div class="table-card" style="padding:6px 12px;margin-bottom:14px;">
-      <div class="student-more-item" onclick="navigateTo('myhomework')">
-        <div class="student-more-ic"><i data-lucide="clipboard-list" style="width:18px;height:18px;"></i></div>
-        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">واجباتي</div><div style="font-size:11.5px;color:var(--text-3);">واجبات مجموعتك حصة بحصة</div></div>
-        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
-      </div>
-    </div>
     <div class="table-card" style="padding:6px 12px;">
       <div class="student-more-item" onclick="openAccountModal()">
         <div class="student-more-ic"><i data-lucide="settings" style="width:18px;height:18px;"></i></div>
@@ -4233,7 +4161,7 @@ async function loadMyHomework(){
           <b style="font-size:13.5px;">الحصة ${label}</b>
           ${hw.session_date ? `<span style="font-size:12px;color:var(--text-3);">${hw.session_date}</span>` : ""}
         </div>
-        <span class="badge ${done?'badge-green':'badge-gray'}" id="my_hw_badge_${hw.id}">${done?'تم التسليم ✅':'لسه ملسلمتوش'}</span>
+        <span class="badge ${done?'badge-green':'badge-gray'}" id="my_hw_badge_${hw.id}">${done?'تم التسليم ✅':'لم يتم تسليم الواجب'}</span>
       </div>
       <div style="padding:14px 16px;">
         <div style="font-size:12px;font-weight:700;color:var(--text-3);margin-bottom:6px;">الواجب</div>
@@ -4301,7 +4229,7 @@ async function renderMyBoardPage(){
               ${sec.date ? `<span style="font-size:12px;color:var(--text-3);">${sec.date}</span>` : ""}
               <div style="display:flex;gap:6px;margin-right:auto;">
                 ${sec.imgs.length ? `<span class="badge badge-teal">${sec.imgs.length} صورة</span>` : ""}
-                ${hw ? `<span class="badge ${done?'badge-green':'badge-red'}">${done?'تم تسليم الواجب ✅':'لسه ملسلمتوش ❌'}</span>` : ""}
+                ${hw ? `<span class="badge ${done?'badge-green':'badge-red'}">${done?'تم تسليم الواجب ✅':'لم يتم تسليم الواجب ❌'}</span>` : ""}
               </div>
             </div>
             <i data-lucide="${isOpen?'chevron-up':'chevron-down'}" class="collapse-icon" style="width:16px;height:16px;color:var(--text-3);transition:transform .2s;"></i>
