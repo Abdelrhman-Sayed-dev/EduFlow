@@ -213,6 +213,32 @@ tbody tr:hover{background:var(--primary-10);}
 .pill-btn.active .dot{background:#fff;}
 .pill-group.sm .pill-btn{height:26px;padding:0 9px;font-size:11px;}
 
+/* ============ QUIZ SCORES MODAL (تسجيل الدرجات) ============ */
+.qs-head{display:flex;align-items:center;gap:14px;width:100%;}
+.qs-head-text{flex:1;min-width:0;}
+.qs-head-title{font-size:18px;font-weight:800;color:var(--text);}
+.qs-head-sub{font-size:12.5px;color:var(--text-3);margin-top:3px;}
+.qs-head-icon{width:46px;height:46px;border-radius:50%;background:var(--primary);display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0;}
+.qs-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
+.qs-toolbar .search-wrap{min-width:220px;}
+.qs-sort-btn{display:inline-flex;align-items:center;gap:6px;height:var(--control-h);padding:0 14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);font-size:12.5px;font-weight:700;color:var(--text-2);cursor:pointer;white-space:nowrap;font-family:'Cairo',sans-serif;transition:border-color .12s var(--ease),background .12s var(--ease);}
+.qs-sort-btn:hover{background:var(--surface-3);border-color:var(--border-2);}
+.qs-table-card{border:1px solid var(--border);border-radius:var(--radius-md);overflow:hidden;}
+.qs-table thead th{background:#1E3A5F;color:#fff;font-size:11.5px;font-weight:700;text-transform:none;letter-spacing:0;border-bottom:none;}
+.qs-table thead th i{vertical-align:middle;margin-left:4px;opacity:.85;}
+.qs-avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:700;flex-shrink:0;}
+.qs-name-cell{display:flex;align-items:center;gap:10px;}
+.qs-code-cell{font-size:12.5px;color:var(--text-2);font-weight:600;}
+.qs-score-input{width:76px;height:38px;text-align:center;display:inline-block;}
+.qs-row-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;}
+.qs-kebab{width:32px;height:32px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface);color:var(--text-2);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:background .1s var(--ease);}
+.qs-kebab:hover{background:var(--surface-3);color:var(--text);}
+.qs-save-row{display:inline-flex;align-items:center;gap:5px;height:32px;padding:0 12px;border-radius:var(--radius-sm);border:none;background:var(--primary);color:#fff;font-size:12px;font-weight:700;font-family:'Cairo',sans-serif;cursor:pointer;white-space:nowrap;transition:background .12s var(--ease);}
+.qs-save-row:hover{background:var(--primary-80);}
+.qs-footer-wrap{display:flex;align-items:center;justify-content:space-between;width:100%;gap:10px;flex-wrap:wrap;}
+.qs-total-badge{display:inline-flex;align-items:center;gap:8px;background:var(--surface-3);border:1px solid var(--border);border-radius:var(--radius-md);padding:9px 15px;font-weight:700;font-size:13px;color:var(--text);}
+.qs-total-badge i{color:var(--primary);}
+
 /* ============ OVERLAY / MODAL ============ */
 .overlay{position:fixed;inset:0;background:rgba(15,23,42,.5);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;z-index:900;opacity:0;pointer-events:none;transition:opacity .18s var(--ease);}
 .lightbox-download-btn{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);background:var(--surface);color:var(--text);border:none;border-radius:999px;padding:10px 20px;font-size:13px;font-weight:700;font-family:'Cairo',sans-serif;display:flex;align-items:center;gap:6px;cursor:pointer;box-shadow:var(--shadow-lg,0 8px 24px rgba(0,0,0,.2));}
@@ -661,11 +687,12 @@ async function api(path, options={}){
 function openOverlay(id){ document.getElementById(id).classList.add("open"); icons(); }
 function closeOverlay(id){ document.getElementById(id).classList.remove("open"); }
 
-function openModal(titleHtml, bodyHtml, footerHtml){
+function openModal(titleHtml, bodyHtml, footerHtml, opts){
   const modal = document.getElementById("genericModalBody");
+  modal.style.width = (opts && opts.width) ? opts.width : "";
   modal.innerHTML = `
     <div class="modal-header">
-      <div class="modal-title">${titleHtml}</div>
+      <div class="modal-title" style="flex:1;">${titleHtml}</div>
       <button class="modal-close" onclick="closeOverlay('genericModal')"><i data-lucide="x" style="width:16px;height:16px;"></i></button>
     </div>
     <div class="modal-body">${bodyHtml}</div>
@@ -3278,25 +3305,96 @@ function deleteQuiz(id){
   });
 }
 
+const QS_AVATAR_COLORS = ["#3E7CB1","#4F9D6E","#8B6FC9","#D99B3F","#4A90B8","#D2705F","#5CA9A0","#B586C9"];
+let QS_STATE = null; // {quizId, title, maxScore, canEdit, rows, search, sortDir}
+
+function qsAvatarColor(studentId){ return QS_AVATAR_COLORS[studentId % QS_AVATAR_COLORS.length]; }
+function qsInitial(name){ return (name||"?").trim().charAt(0); }
+
 async function openQuizScoresModal(quizId, title, maxScore){
   const rows = await api(`/api/quizzes/${quizId}/scores`);
-  const canEdit = SESSION.role !== "student";
-  openModal(`درجات: ${title}`, `
-    <div class="table-wrap" style="margin:-10px -10px;"><table>
-      <thead><tr><th>الطالب</th><th>الدرجة (من ${maxScore})</th>${canEdit?'<th></th>':''}</tr></thead>
-      <tbody>
-        ${rows.map(r=>`
-          <tr>
-            <td class="td-name">${r.full_name}</td>
-            <td>${canEdit
-              ? `<input class="form-input" id="score_${r.student_id}" style="width:90px;display:inline-block;" type="number" max="${maxScore}" min="0" value="${r.score??''}" onkeydown="if(event.key==='Enter'){event.preventDefault();saveQuizScore(${quizId}, ${r.student_id}, this.value, this)}">`
-              : (r.score ?? "—")
-            }</td>
-            ${canEdit ? `<td><button class="btn btn-primary btn-sm" onclick="saveQuizScore(${quizId}, ${r.student_id}, document.getElementById('score_${r.student_id}').value, document.getElementById('score_${r.student_id}'))"><i data-lucide="save" style="width:13px;height:13px;"></i> حفظ</button></td>` : ''}
-          </tr>`).join("") || `<tr><td colspan="3" style="text-align:center;color:var(--text-3);">لا يوجد طلاب</td></tr>`}
-      </tbody>
-    </table></div>
-  `, `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`);
+  QS_STATE = { quizId, title, maxScore, canEdit: SESSION.role !== "student", rows, search:"", sortDir:"asc" };
+  openModal(`
+    <div class="qs-head">
+      <div class="qs-head-text">
+        <div class="qs-head-title">درجات: ${title}</div>
+        <div class="qs-head-sub">الدرجة الكلية: ${maxScore} درجات</div>
+      </div>
+      <div class="qs-head-icon"><i data-lucide="graduation-cap" style="width:22px;height:22px;"></i></div>
+    </div>
+  `, `<div id="qsModalBody"></div>`,
+  QS_STATE.canEdit ? `
+    <div class="qs-footer-wrap">
+      <div class="qs-total-badge"><i data-lucide="users" style="width:16px;height:16px;"></i> إجمالي الطلاب <span id="qsTotalCount">${rows.length}</span></div>
+      <div style="display:flex;gap:10px;">
+        <button class="btn btn-primary" onclick="saveAllQuizScores()"><i data-lucide="save" style="width:14px;height:14px;"></i> حفظ جميع الدرجات</button>
+        <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+      </div>
+    </div>
+  ` : `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`,
+  { width: "900px" });
+  qsRenderBody();
+}
+
+function qsRenderBody(){
+  const st = QS_STATE;
+  const body = document.getElementById("qsModalBody");
+  if (!body || !st) return;
+
+  const q = (st.search||"").trim().toLowerCase();
+  let list = st.rows.filter(r => !q || r.full_name.toLowerCase().includes(q) || (r.attendance_code||"").toLowerCase().includes(q));
+  list = list.slice().sort((a,b)=> st.sortDir==="asc" ? a.full_name.localeCompare(b.full_name,'ar') : b.full_name.localeCompare(a.full_name,'ar'));
+
+  body.innerHTML = `
+    <div class="qs-toolbar">
+      <div class="search-wrap">
+        <i data-lucide="search" class="search-ic" style="width:15px;height:15px;"></i>
+        <input class="form-input" style="padding-right:12px;" placeholder="ابحث برقم كود الطالب..." value="${st.search}" oninput="QS_STATE.search=this.value; qsRenderBody();">
+      </div>
+      <button class="qs-sort-btn" onclick="QS_STATE.sortDir = QS_STATE.sortDir==='asc'?'desc':'asc'; qsRenderBody();">
+        <i data-lucide="arrow-up-down" style="width:14px;height:14px;"></i> ترتيب الاسم
+      </button>
+    </div>
+    <div class="qs-table-card">
+      <div class="table-wrap"><table class="qs-table">
+        <thead><tr>
+          <th><i data-lucide="hash" style="width:12px;height:12px;"></i>كود الطالب</th>
+          <th><i data-lucide="user" style="width:12px;height:12px;"></i>اسم الطالب</th>
+          <th><i data-lucide="star" style="width:12px;height:12px;"></i>الدرجة (من ${st.maxScore})</th>
+          ${st.canEdit ? `<th><i data-lucide="settings" style="width:12px;height:12px;"></i>الإجراءات</th>` : ""}
+        </tr></thead>
+        <tbody>
+          ${list.map(r=>`
+            <tr>
+              <td class="qs-code-cell">${r.attendance_code || "—"}</td>
+              <td>
+                <div class="qs-name-cell">
+                  <div class="qs-avatar" style="background:${qsAvatarColor(r.student_id)};"><i data-lucide="user" style="width:15px;height:15px;"></i></div>
+                  <span class="td-name">${r.full_name}</span>
+                </div>
+              </td>
+              <td>${st.canEdit
+                ? `<input class="form-input qs-score-input" id="score_${r.student_id}" type="number" max="${st.maxScore}" min="0" value="${r.score??''}" onkeydown="if(event.key==='Enter'){event.preventDefault();saveQuizScore(${st.quizId}, ${r.student_id}, this.value, this)}"> / ${st.maxScore}`
+                : `${r.score ?? "—"} / ${st.maxScore}`
+              }</td>
+              ${st.canEdit ? `
+                <td>
+                  <div class="qs-row-actions">
+                    <button class="qs-kebab" title="مسح الدرجة" onclick="qsClearScoreInput(${r.student_id})"><i data-lucide="more-vertical" style="width:15px;height:15px;"></i></button>
+                    <button class="qs-save-row" onclick="saveQuizScore(${st.quizId}, ${r.student_id}, document.getElementById('score_${r.student_id}').value, document.getElementById('score_${r.student_id}'))"><i data-lucide="save" style="width:13px;height:13px;"></i> حفظ</button>
+                  </div>
+                </td>` : ""}
+            </tr>`).join("") || `<tr><td colspan="${st.canEdit?4:3}" style="text-align:center;color:var(--text-3);padding:24px;">لا يوجد طلاب</td></tr>`}
+        </tbody>
+      </table></div>
+    </div>
+  `;
+  icons();
+}
+
+function qsClearScoreInput(studentId){
+  const el = document.getElementById(`score_${studentId}`);
+  if (el) el.value = "";
 }
 
 async function saveQuizScore(quizId, studentId, value, inputEl){
@@ -3304,8 +3402,30 @@ async function saveQuizScore(quizId, studentId, value, inputEl){
   const score = parseFloat(value);
   if (isNaN(score)) { showToast("الدرجة مش صح", "error"); return; }
   await api("/api/scores", {method:"POST", body: JSON.stringify({quiz_id: quizId, student_id: studentId, score})});
+  if (QS_STATE) { const row = QS_STATE.rows.find(r=>r.student_id===studentId); if (row) row.score = score; }
   showToast("تم حفظ الدرجة ✅", "success");
   if (inputEl) { inputEl.style.borderColor = "var(--success)"; setTimeout(()=>{ inputEl.style.borderColor=""; }, 1500); }
+}
+
+async function saveAllQuizScores(){
+  if (!QS_STATE) return;
+  const toSave = QS_STATE.rows.filter(r=>{
+    const el = document.getElementById(`score_${r.student_id}`);
+    return el && el.value !== "";
+  });
+  if (!toSave.length) { showToast("مفيش درجات متكتوبة", "error"); return; }
+  let ok = 0, fail = 0;
+  for (const r of toSave){
+    const el = document.getElementById(`score_${r.student_id}`);
+    const score = parseFloat(el.value);
+    if (isNaN(score)) { fail++; continue; }
+    try {
+      await api("/api/scores", {method:"POST", body: JSON.stringify({quiz_id: QS_STATE.quizId, student_id: r.student_id, score})});
+      r.score = score;
+      ok++;
+    } catch(e){ fail++; }
+  }
+  showToast(fail ? `تم حفظ ${ok} درجة وفشل ${fail}` : `تم حفظ ${ok} درجة بنجاح ✅`, fail ? "error" : "success");
 }
 
 /* =====================================================================
@@ -3952,7 +4072,7 @@ async function renderStudentDashboardPage(){
       <div class="toolbar"><b style="font-size:14px;display:flex;align-items:center;gap:6px;"><i data-lucide="bar-chart-3" style="width:15px;height:15px;color:var(--primary);"></i> آخر الدرجات</b></div>
       ${scores.length ? `
       <div class="table-wrap"><table>
-        <thead><tr><th>الكورس</th><th>التاريخ</th><th>الدرجة</th></tr></thead>
+        <thead><tr><th>الكويز</th><th>التاريخ</th><th>الدرجة</th></tr></thead>
         <tbody>
           ${scores.slice(0,6).map(s=>`<tr><td class="td-name">${s.title}</td><td>${s.quiz_date||"—"}</td><td>${s.score??"—"} / ${s.max_score}</td></tr>`).join("")}
         </tbody>
