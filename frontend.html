@@ -4038,6 +4038,11 @@ async function renderSupervisorMorePage(){
   c.innerHTML = `
     <div class="page-header"><div><h1>المزيد</h1><p>باقي صفحاتك وإعدادات حسابك</p></div></div>
     <div class="table-card" style="padding:6px 12px;margin-bottom:14px;">
+      <div class="student-more-item" onclick="navigateTo('quizzes')">
+        <div class="student-more-ic"><i data-lucide="file-check-2" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">الكويزات والامتحانات</div><div style="font-size:11.5px;color:var(--text-3);">تسجيل درجات الطلاب في الكويزات والامتحانات</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
       <div class="student-more-item" onclick="navigateTo('student_search')">
         <div class="student-more-ic"><i data-lucide="search" style="width:18px;height:18px;"></i></div>
         <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">بحث عن طالب</div><div style="font-size:11.5px;color:var(--text-3);">دور على أي طالب بالاسم أو الكود</div></div>
