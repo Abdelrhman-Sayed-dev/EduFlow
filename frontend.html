@@ -947,7 +947,7 @@ const NAV_BY_ROLE = {
   supervisor: [
     {id:"mygroup", label:"مجموعتي", icon:"users"},
     {id:"boards", label:"سبورة الحصة", icon:"presentation"},
-    {id:"quizzes", label:"درجات الطلاب", icon:"file-check-2"},
+    {id:"quizzes", label:"الكويزات والامتحانات", icon:"file-check-2"},
     {id:"homework", label:"الواجبات", icon:"clipboard-list"},
     {id:"attendance", label:"الحضور والغياب", icon:"calendar-check"},
     {id:"student_search", label:"بحث عن طالب", icon:"search"},
@@ -2963,7 +2963,7 @@ async function renderQuizzesPage(){
   const c = document.getElementById("pageContainer");
   c.innerHTML = `
     <div class="page-header">
-      <div><h1>${SESSION.role==="supervisor"?"درجات الطلاب":"الكويزات والامتحانات"}</h1><p>${SESSION.role==="supervisor"?"اختار الكويز أو الامتحان وسجّل درجات طلاب مجموعتك":"كويزات وامتحانات المراحل الدراسية ودرجات الطلاب"}</p></div>
+      <div><h1>الكويزات والامتحانات</h1><p>${SESSION.role==="supervisor"?"الكويزات والامتحانات التي أضافها المشرف العام لمرحلتك - اختار الكويز أو الامتحان وسجّل درجات طلاب مجموعتك":"كويزات وامتحانات المراحل الدراسية ودرجات الطلاب"}</p></div>
       <div class="header-actions">
         ${canCreate ? `<button class="btn btn-primary btn-sm" onclick="openAddQuizModal()"><i data-lucide="plus" style="width:14px;height:14px;"></i> إنشاء كويز</button>` : ""}
       </div>
@@ -2988,7 +2988,7 @@ async function renderQuizzesPage(){
                 ${canScore ? `<button class="btn btn-ghost btn-sm" onclick="openQuizScoresModal(${q.id}, '${q.title.replace(/'/g,"")}', ${q.max_score})"><i data-lucide="list-checks" style="width:14px;height:14px;"></i> الدرجات</button>` : ""}
                 ${canCreate ? `<button class="action-btn del" onclick="deleteQuiz(${q.id})"><i data-lucide="trash-2" style="width:15px;height:15px;"></i></button>` : ""}
               </td>
-            </tr>`).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:30px;">لا يوجد كويزات بعد</td></tr>`}
+            </tr>`).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:30px;">${SESSION.role==="supervisor"?"لا يوجد كويزات أو امتحانات مضافة من المشرف العام لمرحلتك حتى الآن":"لا يوجد كويزات بعد"}</td></tr>`}
         </tbody>
       </table></div>
     </div>
