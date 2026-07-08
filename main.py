@@ -1187,7 +1187,7 @@ def get_quiz_scores(quiz_id: int, session=Depends(get_current_session)):
 
         if quiz["group_id"]:
             rows = conn.execute("""
-                SELECT s.id as student_id, s.full_name, qs.score, qs.notes, qs.id as score_id
+                SELECT s.id as student_id, s.full_name, s.attendance_code, qs.score, qs.notes, qs.id as score_id
                 FROM students s
                 LEFT JOIN quiz_scores qs ON qs.student_id = s.id AND qs.quiz_id = ?
                 WHERE s.group_id = ? AND s.is_active=1
@@ -1195,7 +1195,7 @@ def get_quiz_scores(quiz_id: int, session=Depends(get_current_session)):
             """, (quiz_id, quiz["group_id"])).fetchall()
         elif quiz["stage_id"]:
             base_query = """
-                SELECT s.id as student_id, s.full_name, qs.score, qs.notes, qs.id as score_id,
+                SELECT s.id as student_id, s.full_name, s.attendance_code, qs.score, qs.notes, qs.id as score_id,
                        s.group_id, g.name as group_name
                 FROM students s
                 JOIN groups g ON g.id = s.group_id
@@ -1213,7 +1213,7 @@ def get_quiz_scores(quiz_id: int, session=Depends(get_current_session)):
             rows = conn.execute(base_query, params).fetchall()
         else:
             base_query = """
-                SELECT s.id as student_id, s.full_name, qs.score, qs.notes, qs.id as score_id, s.group_id
+                SELECT s.id as student_id, s.full_name, s.attendance_code, qs.score, qs.notes, qs.id as score_id, s.group_id
                 FROM students s
                 LEFT JOIN quiz_scores qs ON qs.student_id = s.id AND qs.quiz_id = ?
                 WHERE s.is_active=1
