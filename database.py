@@ -301,6 +301,28 @@ def init_db():
         """)
 
         # ---------------------------------------------------------------
+        # طلبات الطلاب - الطالب يقدم طلب (إذن حضور في معاد آخر / مشكلة / شرح)
+        # ويوصل لمشرف مجموعته يرد عليه ويغير حالته
+        # ---------------------------------------------------------------
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS student_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id INTEGER NOT NULL,
+            group_id INTEGER NOT NULL,
+            request_type TEXT NOT NULL CHECK(request_type IN ('attendance_change','issue','explanation','other')),
+            details TEXT,
+            status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','in_progress','resolved')),
+            supervisor_reply TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            resolved_at TEXT,
+            FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+            FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_student_requests_group ON student_requests(group_id, status)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_student_requests_student ON student_requests(student_id)")
+
+        # ---------------------------------------------------------------
         # المدفوعات - سجل شهري لكل طالب (دفع/متبقي)
         # ---------------------------------------------------------------
         cur.execute("""

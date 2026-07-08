@@ -219,6 +219,16 @@ class PaymentIn(BaseModel):
     notes: Optional[str] = None
 
 
+class StudentRequestIn(BaseModel):
+    request_type: str  # attendance_change / issue / explanation / other
+    details: Optional[str] = None
+
+
+class StudentRequestStatusIn(BaseModel):
+    status: str  # pending / in_progress / resolved
+    supervisor_reply: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # نظام تسجيل الدخول والصلاحيات
 # ---------------------------------------------------------------------------
@@ -283,6 +293,17 @@ def create_notification(conn, student_id: int, title: str, body: str = None):
         conn.execute(
             "INSERT INTO notifications (user_type, user_id, title, body) VALUES ('student', ?, ?, ?)",
             (student_id, title, body)
+        )
+    except Exception:
+        pass
+
+
+def create_user_notification(conn, user_id: int, title: str, body: str = None):
+    """إنشاء إشعار جديد لمستخدم (مشرف/مدرس/أدمن) - مثلاً لما طالب يقدم طلب جديد"""
+    try:
+        conn.execute(
+            "INSERT INTO notifications (user_type, user_id, title, body) VALUES ('user', ?, ?, ?)",
+            (user_id, title, body)
         )
     except Exception:
         pass
@@ -1781,6 +1802,122 @@ def mark_all_notifications_read(session=Depends(get_current_session)):
             (user_type, session["id"])
         )
         return {"message": "تم تعليم كل الإشعارات كمقروءة"}
+
+
+# ---------------------------------------------------------------------------
+# طلبات الطلاب - Student Requests
+# الطالب يقدم طلب (إذن حضور في معاد آخر / مواجهة مشكلة / طلب شرح) ويوصل لمشرف مجموعته
+# ---------------------------------------------------------------------------
+
+REQUEST_TYPE_LABELS = {
+    "attendance_change": "إذن حضور المحاضرة في معاد آخر",
+    "issue": "مواجهة مشكلة",
+    "explanation": "طلب شرح جزء أو مسألة",
+    "other": "طلب آخر",
+}
+REQUEST_STATUS_LABELS = {
+    "pending": "قيد الانتظار",
+    "in_progress": "جاري المتابعة",
+    "resolved": "تم الحل",
+}
+
+
+@app.post("/api/student-requests")
+def create_student_request(data: StudentRequestIn, session=Depends(get_current_session)):
+    """الطالب بيقدم طلب جديد (إذن حضور في معاد آخر / مواجهة مشكلة / طلب شرح...)"""
+    if session["type"] != "student":
+        raise HTTPException(status_code=403, detail="الطلبات دي مخصصة للطلاب بس")
+    if data.request_type not in REQUEST_TYPE_LABELS:
+        raise HTTPException(status_code=400, detail="نوع الطلب غير معروف")
+    if not session.get("group_id"):
+        raise HTTPException(status_code=400, detail="معندكش مجموعة لسه، كلم الأدمن")
+
+    with get_connection() as conn:
+        cur = conn.execute(
+            """INSERT INTO student_requests (student_id, group_id, request_type, details)
+               VALUES (?, ?, ?, ?)""",
+            (session["id"], session["group_id"], data.request_type, (data.details or "").strip() or None)
+        )
+        request_id = cur.lastrowid
+
+        group = conn.execute("SELECT * FROM groups WHERE id=?", (session["group_id"],)).fetchone()
+        if group and group["supervisor_id"]:
+            create_user_notification(
+                conn, group["supervisor_id"],
+                f"طلب جديد من الطالب {session['full_name']}",
+                REQUEST_TYPE_LABELS.get(data.request_type, data.request_type)
+            )
+        return {"message": "تم إرسال طلبك لمشرف مجموعتك", "id": request_id}
+
+
+@app.get("/api/student-requests")
+def get_student_requests(status: Optional[str] = None, session=Depends(get_current_session)):
+    """
+    عرض الطلبات:
+    - الطالب: يشوف طلباته هو بس
+    - المشرف: يشوف طلبات مجموعته/مجموعاته بس
+    - الأدمن/مشرف المشرفين: يشوف كل الطلبات
+    """
+    with get_connection() as conn:
+        query = """
+            SELECT sr.*, s.full_name AS student_name, g.name AS group_name
+            FROM student_requests sr
+            JOIN students s ON s.id = sr.student_id
+            JOIN groups g ON g.id = sr.group_id
+            WHERE 1=1
+        """
+        params = []
+
+        if session["role"] == "student":
+            query += " AND sr.student_id = ?"
+            params.append(session["id"])
+        elif session["role"] == "supervisor":
+            group_ids = supervised_group_ids(conn, session["id"])
+            if not group_ids:
+                return []
+            placeholders = ",".join("?" * len(group_ids))
+            query += f" AND sr.group_id IN ({placeholders})"
+            params.extend(group_ids)
+        elif session["role"] not in ("admin", "head_supervisor"):
+            raise HTTPException(status_code=403, detail="مفيش صلاحية للوصول لده")
+
+        if status:
+            query += " AND sr.status = ?"
+            params.append(status)
+
+        query += " ORDER BY sr.created_at DESC"
+        rows = conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+
+@app.put("/api/student-requests/{request_id}")
+def update_student_request(request_id: int, data: StudentRequestStatusIn,
+                            session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
+    """المشرف يرد على طلب الطالب ويغيّر حالته (قيد الانتظار / جاري المتابعة / تم الحل)"""
+    if data.status not in REQUEST_STATUS_LABELS:
+        raise HTTPException(status_code=400, detail="حالة الطلب غير معروفة")
+
+    with get_connection() as conn:
+        req = conn.execute("SELECT * FROM student_requests WHERE id=?", (request_id,)).fetchone()
+        if not req:
+            raise HTTPException(status_code=404, detail="الطلب غير موجود")
+
+        assert_supervisor_owns_group(conn, session, req["group_id"])
+
+        resolved_at = datetime.utcnow().isoformat(timespec="seconds") if data.status == "resolved" else None
+        conn.execute(
+            """UPDATE student_requests SET status=?, supervisor_reply=?, resolved_at=?
+               WHERE id=?""",
+            (data.status, (data.supervisor_reply or "").strip() or None, resolved_at, request_id)
+        )
+
+        title = f"تحديث على طلبك: {REQUEST_TYPE_LABELS.get(req['request_type'], req['request_type'])}"
+        body = f"الحالة: {REQUEST_STATUS_LABELS.get(data.status, data.status)}"
+        if data.supervisor_reply:
+            body += f" - {data.supervisor_reply}"
+        create_notification(conn, req["student_id"], title, body)
+
+        return {"message": "تم تحديث الطلب"}
 
 
 # ---------------------------------------------------------------------------

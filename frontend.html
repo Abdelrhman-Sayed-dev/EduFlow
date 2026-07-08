@@ -978,6 +978,7 @@ const NAV_BY_ROLE = {
     {id:"homework", label:"الواجبات", icon:"clipboard-list"},
     {id:"attendance", label:"الحضور والغياب", icon:"calendar-check"},
     {id:"monthly_reports", label:"التقرير الشهري", icon:"file-bar-chart"},
+    {id:"student_requests", label:"طلبات الطلاب", icon:"inbox"},
     {id:"student_search", label:"بحث عن طالب", icon:"search"},
   ],
   student: [
@@ -986,6 +987,7 @@ const NAV_BY_ROLE = {
     {id:"myscores", label:"درجاتي", icon:"file-check-2"},
     {id:"myattendance", label:"حضوري", icon:"calendar-check"},
     {id:"myboard", label:"سبورة مجموعتي", icon:"presentation"},
+    {id:"myrequests", label:"طلباتي", icon:"send"},
   ],
 };
 
@@ -1120,6 +1122,7 @@ const PAGE_TITLES = {
   head_supervisor_more:"المزيد", hs_quizzes:"إدارة الكويزات والامتحانات",
   teacher_analytics:"التحليلات", teacher_compare:"مقارنة المجموعات",
   teacher_ranking:"الترتيب المتقدم", teacher_reports:"التقارير", teacher_schedule:"جدولي",
+  myrequests:"طلباتي", student_requests:"طلبات الطلاب",
 };
 
 async function renderPage(page){
@@ -1158,6 +1161,8 @@ async function renderPage(page){
       teacher_ranking: renderTeacherRankingPage,
       teacher_reports: renderTeacherReportsPage,
       teacher_schedule: renderTeacherSchedulePage,
+      myrequests: renderMyRequestsPage,
+      student_requests: renderStudentRequestsPage,
     };
     const fn = renderers[page];
     if (fn) await fn();
@@ -4174,6 +4179,11 @@ async function renderSupervisorMorePage(){
         <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">بحث عن طالب</div><div style="font-size:11.5px;color:var(--text-3);">دور على أي طالب بالاسم أو الكود</div></div>
         <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
       </div>
+      <div class="student-more-item" onclick="navigateTo('student_requests')">
+        <div class="student-more-ic"><i data-lucide="inbox" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">طلبات الطلاب</div><div style="font-size:11.5px;color:var(--text-3);">طلبات مجموعتك (إذن حضور / مشكلة / شرح)</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
     </div>
     <div class="table-card" style="padding:6px 12px;">
       <div class="student-more-item" onclick="openAccountModal()">
@@ -4194,6 +4204,13 @@ async function renderStudentMorePage(){
   const c = document.getElementById("pageContainer");
   c.innerHTML = `
     <div class="page-header"><div><h1>المزيد</h1><p>باقي صفحاتك وإعدادات حسابك</p></div></div>
+    <div class="table-card" style="padding:6px 12px;margin-bottom:14px;">
+      <div class="student-more-item" onclick="navigateTo('myrequests')">
+        <div class="student-more-ic"><i data-lucide="send" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">طلباتي</div><div style="font-size:11.5px;color:var(--text-3);">قدّم طلب لمشرف مجموعتك وتابع الردود</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
+    </div>
     <div class="table-card" style="padding:6px 12px;">
       <div class="student-more-item" onclick="openAccountModal()">
         <div class="student-more-ic"><i data-lucide="settings" style="width:18px;height:18px;"></i></div>
@@ -4398,6 +4415,183 @@ function downloadImageDirect(src, filename){
   document.body.appendChild(a);
   a.click();
   a.remove();
+}
+
+/* =====================================================================
+   طلباتي - الطالب يقدم طلب لمشرف مجموعته ويتابع الرد
+===================================================================== */
+const REQUEST_TYPE_LABELS = {
+  attendance_change: "إذن حضور المحاضرة في معاد آخر",
+  issue: "مواجهة مشكلة",
+  explanation: "طلب شرح جزء أو مسألة",
+  other: "طلب آخر",
+};
+const REQUEST_TYPE_ICONS = {
+  attendance_change: "calendar-clock", issue: "alert-circle", explanation: "help-circle", other: "message-square",
+};
+const REQUEST_STATUS_LABELS = {pending:"قيد الانتظار", in_progress:"جاري المتابعة", resolved:"تم الحل"};
+const REQUEST_STATUS_BADGE = {pending:"badge-amber", in_progress:"badge-blue", resolved:"badge-green"};
+
+async function renderMyRequestsPage(){
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header"><div><h1>طلباتي</h1><p>قدّم طلبك لمشرف مجموعتك وتابع الرد عليه</p></div>
+      <div class="header-actions"><button class="btn btn-primary btn-sm" onclick="openAddStudentRequestModal()"><i data-lucide="plus" style="width:14px;height:14px;"></i> طلب جديد</button></div>
+    </div>
+    <div id="myRequestsWrap"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>
+  `;
+  await loadMyRequests();
+}
+
+async function loadMyRequests(){
+  const wrap = document.getElementById("myRequestsWrap");
+  if (!wrap) return;
+  const items = await api("/api/student-requests");
+  if (!items.length){
+    wrap.innerHTML = `<div class="empty-state"><div class="empty-icon"><i data-lucide="inbox" style="width:26px;height:26px;"></i></div><div class="empty-title">لسه معملتش أي طلب</div><div class="empty-desc">لو عندك أي طلب لمشرف مجموعتك اضغط "طلب جديد"</div></div>`;
+    return;
+  }
+  wrap.innerHTML = items.map(r=>`
+    <div class="table-card" style="padding:16px 18px;margin-bottom:12px;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+        <i data-lucide="${REQUEST_TYPE_ICONS[r.request_type]||'message-square'}" style="width:16px;height:16px;color:var(--primary);flex-shrink:0;"></i>
+        <b style="font-size:13.5px;">${REQUEST_TYPE_LABELS[r.request_type]||r.request_type}</b>
+        <span class="badge ${REQUEST_STATUS_BADGE[r.status]||'badge-gray'}" style="margin-right:auto;">${REQUEST_STATUS_LABELS[r.status]||r.status}</span>
+      </div>
+      ${r.details?`<div style="font-size:12.5px;color:var(--text-2);margin-bottom:8px;">${r.details}</div>`:""}
+      <div style="font-size:11px;color:var(--text-3);">قُدّم بتاريخ ${(r.created_at||"").slice(0,16).replace("T"," ")}</div>
+      ${r.supervisor_reply?`
+        <div style="margin-top:10px;padding:10px 12px;background:var(--surface-2);border-radius:var(--radius-md);border-right:3px solid var(--primary);">
+          <div style="font-size:11.5px;color:var(--text-3);margin-bottom:4px;">رد المشرف:</div>
+          <div style="font-size:12.5px;">${r.supervisor_reply}</div>
+        </div>`:""}
+    </div>
+  `).join("");
+  icons();
+}
+
+function openAddStudentRequestModal(){
+  openModal("تقديم طلب جديد", `
+    <div class="form-group">
+      <label class="form-label">نوع الطلب <span class="req">*</span></label>
+      <select class="form-input" id="f_req_type">
+        <option value="attendance_change">إذن حضور المحاضرة في معاد آخر</option>
+        <option value="issue">مواجهة مشكلة</option>
+        <option value="explanation">محتاج شرح جزء معين أو مسألة</option>
+        <option value="other">طلب آخر</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label" id="f_req_details_label">اذكر السبب <span class="req">*</span></label>
+      <textarea class="form-textarea" id="f_req_details" placeholder="اكتب تفاصيل طلبك هنا..."></textarea>
+    </div>
+  `, `
+    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+    <button class="btn btn-primary" onclick="submitStudentRequest()"><i data-lucide="send" style="width:14px;height:14px;"></i> إرسال الطلب</button>
+  `);
+  const typeSel = document.getElementById("f_req_type");
+  const labelEl = document.getElementById("f_req_details_label");
+  const updateLabel = ()=>{
+    const map = {
+      attendance_change: 'اذكر السبب <span class="req">*</span>',
+      issue: 'وضّح المشكلة اللي بتواجهها <span class="req">*</span>',
+      explanation: 'حدد الجزء أو المسألة اللي محتاج شرحها <span class="req">*</span>',
+      other: 'التفاصيل <span class="req">*</span>',
+    };
+    labelEl.innerHTML = map[typeSel.value] || 'التفاصيل <span class="req">*</span>';
+  };
+  typeSel.addEventListener("change", updateLabel);
+  updateLabel();
+}
+
+async function submitStudentRequest(){
+  const request_type = document.getElementById("f_req_type").value;
+  const details = document.getElementById("f_req_details").value.trim();
+  if (!details){ showToast("لازم تكتب التفاصيل أو السبب", "error"); return; }
+  await api("/api/student-requests", {method:"POST", body: JSON.stringify({request_type, details})});
+  showToast("تم إرسال طلبك لمشرف مجموعتك", "success");
+  closeOverlay("genericModal");
+  loadMyRequests();
+}
+
+/* =====================================================================
+   طلبات الطلاب - المشرف يشوف طلبات مجموعته ويرد عليها
+===================================================================== */
+async function renderStudentRequestsPage(){
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header"><div><h1>طلبات الطلاب</h1><p>طلبات طلاب مجموعتك (إذن حضور / مشكلة / شرح)</p></div>
+      <div class="header-actions">
+        <select class="form-input" id="f_req_status_filter" style="width:auto;" onchange="loadStudentRequestsList()">
+          <option value="">كل الحالات</option>
+          <option value="pending">قيد الانتظار</option>
+          <option value="in_progress">جاري المتابعة</option>
+          <option value="resolved">تم الحل</option>
+        </select>
+      </div>
+    </div>
+    <div id="studentRequestsWrap"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>
+  `;
+  await loadStudentRequestsList();
+}
+
+async function loadStudentRequestsList(){
+  const wrap = document.getElementById("studentRequestsWrap");
+  if (!wrap) return;
+  const status = document.getElementById("f_req_status_filter")?.value || "";
+  const items = await api("/api/student-requests" + (status?`?status=${status}`:""));
+  if (!items.length){
+    wrap.innerHTML = `<div class="empty-state"><div class="empty-icon"><i data-lucide="inbox" style="width:26px;height:26px;"></i></div><div class="empty-title">لا يوجد طلبات</div></div>`;
+    return;
+  }
+  wrap.innerHTML = items.map(r=>`
+    <div class="table-card" style="padding:16px 18px;margin-bottom:12px;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+        <i data-lucide="${REQUEST_TYPE_ICONS[r.request_type]||'message-square'}" style="width:16px;height:16px;color:var(--primary);flex-shrink:0;"></i>
+        <b style="font-size:13.5px;">${r.student_name}</b>
+        <span style="font-size:12px;color:var(--text-3);">${REQUEST_TYPE_LABELS[r.request_type]||r.request_type} • ${r.group_name}</span>
+        <span class="badge ${REQUEST_STATUS_BADGE[r.status]||'badge-gray'}" style="margin-right:auto;">${REQUEST_STATUS_LABELS[r.status]||r.status}</span>
+      </div>
+      ${r.details?`<div style="font-size:12.5px;color:var(--text-2);margin-bottom:8px;">${r.details}</div>`:""}
+      <div style="font-size:11px;color:var(--text-3);margin-bottom:10px;">قُدّم بتاريخ ${(r.created_at||"").slice(0,16).replace("T"," ")}</div>
+      ${r.supervisor_reply?`
+        <div style="margin-bottom:10px;padding:10px 12px;background:var(--surface-2);border-radius:var(--radius-md);border-right:3px solid var(--primary);">
+          <div style="font-size:11.5px;color:var(--text-3);margin-bottom:4px;">ردّك:</div>
+          <div style="font-size:12.5px;">${r.supervisor_reply}</div>
+        </div>`:""}
+      <button class="btn btn-ghost btn-sm" onclick="openReplyStudentRequestModal(${r.id}, ${JSON.stringify(r.status)}, ${JSON.stringify(r.supervisor_reply||"")})"><i data-lucide="reply" style="width:14px;height:14px;"></i> رد / تحديث الحالة</button>
+    </div>
+  `).join("");
+  icons();
+}
+
+function openReplyStudentRequestModal(requestId, currentStatus, currentReply){
+  openModal("الرد على الطلب", `
+    <div class="form-group">
+      <label class="form-label">حالة الطلب</label>
+      <select class="form-input" id="f_req_reply_status">
+        <option value="pending" ${currentStatus==="pending"?"selected":""}>قيد الانتظار</option>
+        <option value="in_progress" ${currentStatus==="in_progress"?"selected":""}>جاري المتابعة</option>
+        <option value="resolved" ${currentStatus==="resolved"?"selected":""}>تم الحل</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">ردّك على الطالب</label>
+      <textarea class="form-textarea" id="f_req_reply_text" placeholder="اكتب ردك هنا (اختياري)...">${currentReply||""}</textarea>
+    </div>
+  `, `
+    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+    <button class="btn btn-primary" onclick="submitReplyStudentRequest(${requestId})"><i data-lucide="check" style="width:14px;height:14px;"></i> حفظ</button>
+  `);
+}
+
+async function submitReplyStudentRequest(requestId){
+  const status = document.getElementById("f_req_reply_status").value;
+  const supervisor_reply = document.getElementById("f_req_reply_text").value.trim();
+  await api(`/api/student-requests/${requestId}`, {method:"PUT", body: JSON.stringify({status, supervisor_reply})});
+  showToast("تم تحديث الطلب", "success");
+  closeOverlay("genericModal");
+  loadStudentRequestsList();
 }
 
 /* =====================================================================
