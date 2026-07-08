@@ -977,6 +977,7 @@ const NAV_BY_ROLE = {
     {id:"quizzes", label:"الكويزات والامتحانات", icon:"file-check-2"},
     {id:"homework", label:"الواجبات", icon:"clipboard-list"},
     {id:"attendance", label:"الحضور والغياب", icon:"calendar-check"},
+    {id:"monthly_reports", label:"التقرير الشهري", icon:"file-bar-chart"},
     {id:"student_search", label:"بحث عن طالب", icon:"search"},
   ],
   student: [
@@ -1112,7 +1113,7 @@ const PAGE_TITLES = {
   supervisors:"المشرفين", teachers:"المدرسين", schedule:"جدول المواعيد",
   head_supervisors:"مشرفي المشرفين",
   quizzes:"الكويزات والامتحانات", attendance:"الحضور والغياب", boards:"سبورة الحصص",
-  homework:"الواجبات",
+  homework:"الواجبات", monthly_reports:"التقرير الشهري",
   mygroup:"مجموعتي", mydashboard:"لوحتي", myscores:"درجاتي", myhomework:"واجباتي",
   myattendance:"حضوري", myboard:"سبورة مجموعتي", student_more:"المزيد",
   student_search:"بحث عن طالب", supervisor_more:"المزيد", teacher_more:"المزيد",
@@ -1140,6 +1141,7 @@ async function renderPage(page){
       homework: renderSupervisorHomeworkPage,
       attendance: renderAttendancePage,
       boards: renderBoardsPage,
+      monthly_reports: renderMonthlyReportsPage,
       mygroup: renderMyGroupPage,
       mydashboard: renderStudentDashboardPage,
       myscores: renderMyScoresPage,
@@ -3987,7 +3989,6 @@ async function renderMyGroupPage(){
                 <td class="td-actions">
                   ${(s.phone || s.parent_phone) ? `<button class="action-btn" title="تواصل" onclick="openContactPopup('${s.full_name.replace(/'/g,"")}', '${s.phone||""}', '${s.parent_phone||""}')"><i data-lucide="phone" style="width:15px;height:15px;"></i></button>` : ""}
                   <button class="action-btn" title="ملاحظات سلوكية" onclick="openBehaviorNotesModal(${s.id}, '${s.full_name.replace(/'/g,"")}')"><i data-lucide="message-square-text" style="width:15px;height:15px;"></i></button>
-                  <button class="action-btn" title="تقرير شهري" onclick="openMonthlyReportModal(${s.id}, '${s.full_name.replace(/'/g,"")}')"><i data-lucide="file-bar-chart" style="width:15px;height:15px;"></i></button>
                 </td>
               </tr>
             `).join("") || `<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:20px;">لا يوجد طلاب في المجموعة دي بعد</td></tr>`}
@@ -4161,6 +4162,11 @@ async function renderSupervisorMorePage(){
       <div class="student-more-item" onclick="navigateTo('quizzes')">
         <div class="student-more-ic"><i data-lucide="file-check-2" style="width:18px;height:18px;"></i></div>
         <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">الكويزات والامتحانات</div><div style="font-size:11.5px;color:var(--text-3);">تسجيل درجات الطلاب في الكويزات والامتحانات</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
+      <div class="student-more-item" onclick="navigateTo('monthly_reports')">
+        <div class="student-more-ic"><i data-lucide="file-bar-chart" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">التقرير الشهري</div><div style="font-size:11.5px;color:var(--text-3);">تقرير حضور ودرجات كل طالب جاهز للطباعة</div></div>
         <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
       </div>
       <div class="student-more-item" onclick="navigateTo('student_search')">
@@ -4550,6 +4556,53 @@ async function deleteBehaviorNote(noteId, studentId){
   await api(`/api/behavior-notes/${noteId}`, {method:"DELETE"});
   showToast("تم حذف الملاحظة", "success");
   await loadBehaviorNotes(studentId);
+}
+
+/* =====================================================================
+   التقرير الشهري - تابة مستقلة (المشرف)
+===================================================================== */
+async function renderMonthlyReportsPage(){
+  const groups = await loadGroups();
+  const c = document.getElementById("pageContainer");
+  if (!groups.length){
+    c.innerHTML = `<div class="empty-state"><div class="empty-icon"><i data-lucide="file-bar-chart" style="width:26px;height:26px;"></i></div><div class="empty-title">معندك مجموعة لسه</div><div class="empty-desc">كلم الأدمن عشان يعينك على مجموعة.</div></div>`;
+    return;
+  }
+  const groupIds = groups.map(g=>g.id);
+  const allStudents = await loadStudents();
+  const students = allStudents.filter(s=>groupIds.includes(s.group_id));
+
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>التقرير الشهري</h1><p>تقرير حضور ودرجات كل طالب، جاهز للطباعة</p></div>
+    </div>
+    <div class="table-card">
+      <div class="toolbar">
+        <div class="search-wrap"><i data-lucide="search" class="search-ic" style="width:14px;height:14px;"></i><input id="mrSearchInput" placeholder="بحث بالاسم..." oninput="filterMonthlyReportsTable()"></div>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>#</th><th>الطالب</th><th>المجموعة</th><th></th></tr></thead>
+        <tbody id="mrTableBody">
+          ${students.map(s=>`
+            <tr data-search="${s.full_name.toLowerCase()}">
+              <td style="color:var(--text-3);font-family:monospace;">#${s.id}</td>
+              <td class="td-name">${s.full_name}</td>
+              <td><span class="badge badge-teal">${s.group_name}</span></td>
+              <td class="td-actions"><button class="btn btn-primary btn-sm" onclick="openMonthlyReportModal(${s.id}, '${s.full_name.replace(/'/g,"")}')"><i data-lucide="file-bar-chart" style="width:14px;height:14px;"></i> عرض التقرير</button></td>
+            </tr>
+          `).join("") || `<tr><td colspan="4" style="text-align:center;color:var(--text-3);padding:20px;">لا يوجد طلاب في مجموعاتك بعد</td></tr>`}
+        </tbody>
+      </table></div>
+    </div>
+  `;
+  icons();
+}
+
+function filterMonthlyReportsTable(){
+  const q = (document.getElementById("mrSearchInput")?.value||"").toLowerCase();
+  document.querySelectorAll("#mrTableBody tr[data-search]").forEach(tr=>{
+    tr.style.display = tr.dataset.search.includes(q) ? "" : "none";
+  });
 }
 
 /* =====================================================================
