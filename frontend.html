@@ -4010,10 +4010,11 @@ async function renderMyGroupPage(){
    صفحات الطالب
 ===================================================================== */
 async function renderStudentDashboardPage(){
-  const [scores, attendance, groupInfo] = await Promise.all([
+  const [scores, attendance, groupInfo, ranking] = await Promise.all([
     api(`/api/students/${SESSION.id}/scores`),
     api(`/api/students/${SESSION.id}/attendance`),
-    SESSION.group_id ? api(`/api/groups/${SESSION.group_id}/info`).catch(()=>null) : Promise.resolve(null)
+    SESSION.group_id ? api(`/api/groups/${SESSION.group_id}/info`).catch(()=>null) : Promise.resolve(null),
+    api(`/api/students/${SESSION.id}/ranking`).catch(()=>null)
   ]);
   const present = attendance.filter(a=>a.status==='present'||a.status==='late').length;
   const avg = scores.length ? (scores.reduce((s,x)=>s+(x.score||0)/x.max_score*100,0)/scores.length).toFixed(0) : "—";
@@ -4075,6 +4076,40 @@ async function renderStudentDashboardPage(){
         <div class="student-stat-value">${attendanceRate!==null ? attendanceRate+'%' : '—'}</div><div class="student-stat-label">نسبة الحضور</div>
       </div>
     </div>
+
+    ${ranking ? `
+    <div class="table-card" style="padding:16px 18px;margin-bottom:14px;background:linear-gradient(135deg,#FCF6EC,#FFFFFF);border:1px solid var(--warning-bg);">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+        <div style="width:36px;height:36px;border-radius:50%;background:var(--warning-bg);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          <i data-lucide="trophy" style="width:18px;height:18px;color:var(--warning);"></i>
+        </div>
+        <div style="flex:1;">
+          <div style="font-weight:800;font-size:14px;">${ranking.message_title}</div>
+        </div>
+      </div>
+      <div style="font-size:12.5px;color:var(--text-2);line-height:1.7;margin-bottom:12px;">${ranking.message_body}</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:130px;background:var(--surface);border-radius:var(--radius-md);padding:10px 12px;text-align:center;">
+          <div style="font-size:18px;font-weight:800;color:var(--primary);">${ranking.rank_by_score ? `${ranking.rank_by_score} / ${ranking.total_with_scores}` : "—"}</div>
+          <div style="font-size:11px;color:var(--text-3);">ترتيبك بالدرجات</div>
+        </div>
+        <div style="flex:1;min-width:130px;background:var(--surface);border-radius:var(--radius-md);padding:10px 12px;text-align:center;">
+          <div style="font-size:18px;font-weight:800;color:var(--success);">${ranking.rank_by_attendance ? `${ranking.rank_by_attendance} / ${ranking.total_with_attendance}` : "—"}</div>
+          <div style="font-size:11px;color:var(--text-3);">ترتيبك بالحضور</div>
+        </div>
+      </div>
+      ${ranking.top3 && ranking.top3.length ? `
+      <div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--warning-bg);">
+        <div style="font-size:11.5px;color:var(--text-3);margin-bottom:6px;">🏅 لوحة الشرف في مجموعتك</div>
+        ${ranking.top3.map((t,i)=>`
+          <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;padding:3px 0;">
+            <span>${["🥇","🥈","🥉"][i]||""}</span>
+            <span style="flex:1;">${t.full_name}</span>
+            <span style="color:var(--text-3);">${t.avg_score_percent}%</span>
+          </div>
+        `).join("")}
+      </div>` : ""}
+    </div>` : ""}
 
     <div class="table-card">
       <div class="toolbar"><b style="font-size:14px;display:flex;align-items:center;gap:6px;"><i data-lucide="bar-chart-3" style="width:15px;height:15px;color:var(--primary);"></i> آخر الدرجات</b></div>
@@ -4542,6 +4577,7 @@ async function loadStudentRequestsList(){
   if (!wrap) return;
   const status = document.getElementById("f_req_status_filter")?.value || "";
   const items = await api("/api/student-requests" + (status?`?status=${status}`:""));
+  window._studentRequestsCache = items;
   if (!items.length){
     wrap.innerHTML = `<div class="empty-state"><div class="empty-icon"><i data-lucide="inbox" style="width:26px;height:26px;"></i></div><div class="empty-title">لا يوجد طلبات</div></div>`;
     return;
@@ -4561,13 +4597,16 @@ async function loadStudentRequestsList(){
           <div style="font-size:11.5px;color:var(--text-3);margin-bottom:4px;">ردّك:</div>
           <div style="font-size:12.5px;">${r.supervisor_reply}</div>
         </div>`:""}
-      <button class="btn btn-ghost btn-sm" onclick="openReplyStudentRequestModal(${r.id}, ${JSON.stringify(r.status)}, ${JSON.stringify(r.supervisor_reply||"")})"><i data-lucide="reply" style="width:14px;height:14px;"></i> رد / تحديث الحالة</button>
+      <button class="btn btn-ghost btn-sm" onclick="openReplyStudentRequestModal(${r.id})"><i data-lucide="reply" style="width:14px;height:14px;"></i> رد / تحديث الحالة</button>
     </div>
   `).join("");
   icons();
 }
 
-function openReplyStudentRequestModal(requestId, currentStatus, currentReply){
+function openReplyStudentRequestModal(requestId){
+  const req = (window._studentRequestsCache || []).find(x=>x.id===requestId);
+  const currentStatus = req ? req.status : "pending";
+  const currentReply = req ? (req.supervisor_reply || "") : "";
   openModal("الرد على الطلب", `
     <div class="form-group">
       <label class="form-label">حالة الطلب</label>
@@ -4579,7 +4618,7 @@ function openReplyStudentRequestModal(requestId, currentStatus, currentReply){
     </div>
     <div class="form-group">
       <label class="form-label">ردّك على الطالب</label>
-      <textarea class="form-textarea" id="f_req_reply_text" placeholder="اكتب ردك هنا (اختياري)...">${currentReply||""}</textarea>
+      <textarea class="form-textarea" id="f_req_reply_text" placeholder="اكتب ردك هنا (اختياري)...">${currentReply}</textarea>
     </div>
   `, `
     <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>

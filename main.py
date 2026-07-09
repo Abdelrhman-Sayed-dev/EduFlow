@@ -1500,6 +1500,127 @@ def get_student_payments(student_id: int, session=Depends(get_current_session)):
         return [dict(r) for r in rows]
 
 
+def _build_ranking_message(rank_score, total_score, rank_att, total_att, trend):
+    """
+    بيبني رسالة تحفيزية حسب ترتيب الطالب - دايمًا إيجابية ومحفزة حتى لو الترتيب متأخر.
+    """
+    if rank_score and total_score and total_score >= 1:
+        pct = rank_score / total_score  # كل ما قل كل ما كان الترتيب أحسن
+    else:
+        pct = None
+
+    if pct is not None and rank_score == 1:
+        title = "🏆 أنت الأول في مجموعتك!"
+        body = "أداء رائع، استمر بنفس المستوى وحافظ على مكانك في القمة."
+    elif pct is not None and rank_score <= 3:
+        title = "🥈 من ضمن أفضل 3 في مجموعتك!"
+        body = "أنت قريب جدًا من القمة، شوية تركيز كمان وهتوصل للمركز الأول."
+    elif pct is not None and pct <= 0.5:
+        title = "📈 أداء كويس ومتقدم!"
+        body = "أنت في النص الأفضل من مجموعتك، استمر في المذاكرة بانتظام وهتتقدم أكتر."
+    elif pct is not None:
+        title = "🌱 كل رحلة بتبدأ بخطوة"
+        body = "الترتيب رقم مش نهاية الطريق - ركّز على مراجعة الأجزاء اللي بتواجه فيها صعوبة، وحاول تحل كويزات أكتر. كل مذاكرة بتفرق."
+    else:
+        title = "👋 لسه بدايتك"
+        body = "لسه معندكش درجات كويزات كفاية نحسب ترتيبك بيها. اول ما تاخد كام كويز هتقدر تشوف ترتيبك."
+
+    # لو في تحسن ملحوظ، نضيف جملة تحفيزية إضافية
+    if trend == "up":
+        body += " 📈 كمان لاحظنا إنك بتتحسن عن الفترة اللي فاتت، استمر كده!"
+    elif trend == "down" and pct is not None and pct > 0.5:
+        body += " ملاحظة بسيطة: أدائك في آخر كويزات كان أقل شوية من قبل، جرّب تراجع وقتك في المذاكرة."
+
+    # حضور ممتاز حتى لو الدرجات مش عالية - نبرزه كنقطة قوة
+    if rank_att and total_att and (rank_att / total_att) <= 0.3 and (pct is None or pct > 0.5):
+        body += " 🎯 والتزامك بالحضور ممتاز، وده نص الطريق للنجاح."
+
+    return title, body
+
+
+@app.get("/api/students/{student_id}/ranking")
+def get_student_ranking(student_id: int, session=Depends(get_current_session)):
+    """
+    ترتيب الطالب داخل مجموعته (بالدرجات والحضور) + رسالة تحفيزية.
+    بيرجع ترتيب الطالب بس (مش قائمة كل الطلاب) عشان محدش يتحرج من ترتيبه قدام زمايله،
+    وبيرجع أفضل 3 طلاب بالاسم كـ"لوحة شرف" تحفيزية.
+    """
+    with get_connection() as conn:
+        student = conn.execute("SELECT * FROM students WHERE id=?", (student_id,)).fetchone()
+        if not student:
+            raise HTTPException(status_code=404, detail="الطالب غير موجود")
+        if session["role"] == "supervisor":
+            assert_supervisor_owns_group(conn, session, student["group_id"])
+        elif session["role"] == "student" and session["id"] != student_id:
+            raise HTTPException(status_code=403, detail="تقدر تشوف ترتيبك بس")
+
+        group_id = student["group_id"]
+
+        # متوسط درجات كل طالب نشط في المجموعة (لازم يكون عنده كويز واحد على الأقل بدرجة)
+        score_rows = conn.execute("""
+            SELECT s.id, s.full_name, AVG(qs.score * 100.0 / q.max_score) as avg_score_percent
+            FROM students s
+            JOIN quiz_scores qs ON qs.student_id = s.id
+            JOIN quizzes q ON q.id = qs.quiz_id AND q.max_score > 0
+            WHERE s.group_id = ? AND s.is_active = 1
+            GROUP BY s.id
+            ORDER BY avg_score_percent DESC
+        """, (group_id,)).fetchall()
+        score_rows = [dict(r) for r in score_rows]
+
+        # نسبة حضور كل طالب نشط في المجموعة
+        att_rows = conn.execute("""
+            SELECT s.id,
+                   SUM(CASE WHEN a.status IN ('present','late') THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as attendance_rate
+            FROM students s
+            JOIN attendance a ON a.student_id = s.id
+            WHERE s.group_id = ? AND s.is_active = 1
+            GROUP BY s.id
+            ORDER BY attendance_rate DESC
+        """, (group_id,)).fetchall()
+        att_rows = [dict(r) for r in att_rows]
+
+        total_score = len(score_rows)
+        total_att = len(att_rows)
+        rank_score = next((i + 1 for i, r in enumerate(score_rows) if r["id"] == student_id), None)
+        rank_att = next((i + 1 for i, r in enumerate(att_rows) if r["id"] == student_id), None)
+
+        my_avg_score = next((r["avg_score_percent"] for r in score_rows if r["id"] == student_id), None)
+        my_attendance_rate = next((r["attendance_rate"] for r in att_rows if r["id"] == student_id), None)
+
+        # اتجاه التحسن: مقارنة متوسط آخر نص كويزات بأول نص كويزات الطالب أخذها
+        my_scores = conn.execute("""
+            SELECT (qs.score * 100.0 / q.max_score) as pct
+            FROM quiz_scores qs JOIN quizzes q ON q.id = qs.quiz_id AND q.max_score > 0
+            WHERE qs.student_id = ?
+            ORDER BY q.quiz_date, q.id
+        """, (student_id,)).fetchall()
+        trend = None
+        if len(my_scores) >= 4:
+            vals = [r["pct"] for r in my_scores]
+            mid = len(vals) // 2
+            first_half_avg = sum(vals[:mid]) / mid
+            second_half_avg = sum(vals[mid:]) / (len(vals) - mid)
+            if second_half_avg - first_half_avg >= 3:
+                trend = "up"
+            elif first_half_avg - second_half_avg >= 3:
+                trend = "down"
+
+        top3 = [{"full_name": r["full_name"], "avg_score_percent": round(r["avg_score_percent"], 1)} for r in score_rows[:3]]
+
+        title, body = _build_ranking_message(rank_score, total_score, rank_att, total_att, trend)
+
+        return {
+            "rank_by_score": rank_score, "total_with_scores": total_score,
+            "rank_by_attendance": rank_att, "total_with_attendance": total_att,
+            "my_avg_score_percent": round(my_avg_score, 1) if my_avg_score is not None else None,
+            "my_attendance_rate": round(my_attendance_rate, 1) if my_attendance_rate is not None else None,
+            "trend": trend,
+            "top3": top3,
+            "message_title": title, "message_body": body,
+        }
+
+
 @app.get("/api/payments")
 def get_payments(group_id: Optional[int] = None, month: Optional[str] = None,
                   session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
