@@ -3691,8 +3691,10 @@ function renderAttendanceSessionShell(groupId, groupName, sn, isOpen){
       <div class="collapse-body" id="att_session_body_${key}" style="display:${isOpen?'block':'none'};">
         <div style="padding:14px 16px;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;border-bottom:1px solid var(--border);">
           <div style="flex:1;min-width:200px;">
-            <label class="form-label">كود الطالب</label>
-            <input class="form-input" id="quick_att_code_${key}" placeholder="مثال: 48213" style="font-family:monospace;" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();submitQuickAttendance(${groupId}, ${sn});}">
+            <label class="form-label">كود الطالب <span style="font-weight:400;color:var(--text-3);">(بيدور كمان بالاسم)</span></label>
+            <input class="form-input" id="quick_att_code_${key}" placeholder="اكتب الكود أو اسم الطالب..." style="font-family:monospace;" autocomplete="off"
+              oninput="filterAttendanceRows()"
+              onkeydown="if(event.key==='Enter'){event.preventDefault();submitQuickAttendance(${groupId}, ${sn});}">
           </div>
           <button class="btn btn-primary" onclick="submitQuickAttendance(${groupId}, ${sn})"><i data-lucide="check" style="width:14px;height:14px;"></i> تسجيل حضور</button>
         </div>
@@ -3716,7 +3718,7 @@ async function loadAttendanceTableForSession(groupId, sn){
   const tbody = document.getElementById(`attTableBody_${key}`);
   if (!tbody) return;
   tbody.innerHTML = rows.map(r=>`
-    <tr data-status="${r.status || 'unmarked'}">
+    <tr data-status="${r.status || 'unmarked'}" data-search="${escapeHtml(((r.attendance_code||'') + ' ' + r.full_name).toLowerCase())}">
       <td style="color:var(--text-3);font-family:monospace;font-size:12px;">#${r.student_id}</td>
       <td class="td-name">${escapeHtml(r.full_name)}</td>
       <td>
@@ -3725,7 +3727,7 @@ async function loadAttendanceTableForSession(groupId, sn){
         </div>
       </td>
       <td>
-        <input class="form-input" style="height:30px;font-size:12px;min-width:130px;" placeholder="ملاحظة..." value="${(r.notes||"").replace(/"/g,'&quot;')}" onchange="saveAttendanceNote('${date}', ${r.student_id}, this.value, '${key}')">
+        <input class="form-input" style="height:30px;font-size:12px;min-width:130px;" placeholder="ملاحظة..." value="${escapeHtml(r.notes||"")}" onchange="saveAttendanceNote('${date}', ${r.student_id}, this.value, '${key}')">
       </td>
     </tr>`).join("") || `<tr><td colspan="4" style="text-align:center;color:var(--text-3);padding:24px;">لا يوجد طلاب</td></tr>`;
   updateAttendanceSessionBadges(key);
@@ -3750,9 +3752,16 @@ function updateAttendanceSessionBadges(key){
 
 function filterAttendanceRows(){
   const filterEl = document.getElementById("att_status_filter");
-  const filter = filterEl ? filterEl.value : "";
-  document.querySelectorAll("[id^='attTableBody_'] tr[data-status]").forEach(row=>{
-    row.style.display = (!filter || row.dataset.status === filter) ? "" : "none";
+  const statusFilter = filterEl ? filterEl.value : "";
+  document.querySelectorAll("[id^='attTableBody_']").forEach(tbody=>{
+    const key = tbody.id.replace("attTableBody_", "");
+    const searchInput = document.getElementById(`quick_att_code_${key}`);
+    const searchTerm = searchInput ? searchInput.value.trim().toLowerCase() : "";
+    tbody.querySelectorAll("tr[data-status]").forEach(row=>{
+      const statusOk = !statusFilter || row.dataset.status === statusFilter;
+      const searchOk = !searchTerm || (row.dataset.search || "").includes(searchTerm);
+      row.style.display = (statusOk && searchOk) ? "" : "none";
+    });
   });
 }
 
@@ -4132,11 +4141,11 @@ async function renderStudentDashboardPage(){
       <div style="font-size:12.5px;color:var(--text-2);line-height:1.7;margin-bottom:12px;">${escapeHtml(ranking.message_body)}</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;">
         <div style="flex:1;min-width:130px;background:var(--surface);border-radius:var(--radius-md);padding:10px 12px;text-align:center;">
-          <div style="font-size:18px;font-weight:800;color:var(--primary);">${ranking.rank_by_score ? `${ranking.rank_by_score} / ${ranking.total_with_scores}` : "—"}</div>
+          <div dir="ltr" style="font-size:18px;font-weight:800;color:var(--primary);unicode-bidi:isolate;">${ranking.rank_by_score ? `${ranking.rank_by_score} / ${ranking.total_with_scores}` : "—"}</div>
           <div style="font-size:11px;color:var(--text-3);">ترتيبك بالدرجات</div>
         </div>
         <div style="flex:1;min-width:130px;background:var(--surface);border-radius:var(--radius-md);padding:10px 12px;text-align:center;">
-          <div style="font-size:18px;font-weight:800;color:var(--success);">${ranking.rank_by_attendance ? `${ranking.rank_by_attendance} / ${ranking.total_with_attendance}` : "—"}</div>
+          <div dir="ltr" style="font-size:18px;font-weight:800;color:var(--success);unicode-bidi:isolate;">${ranking.rank_by_attendance ? `${ranking.rank_by_attendance} / ${ranking.total_with_attendance}` : "—"}</div>
           <div style="font-size:11px;color:var(--text-3);">ترتيبك بالحضور</div>
         </div>
       </div>
@@ -4942,43 +4951,98 @@ async function quickTogglePayment(studentId, month, currentlyPaid){
   await loadMonthlyReport(studentId);
 }
 
+const ARABIC_MONTHS = {
+  "01":"يناير","02":"فبراير","03":"مارس","04":"أبريل","05":"مايو","06":"يونيو",
+  "07":"يوليو","08":"أغسطس","09":"سبتمبر","10":"أكتوبر","11":"نوفمبر","12":"ديسمبر"
+};
+function monthLabelAr(monthStr){
+  // monthStr بصيغة YYYY-MM
+  const [y, m] = (monthStr||"").split("-");
+  return (ARABIC_MONTHS[m] || m || "") + " " + (y || "");
+}
+
+// اسم المركز/المدرس اللي بيظهر في هيدر التقرير المطبوع - عدّله هنا لو حبيت تغيّره
+const REPORT_LETTERHEAD = { instructor: "د. هيثم كمال", subject: "تقرير شهري - مادة الكيمياء" };
+
 function printMonthlyReport(studentId, studentName){
   if (!LAST_REPORT_DATA){ showToast("لسه البيانات مبتحمّلتش", "error"); return; }
   const d = LAST_REPORT_DATA;
   const a = d.attendance_summary;
+  const monthLabel = monthLabelAr(d.month);
+  const todayLabel = new Date().toLocaleDateString("ar-EG", {year:"numeric", month:"long", day:"numeric"});
+  const sesLabels = ["","الأولى","الثانية","الثالثة","الرابعة"];
   const win = window.open("", "_blank");
   win.document.write(`
     <!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
-    <title>تقرير ${studentName} - ${d.month}</title>
+    <title>تقرير ${escapeHtml(studentName)} - ${monthLabel}</title>
     <style>
-      body{font-family:'Cairo',sans-serif;padding:30px;color:#0F172A;}
-      h1{font-size:20px;margin-bottom:4px;}
-      .sub{color:#64748B;font-size:13px;margin-bottom:20px;}
-      table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13px;}
-      th,td{border:1px solid #E2E8F0;padding:8px 10px;text-align:right;}
-      th{background:#F8FAFC;}
-      .stats{display:flex;gap:14px;margin:16px 0;}
-      .stat{border:1px solid #E2E8F0;border-radius:10px;padding:10px 16px;text-align:center;flex:1;}
-      .stat b{display:block;font-size:20px;}
-      .badge{padding:3px 10px;border-radius:99px;font-size:12px;font-weight:700;}
-      .paid{background:#ECFDF5;color:#065F46;} .unpaid{background:#FEF2F2;color:#991B1B;}
-      @media print{ body{padding:10px;} }
+      @page { size: A4; margin: 16mm 14mm; }
+      *{box-sizing:border-box;}
+      body{font-family:'Cairo','Segoe UI',sans-serif;color:#0F172A;margin:0;padding:0;background:#F4F3EF;}
+      .report-page{max-width:820px;margin:0 auto;padding:26px 30px;background:#fff;}
+      .letterhead{text-align:center;border-bottom:3px double #3E7CB1;padding-bottom:16px;margin-bottom:18px;}
+      .letterhead .brand{font-size:23px;font-weight:800;color:#2C5A82;}
+      .letterhead .subject{font-size:14.5px;color:#475569;margin-top:4px;font-weight:600;}
+      .report-title{text-align:center;font-size:16.5px;font-weight:700;margin:16px 0 22px;background:#EFF5FA;color:#2C5A82;padding:11px;border-radius:10px;}
+      .info-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 30px;margin-bottom:22px;font-size:13.5px;}
+      .info-row{display:flex;justify-content:space-between;border-bottom:1px dashed #E2E8F0;padding-bottom:7px;}
+      .info-row .label{color:#64748B;}
+      .info-row b{color:#0F172A;font-weight:700;}
+      h3{font-size:14px;color:#2C5A82;margin:22px 0 8px;border-right:4px solid #3E7CB1;padding-right:10px;}
+      table{width:100%;border-collapse:collapse;margin:8px 0 6px;font-size:13px;}
+      th,td{border:1px solid #E2E8F0;padding:8px 10px;text-align:center;}
+      th{background:#F8FAFC;font-weight:700;color:#334155;}
+      td:first-child, th:first-child{text-align:right;}
+      .stats{display:flex;gap:12px;margin:18px 0;}
+      .stat{border:1px solid #E2E8F0;border-radius:10px;padding:12px 8px;text-align:center;flex:1;background:#FAFAF8;}
+      .stat b{display:block;font-size:21px;color:#2C5A82;}
+      .stat span{font-size:11.5px;color:#64748B;}
+      .badge{padding:3px 10px;border-radius:99px;font-size:11.5px;font-weight:700;}
+      .b-present{background:#F0F9F1;color:#2F6B44;} .b-absent{background:#FBF0EE;color:#8A3527;}
+      .b-late{background:#FCF6EC;color:#8A6416;} .b-excused{background:#EEF6FA;color:#2C5A82;}
+      .signature{margin-top:46px;display:flex;justify-content:space-between;}
+      .signature .box{text-align:center;font-size:12.5px;color:#475569;}
+      .signature .line{border-top:1px solid #94A3B8;width:170px;padding-top:8px;margin-top:44px;}
+      .footer{margin-top:26px;display:flex;justify-content:space-between;font-size:11px;color:#94A3B8;border-top:1px solid #E2E8F0;padding-top:10px;}
+      .print-btn-bar{max-width:820px;margin:14px auto;display:flex;justify-content:flex-end;}
+      .print-btn{background:#3E7CB1;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;}
+      @media print{ .no-print{display:none !important;} body{background:#fff;} .report-page{padding:0;} }
     </style></head><body>
-    <h1>تقرير ${studentName}</h1>
-    <div class="sub">المجموعة: ${escapeHtml(d.student.group_name)} — الشهر: ${d.month}</div>
-    <div class="stats">
-      <div class="stat"><b>${a.present}</b>حاضر</div>
-      <div class="stat"><b>${a.absent}</b>غايب</div>
-      <div class="stat"><b>${a.late}</b>متأخر</div>
-      <div class="stat"><b>${d.average_percentage??'—'}${d.average_percentage!=null?'%':''}</b>متوسط الدرجات</div>
+    <div class="print-btn-bar no-print"><button class="print-btn" onclick="window.print()">🖨️ طباعة / حفظ PDF</button></div>
+    <div class="report-page">
+      <div class="letterhead">
+        <div class="brand">${escapeHtml(REPORT_LETTERHEAD.instructor)}</div>
+        <div class="subject">${escapeHtml(REPORT_LETTERHEAD.subject)}</div>
+      </div>
+      <div class="report-title">تقرير شهر ${monthLabel}</div>
+      <div class="info-grid">
+        <div class="info-row"><span class="label">اسم الطالب</span><b>${escapeHtml(studentName)}</b></div>
+        <div class="info-row"><span class="label">المجموعة</span><b>${escapeHtml(d.student.group_name||'—')}</b></div>
+        <div class="info-row"><span class="label">المرحلة</span><b>${escapeHtml(d.student.stage_name||'—')}</b></div>
+        <div class="info-row"><span class="label">المشرف المسؤول</span><b>${escapeHtml(d.student.supervisor_name||'—')}</b></div>
+      </div>
+      <div class="stats">
+        <div class="stat"><b>${a.present}</b><span>حاضر</span></div>
+        <div class="stat"><b>${a.absent}</b><span>غايب</span></div>
+        <div class="stat"><b>${a.late}</b><span>متأخر</span></div>
+        <div class="stat"><b>${d.average_percentage??'—'}${d.average_percentage!=null?'%':''}</b><span>متوسط الدرجات</span></div>
+      </div>
+      <h3>الكويزات في الشهر ده</h3>
+      <table><thead><tr><th>الكويز</th><th>التاريخ</th><th>الدرجة</th></tr></thead>
+      <tbody>${d.scores.map(s=>`<tr><td>${escapeHtml(s.title)}</td><td>${s.quiz_date||'—'}</td><td>${s.score??'—'} / ${s.max_score}</td></tr>`).join("") || `<tr><td colspan="3" style="color:#94A3B8;">لا يوجد كويزات</td></tr>`}</tbody></table>
+      <h3>سجل الحضور التفصيلي</h3>
+      <table><thead><tr><th>التاريخ</th><th>الحصة</th><th>الحالة</th></tr></thead>
+      <tbody>${d.attendance.map(x=>{
+        const sesLabel = sesLabels[x.session_number] || `#${x.session_number}`;
+        const badgeCls = {present:'b-present',absent:'b-absent',late:'b-late',excused:'b-excused'}[x.status] || '';
+        return `<tr><td>${x.session_date}</td><td>الحصة ${sesLabel}</td><td><span class="badge ${badgeCls}">${escapeHtml(ATT_LABELS[x.status]||x.status)}</span></td></tr>`;
+      }).join("") || `<tr><td colspan="3" style="color:#94A3B8;">لا يوجد سجل حضور</td></tr>`}</tbody></table>
+      <div class="signature">
+        <div class="box">توقيع المشرف<div class="line"></div></div>
+        <div class="box">ختم المركز<div class="line"></div></div>
+      </div>
+      <div class="footer"><span>تم إنشاء هذا التقرير بتاريخ ${todayLabel}</span><span>EduFlow</span></div>
     </div>
-    <h3>الكويزات</h3>
-    <table><thead><tr><th>الكويز</th><th>التاريخ</th><th>الدرجة</th></tr></thead>
-    <tbody>${d.scores.map(s=>`<tr><td>${escapeHtml(s.title)}</td><td>${s.quiz_date||'—'}</td><td>${s.score??'—'} / ${s.max_score}</td></tr>`).join("") || `<tr><td colspan="3">لا يوجد كويزات</td></tr>`}</tbody></table>
-    <h3>الحضور التفصيلي</h3>
-    <table><thead><tr><th>التاريخ</th><th>الحالة</th></tr></thead>
-    <tbody>${d.attendance.map(x=>`<tr><td>${x.session_date}</td><td>${ATT_LABELS[x.status]||x.status}</td></tr>`).join("") || `<tr><td colspan="2">لا يوجد سجل حضور</td></tr>`}</tbody></table>
-    <script>window.onload=()=>window.print();<\/script>
     </body></html>
   `);
   win.document.close();
