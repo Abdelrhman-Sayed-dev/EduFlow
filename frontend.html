@@ -3388,21 +3388,20 @@ async function openQuizScoresModal(quizId, title, maxScore){
 }
 
 function qsRenderBody(){
+  // بيتنادى مرة واحدة بس لما المودال يتفتح (أو الفرز يتغيّر) - بيبني الهيكل الثابت
+  // + شريط البحث، بعدين بينادي qsRenderRows() اللي بتحدّث صفوف الجدول بس من غير
+  // ما تعيد بناء الإنبوت بتاع البحث نفسه (ده كان سبب مشكلة اختفاء الفوكس بعد كل حرف)
   const st = QS_STATE;
   const body = document.getElementById("qsModalBody");
   if (!body || !st) return;
-
-  const q = (st.search||"").trim().toLowerCase();
-  let list = st.rows.filter(r => !q || r.full_name.toLowerCase().includes(q) || (r.attendance_code||"").toLowerCase().includes(q));
-  list = list.slice().sort((a,b)=> st.sortDir==="asc" ? a.full_name.localeCompare(b.full_name,'ar') : b.full_name.localeCompare(a.full_name,'ar'));
 
   body.innerHTML = `
     <div class="qs-toolbar">
       <div class="search-wrap">
         <i data-lucide="search" class="search-ic" style="width:15px;height:15px;"></i>
-        <input class="form-input" style="padding-right:12px;" placeholder="ابحث برقم كود الطالب..." value="${st.search}" oninput="QS_STATE.search=this.value; qsRenderBody();">
+        <input class="form-input" style="padding-right:12px;" id="qsSearchInput" placeholder="ابحث برقم كود الطالب..." value="${st.search}" oninput="QS_STATE.search=this.value; qsRenderRows();">
       </div>
-      <button class="qs-sort-btn" onclick="QS_STATE.sortDir = QS_STATE.sortDir==='asc'?'desc':'asc'; qsRenderBody();">
+      <button class="qs-sort-btn" onclick="QS_STATE.sortDir = QS_STATE.sortDir==='asc'?'desc':'asc'; qsRenderRows();">
         <i data-lucide="arrow-up-down" style="width:14px;height:14px;"></i> ترتيب الاسم
       </button>
     </div>
@@ -3414,32 +3413,44 @@ function qsRenderBody(){
           <th><i data-lucide="star" style="width:12px;height:12px;"></i>الدرجة (من ${st.maxScore})</th>
           ${st.canEdit ? `<th><i data-lucide="settings" style="width:12px;height:12px;"></i>الإجراءات</th>` : ""}
         </tr></thead>
-        <tbody>
-          ${list.map(r=>`
-            <tr>
-              <td class="qs-code-cell">${r.attendance_code || "—"}</td>
-              <td>
-                <div class="qs-name-cell">
-                  <div class="qs-avatar" style="background:${qsAvatarColor(r.student_id)};"><i data-lucide="user" style="width:15px;height:15px;"></i></div>
-                  <span class="td-name">${escapeHtml(r.full_name)}</span>
-                </div>
-              </td>
-              <td>${st.canEdit
-                ? `<input class="form-input qs-score-input" id="score_${r.student_id}" type="number" max="${st.maxScore}" min="0" value="${r.score??''}" onkeydown="if(event.key==='Enter'){event.preventDefault();saveQuizScore(${st.quizId}, ${r.student_id}, this.value, this)}"> / ${st.maxScore}`
-                : `${r.score ?? "—"} / ${st.maxScore}`
-              }</td>
-              ${st.canEdit ? `
-                <td>
-                  <div class="qs-row-actions">
-                    <button class="qs-kebab" title="مسح الدرجة" onclick="qsClearScoreInput(${r.student_id})"><i data-lucide="more-vertical" style="width:15px;height:15px;"></i></button>
-                    <button class="qs-save-row" onclick="saveQuizScore(${st.quizId}, ${r.student_id}, document.getElementById('score_${r.student_id}').value, document.getElementById('score_${r.student_id}'))"><i data-lucide="save" style="width:13px;height:13px;"></i> حفظ</button>
-                  </div>
-                </td>` : ""}
-            </tr>`).join("") || `<tr><td colspan="${st.canEdit?4:3}" style="text-align:center;color:var(--text-3);padding:24px;">لا يوجد طلاب</td></tr>`}
-        </tbody>
+        <tbody id="qsTableBody"></tbody>
       </table></div>
     </div>
   `;
+  icons();
+  qsRenderRows();
+}
+
+function qsRenderRows(){
+  const st = QS_STATE;
+  const tbody = document.getElementById("qsTableBody");
+  if (!tbody || !st) return;
+
+  const q = (st.search||"").trim().toLowerCase();
+  let list = st.rows.filter(r => !q || r.full_name.toLowerCase().includes(q) || (r.attendance_code||"").toLowerCase().includes(q));
+  list = list.slice().sort((a,b)=> st.sortDir==="asc" ? a.full_name.localeCompare(b.full_name,'ar') : b.full_name.localeCompare(a.full_name,'ar'));
+
+  tbody.innerHTML = list.map(r=>`
+      <tr>
+        <td class="qs-code-cell">${r.attendance_code || "—"}</td>
+        <td>
+          <div class="qs-name-cell">
+            <div class="qs-avatar" style="background:${qsAvatarColor(r.student_id)};"><i data-lucide="user" style="width:15px;height:15px;"></i></div>
+            <span class="td-name">${escapeHtml(r.full_name)}</span>
+          </div>
+        </td>
+        <td>${st.canEdit
+          ? `<input class="form-input qs-score-input" id="score_${r.student_id}" type="number" max="${st.maxScore}" min="0" value="${r.score??''}" onkeydown="if(event.key==='Enter'){event.preventDefault();saveQuizScore(${st.quizId}, ${r.student_id}, this.value, this)}"> / ${st.maxScore}`
+          : `${r.score ?? "—"} / ${st.maxScore}`
+        }</td>
+        ${st.canEdit ? `
+          <td>
+            <div class="qs-row-actions">
+              <button class="qs-kebab" title="مسح الدرجة" onclick="qsClearScoreInput(${r.student_id})"><i data-lucide="more-vertical" style="width:15px;height:15px;"></i></button>
+              <button class="qs-save-row" onclick="saveQuizScore(${st.quizId}, ${r.student_id}, document.getElementById('score_${r.student_id}').value, document.getElementById('score_${r.student_id}'))"><i data-lucide="save" style="width:13px;height:13px;"></i> حفظ</button>
+            </div>
+          </td>` : ""}
+      </tr>`).join("") || `<tr><td colspan="${st.canEdit?4:3}" style="text-align:center;color:var(--text-3);padding:24px;">لا يوجد طلاب</td></tr>`;
   icons();
 }
 
@@ -4874,7 +4885,11 @@ async function renderMonthlyReportsPage(){
               <td style="color:var(--text-3);font-family:monospace;">#${s.id}</td>
               <td class="td-name">${escapeHtml(s.full_name)}</td>
               <td><span class="badge badge-teal">${escapeHtml(s.group_name)}</span></td>
-              <td class="td-actions"><button class="btn btn-primary btn-sm" onclick="openMonthlyReportModal(${s.id}, '${jsAttr(s.full_name)}')"><i data-lucide="file-bar-chart" style="width:14px;height:14px;"></i> عرض التقرير</button></td>
+              <td class="td-actions" style="display:flex;gap:6px;flex-wrap:wrap;">
+                <button class="btn btn-primary btn-sm" onclick="openMonthlyReportModal(${s.id}, '${jsAttr(s.full_name)}')"><i data-lucide="file-bar-chart" style="width:14px;height:14px;"></i> عرض التقرير</button>
+                <button class="btn btn-sm" style="background:#25D366;color:#fff;" title="إرسال التقرير للطالب على واتساب" onclick="sendMonthlyReportWhatsApp(${s.id}, '${jsAttr(s.full_name)}', 'student')"><i data-lucide="message-circle" style="width:14px;height:14px;"></i> للطالب</button>
+                <button class="btn btn-sm" style="background:#25D366;color:#fff;" title="إرسال التقرير لولي الأمر على واتساب" onclick="sendMonthlyReportWhatsApp(${s.id}, '${jsAttr(s.full_name)}', 'parent')"><i data-lucide="message-circle" style="width:14px;height:14px;"></i> لولي الأمر</button>
+              </td>
             </tr>
           `).join("") || `<tr><td colspan="4" style="text-align:center;color:var(--text-3);padding:20px;">لا يوجد طلاب في مجموعاتك بعد</td></tr>`}
         </tbody>
@@ -4906,12 +4921,59 @@ function openMonthlyReportModal(studentId, studentName){
     <div id="mrWrap"><div class="form-hint">بتحمّل...</div></div>
   `, `
     <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>
+    <button class="btn btn-sm" style="background:#25D366;color:#fff;" onclick="sendMonthlyReportWhatsApp(${studentId}, '${jsAttr(studentName)}', 'student')"><i data-lucide="message-circle" style="width:14px;height:14px;"></i> إرسال للطالب</button>
+    <button class="btn btn-sm" style="background:#25D366;color:#fff;" onclick="sendMonthlyReportWhatsApp(${studentId}, '${jsAttr(studentName)}', 'parent')"><i data-lucide="message-circle" style="width:14px;height:14px;"></i> إرسال لولي الأمر</button>
     <button class="btn btn-primary" onclick="printMonthlyReport(${studentId}, '${jsAttr(studentName)}')"><i data-lucide="printer" style="width:14px;height:14px;"></i> طباعة / حفظ PDF</button>
   `);
   loadMonthlyReport(studentId, canEditPayment);
 }
 
 let LAST_REPORT_DATA = null;
+
+// بيجهز نص التقرير عشان يتبعت واتساب (ملخص نصي، مش ملف، لأن واتساب مش بيدعم إرفاق ملف تلقائي من رابط wa.me)
+function buildMonthlyReportWaText(data, studentName){
+  const a = data.attendance_summary;
+  const monthLabel = monthLabelAr(data.month);
+  const avgLine = data.average_percentage != null ? `${data.average_percentage}%` : "لا توجد درجات كافية";
+  const scoresLines = data.scores.length
+    ? data.scores.map(s => `- ${s.title}: ${s.score ?? "—"}/${s.max_score}`).join("\n")
+    : "لا يوجد كويزات هذا الشهر";
+  return [
+    `📋 التقرير الشهري - ${studentName}`,
+    `الشهر: ${monthLabel}`,
+    ``,
+    `📊 متوسط الدرجات: ${avgLine}`,
+    `✅ حاضر: ${a.present}   ⏰ متأخر: ${a.late}   ❌ غائب: ${a.absent}`,
+    ``,
+    `📝 الكويزات:`,
+    scoresLines,
+    ``,
+    `مع تحيات ${REPORT_LETTERHEAD.instructor}`,
+  ].join("\n");
+}
+
+// بيبعت ملخص التقرير الشهري على واتساب - target: "student" أو "parent"
+async function sendMonthlyReportWhatsApp(studentId, studentName, target){
+  let data;
+  if (LAST_REPORT_DATA && LAST_REPORT_DATA.student && LAST_REPORT_DATA.student.id === studentId) {
+    data = LAST_REPORT_DATA;
+  } else {
+    try {
+      data = await api(`/api/students/${studentId}/monthly-report?month=${currentMonthStr()}`);
+    } catch (e) {
+      showToast("تعذر تحميل بيانات التقرير", "error");
+      return;
+    }
+  }
+  const phone = target === "parent" ? data.student.parent_phone : data.student.phone;
+  if (!phone) {
+    showToast(target === "parent" ? "رقم ولي الأمر غير مسجل" : "رقم الطالب غير مسجل", "error");
+    return;
+  }
+  const text = buildMonthlyReportWaText(data, studentName);
+  const waNum = normalizePhoneForWa(phone);
+  window.open(`https://wa.me/${waNum}?text=${encodeURIComponent(text)}`, "_blank");
+}
 
 async function loadMonthlyReport(studentId, canEditPayment){
   if (canEditPayment === undefined) canEditPayment = SESSION.role === "admin" || SESSION.role === "supervisor" || SESSION.role === "teacher";
@@ -4961,8 +5023,43 @@ function monthLabelAr(monthStr){
   return (ARABIC_MONTHS[m] || m || "") + " " + (y || "");
 }
 
-// اسم المركز/المدرس اللي بيظهر في هيدر التقرير المطبوع - عدّله هنا لو حبيت تغيّره
-const REPORT_LETTERHEAD = { instructor: "د. هيثم كمال", subject: "تقرير شهري - مادة الكيمياء" };
+// اسم المدرس ثابت بيظهر في هيدر التقرير المطبوع دايمًا - مبيتغيرش من مكان تاني
+const REPORT_LETTERHEAD = { instructor: "دكتور هيثم كمال" };
+
+// أيقونات بسيطة مرسومة كـ SVG - عشان التقرير يفضل شغال حتى من غير إنترنت لحظة الطباعة
+const RPT_ICONS = {
+  cap: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10 12 5 2 10l10 5 10-5Z"/><path d="M6 12.5V17c0 1.5 2.7 3 6 3s6-1.5 6-3v-4.5"/></svg>`,
+  clock: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>`,
+  calendar: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></svg>`,
+  users: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M2.5 19c0-3.3 3-5 6.5-5s6.5 1.7 6.5 5"/><path d="M16.5 4.8c1.4.4 2.4 1.7 2.4 3.2s-1 2.8-2.4 3.2M21.5 19c0-2.7-2-4.3-4.7-4.9"/></svg>`,
+  user: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20c0-4 3.4-6.2 7.5-6.2S19.5 16 19.5 20"/></svg>`,
+  shield: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4.5 5.8v5.4c0 4.8 3.2 8.4 7.5 9.8 4.3-1.4 7.5-5 7.5-9.8V5.8L12 3Z"/></svg>`,
+  hourglass: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12M6 21h12M7 3c0 5 5 6.5 5 9s-5 4-5 9M17 3c0 5-5 6.5-5 9s5 4 5 9"/></svg>`,
+  check: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5"/><path d="M8 12.3 10.8 15 16 9.5"/></svg>`,
+  note: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4M9 12h6M9 16h6"/></svg>`,
+};
+
+// بيولد جملتين توصية بسيطتين حسب أداء الطالب (المتوسط + الحضور)
+function buildReportRecommendation(avgPct, attSummary){
+  const totalSessions = attSummary.present + attSummary.absent + attSummary.late + attSummary.excused;
+  let line1;
+  if (avgPct == null) {
+    line1 = "لا توجد درجات كافية هذا الشهر لتقييم المستوى بدقة.";
+  } else if (avgPct >= 85) {
+    line1 = "أداء ممتاز! استمر في نفس الاجتهاد والمشاركة لتحقيق أفضل النتائج.";
+  } else if (avgPct >= 70) {
+    line1 = "أداء جيد جدًا، مع القليل من المراجعة الإضافية هيبقى الأداء أقوى.";
+  } else if (avgPct >= 50) {
+    line1 = "أداء متوسط، يحتاج مذاكرة أكثر وحل تدريبات بشكل منتظم.";
+  } else {
+    line1 = "الأداء محتاج متابعة أكبر ومراجعة مركزة لتحسين النتائج القادمة.";
+  }
+  let line2 = "نوصي بالاستمرار في المذاكرة وحل التدريبات بشكل منتظم.";
+  if (totalSessions > 0 && attSummary.absent > 0) {
+    line2 = "يرجى الانتباه لأهمية الحضور المنتظم للحصص لتحسين المستوى.";
+  }
+  return [line1, line2];
+}
 
 function printMonthlyReport(studentId, studentName){
   if (!LAST_REPORT_DATA){ showToast("لسه البيانات مبتحمّلتش", "error"); return; }
@@ -4971,77 +5068,178 @@ function printMonthlyReport(studentId, studentName){
   const monthLabel = monthLabelAr(d.month);
   const todayLabel = new Date().toLocaleDateString("ar-EG", {year:"numeric", month:"long", day:"numeric"});
   const sesLabels = ["","الأولى","الثانية","الثالثة","الرابعة"];
+  const avgPct = d.average_percentage;
+  const avgDisplay = avgPct != null ? `${avgPct}%` : "—";
+  const ringPct = avgPct != null ? Math.max(0, Math.min(100, avgPct)) : 0;
+  const ringDeg = Math.round(ringPct * 3.6);
+  const [rec1, rec2] = buildReportRecommendation(avgPct, a);
+  const supervisorName = d.student.supervisor_name || "—";
+  const supervisorPhone = d.student.supervisor_phone || "";
+
   const win = window.open("", "_blank");
   win.document.write(`
     <!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
     <title>تقرير ${escapeHtml(studentName)} - ${monthLabel}</title>
     <style>
-      @page { size: A4; margin: 16mm 14mm; }
+      @page { size: A4; margin: 14mm 12mm; }
       *{box-sizing:border-box;}
-      body{font-family:'Cairo','Segoe UI',sans-serif;color:#0F172A;margin:0;padding:0;background:#F4F3EF;}
-      .report-page{max-width:820px;margin:0 auto;padding:26px 30px;background:#fff;}
-      .letterhead{text-align:center;border-bottom:3px double #3E7CB1;padding-bottom:16px;margin-bottom:18px;}
-      .letterhead .brand{font-size:23px;font-weight:800;color:#2C5A82;}
-      .letterhead .subject{font-size:14.5px;color:#475569;margin-top:4px;font-weight:600;}
-      .report-title{text-align:center;font-size:16.5px;font-weight:700;margin:16px 0 22px;background:#EFF5FA;color:#2C5A82;padding:11px;border-radius:10px;}
-      .info-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 30px;margin-bottom:22px;font-size:13.5px;}
-      .info-row{display:flex;justify-content:space-between;border-bottom:1px dashed #E2E8F0;padding-bottom:7px;}
-      .info-row .label{color:#64748B;}
-      .info-row b{color:#0F172A;font-weight:700;}
-      h3{font-size:14px;color:#2C5A82;margin:22px 0 8px;border-right:4px solid #3E7CB1;padding-right:10px;}
-      table{width:100%;border-collapse:collapse;margin:8px 0 6px;font-size:13px;}
-      th,td{border:1px solid #E2E8F0;padding:8px 10px;text-align:center;}
-      th{background:#F8FAFC;font-weight:700;color:#334155;}
+      :root{
+        --ink:#1E2A3A; --muted:#64748B; --line:#E7EAF3;
+        --primary:#4457E8; --primary-soft:#EEF1FD;
+        --green:#1FA971; --green-soft:#EAF8F1;
+        --amber:#C98A15; --amber-soft:#FBF3E4;
+        --red:#D2564D; --red-soft:#FCEEEC;
+        --page-bg:#F3F5FA;
+      }
+      body{font-family:'Cairo','Segoe UI',sans-serif;color:var(--ink);margin:0;padding:0;background:var(--page-bg);}
+      .report-page{max-width:820px;margin:0 auto;padding:22px 26px 30px;}
+      .card{background:#fff;border-radius:16px;box-shadow:0 1px 3px rgba(30,42,58,.06);border:1px solid var(--line);}
+
+      /* هيدر التقرير */
+      .rpt-header{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:18px 22px;margin-bottom:16px;}
+      .rpt-header-left{display:flex;align-items:center;gap:12px;}
+      .rpt-logo{width:46px;height:46px;border-radius:50%;background:var(--primary-soft);color:var(--primary);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+      .rpt-logo svg{width:24px;height:24px;}
+      .rpt-title{font-size:17px;font-weight:800;color:var(--ink);}
+      .rpt-subtitle{font-size:12px;color:var(--muted);margin-top:2px;}
+      .rpt-header-right{display:flex;gap:10px;}
+      .rpt-chip{text-align:center;background:var(--primary-soft);border-radius:12px;padding:8px 14px;min-width:120px;}
+      .rpt-chip .chip-label{font-size:10.5px;color:var(--primary);display:flex;align-items:center;justify-content:center;gap:4px;font-weight:700;}
+      .rpt-chip .chip-label svg{width:12px;height:12px;}
+      .rpt-chip .chip-value{font-size:12.5px;font-weight:700;color:var(--ink);margin-top:3px;}
+      .rpt-chip .chip-sub{font-size:10px;color:var(--muted);margin-top:1px;direction:ltr;}
+
+      /* شبكة المعلومات */
+      .info-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:16px;margin-bottom:16px;}
+      .info-item{text-align:center;padding:6px 4px;}
+      .info-item .ic{width:30px;height:30px;border-radius:50%;background:var(--primary-soft);color:var(--primary);display:flex;align-items:center;justify-content:center;margin:0 auto 6px;}
+      .info-item .ic svg{width:15px;height:15px;}
+      .info-item .lbl{font-size:10.5px;color:var(--muted);margin-bottom:2px;}
+      .info-item .val{font-size:12.5px;font-weight:700;color:var(--ink);}
+
+      .section-title{font-size:13.5px;font-weight:800;color:var(--ink);margin:20px 4px 10px;display:flex;align-items:center;gap:6px;}
+      .section-title .bar{width:4px;height:14px;background:var(--primary);border-radius:99px;}
+
+      /* كروت الأداء */
+      .perf-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:8px;}
+      .perf-card{padding:14px 8px;text-align:center;}
+      .perf-card .lbl{font-size:10.5px;color:var(--muted);margin-top:6px;}
+      .perf-card .val{font-size:19px;font-weight:800;}
+      .ring{width:56px;height:56px;border-radius:50%;margin:0 auto;display:flex;align-items:center;justify-content:center;position:relative;
+            background:conic-gradient(var(--primary) ${ringDeg}deg, var(--primary-soft) ${ringDeg}deg);}
+      .ring-inner{width:44px;height:44px;border-radius:50%;background:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:var(--primary);}
+      .stat-ic{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto;}
+      .stat-ic svg{width:17px;height:17px;}
+      .ic-amber{background:var(--amber-soft);color:var(--amber);}
+      .ic-red{background:var(--red-soft);color:var(--red);}
+      .ic-green{background:var(--green-soft);color:var(--green);}
+
+      table{width:100%;border-collapse:collapse;font-size:12.5px;}
+      th,td{padding:9px 10px;text-align:center;border-bottom:1px solid var(--line);}
+      th{background:#FAFBFD;font-weight:700;color:var(--muted);font-size:11px;}
       td:first-child, th:first-child{text-align:right;}
-      .stats{display:flex;gap:12px;margin:18px 0;}
-      .stat{border:1px solid #E2E8F0;border-radius:10px;padding:12px 8px;text-align:center;flex:1;background:#FAFAF8;}
-      .stat b{display:block;font-size:21px;color:#2C5A82;}
-      .stat span{font-size:11.5px;color:#64748B;}
-      .badge{padding:3px 10px;border-radius:99px;font-size:11.5px;font-weight:700;}
-      .b-present{background:#F0F9F1;color:#2F6B44;} .b-absent{background:#FBF0EE;color:#8A3527;}
-      .b-late{background:#FCF6EC;color:#8A6416;} .b-excused{background:#EEF6FA;color:#2C5A82;}
-      .signature{margin-top:46px;display:flex;justify-content:space-between;}
-      .signature .box{text-align:center;font-size:12.5px;color:#475569;}
-      .signature .line{border-top:1px solid #94A3B8;width:170px;padding-top:8px;margin-top:44px;}
-      .footer{margin-top:26px;display:flex;justify-content:space-between;font-size:11px;color:#94A3B8;border-top:1px solid #E2E8F0;padding-top:10px;}
+      tr:last-child td{border-bottom:none;}
+      .table-card{padding:4px 14px 8px;overflow:hidden;}
+
+      .badge{padding:3px 11px;border-radius:99px;font-size:10.5px;font-weight:700;display:inline-block;}
+      .b-present{background:var(--green-soft);color:var(--green);} .b-absent{background:var(--red-soft);color:var(--red);}
+      .b-late{background:var(--amber-soft);color:var(--amber);} .b-excused{background:var(--primary-soft);color:var(--primary);}
+
+      .rec-card{display:flex;gap:12px;padding:16px 18px;margin-top:16px;}
+      .rec-ic{width:34px;height:34px;border-radius:10px;background:var(--primary-soft);color:var(--primary);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+      .rec-ic svg{width:16px;height:16px;}
+      .rec-title{font-size:12.5px;font-weight:800;margin-bottom:4px;}
+      .rec-text{font-size:11.5px;color:var(--muted);line-height:1.7;}
+
+      .rpt-footer{text-align:center;margin-top:20px;padding:12px;font-size:11px;color:var(--muted);}
+      .rpt-footer .tagline{font-weight:700;color:var(--primary);font-size:12px;margin-bottom:3px;}
+
       .print-btn-bar{max-width:820px;margin:14px auto;display:flex;justify-content:flex-end;}
-      .print-btn{background:#3E7CB1;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;}
-      @media print{ .no-print{display:none !important;} body{background:#fff;} .report-page{padding:0;} }
+      .print-btn{background:var(--primary);color:#fff;border:none;border-radius:8px;padding:10px 20px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;}
+      @media print{ .no-print{display:none !important;} body{background:#fff;} .report-page{padding:0;} .card{box-shadow:none;} }
     </style></head><body>
     <div class="print-btn-bar no-print"><button class="print-btn" onclick="window.print()">🖨️ طباعة / حفظ PDF</button></div>
     <div class="report-page">
-      <div class="letterhead">
-        <div class="brand">${escapeHtml(REPORT_LETTERHEAD.instructor)}</div>
-        <div class="subject">${escapeHtml(REPORT_LETTERHEAD.subject)}</div>
+
+      <div class="card rpt-header">
+        <div class="rpt-header-left">
+          <div class="rpt-logo">${RPT_ICONS.cap}</div>
+          <div>
+            <div class="rpt-title">تقرير أداء الطالب</div>
+            <div class="rpt-subtitle">التقرير الشهري - ${monthLabel}</div>
+          </div>
+        </div>
+        <div class="rpt-header-right">
+          <div class="rpt-chip">
+            <div class="chip-label">${RPT_ICONS.shield} المشرف المسؤول</div>
+            <div class="chip-value">${escapeHtml(supervisorName)}</div>
+            ${supervisorPhone ? `<div class="chip-sub">${escapeHtml(supervisorPhone)}</div>` : ""}
+          </div>
+          <div class="rpt-chip">
+            <div class="chip-label">${RPT_ICONS.user} المدرس</div>
+            <div class="chip-value">${escapeHtml(REPORT_LETTERHEAD.instructor)}</div>
+          </div>
+        </div>
       </div>
-      <div class="report-title">تقرير شهر ${monthLabel}</div>
-      <div class="info-grid">
-        <div class="info-row"><span class="label">اسم الطالب</span><b>${escapeHtml(studentName)}</b></div>
-        <div class="info-row"><span class="label">المجموعة</span><b>${escapeHtml(d.student.group_name||'—')}</b></div>
-        <div class="info-row"><span class="label">المرحلة</span><b>${escapeHtml(d.student.stage_name||'—')}</b></div>
-        <div class="info-row"><span class="label">المشرف المسؤول</span><b>${escapeHtml(d.student.supervisor_name||'—')}</b></div>
+
+      <div class="card info-grid">
+        <div class="info-item"><div class="ic">${RPT_ICONS.clock}</div><div class="lbl">تاريخ التقرير</div><div class="val">${todayLabel}</div></div>
+        <div class="info-item"><div class="ic">${RPT_ICONS.calendar}</div><div class="lbl">الشهر</div><div class="val">${monthLabel}</div></div>
+        <div class="info-item"><div class="ic">${RPT_ICONS.users}</div><div class="lbl">المجموعة</div><div class="val">${escapeHtml(d.student.group_name||'—')}</div></div>
+        <div class="info-item"><div class="ic">${RPT_ICONS.user}</div><div class="lbl">اسم الطالب</div><div class="val">${escapeHtml(studentName)}</div></div>
       </div>
-      <div class="stats">
-        <div class="stat"><b>${a.present}</b><span>حاضر</span></div>
-        <div class="stat"><b>${a.absent}</b><span>غايب</span></div>
-        <div class="stat"><b>${a.late}</b><span>متأخر</span></div>
-        <div class="stat"><b>${d.average_percentage??'—'}${d.average_percentage!=null?'%':''}</b><span>متوسط الدرجات</span></div>
+
+      <div class="section-title"><span class="bar"></span> نظرة عامة على الأداء</div>
+      <div class="perf-grid">
+        <div class="card perf-card">
+          <div class="ring"><div class="ring-inner">${avgDisplay}</div></div>
+          <div class="lbl">متوسط الدرجات</div>
+        </div>
+        <div class="card perf-card">
+          <div class="stat-ic ic-amber">${RPT_ICONS.hourglass}</div>
+          <div class="val">${a.late}</div>
+          <div class="lbl">متأخر</div>
+        </div>
+        <div class="card perf-card">
+          <div class="stat-ic ic-red">${RPT_ICONS.user}</div>
+          <div class="val">${a.absent}</div>
+          <div class="lbl">غائب</div>
+        </div>
+        <div class="card perf-card">
+          <div class="stat-ic ic-green">${RPT_ICONS.check}</div>
+          <div class="val">${a.present}</div>
+          <div class="lbl">حاضر</div>
+        </div>
       </div>
-      <h3>الكويزات في الشهر ده</h3>
-      <table><thead><tr><th>الكويز</th><th>التاريخ</th><th>الدرجة</th></tr></thead>
-      <tbody>${d.scores.map(s=>`<tr><td>${escapeHtml(s.title)}</td><td>${s.quiz_date||'—'}</td><td>${s.score??'—'} / ${s.max_score}</td></tr>`).join("") || `<tr><td colspan="3" style="color:#94A3B8;">لا يوجد كويزات</td></tr>`}</tbody></table>
-      <h3>سجل الحضور التفصيلي</h3>
-      <table><thead><tr><th>التاريخ</th><th>الحصة</th><th>الحالة</th></tr></thead>
-      <tbody>${d.attendance.map(x=>{
-        const sesLabel = sesLabels[x.session_number] || `#${x.session_number}`;
-        const badgeCls = {present:'b-present',absent:'b-absent',late:'b-late',excused:'b-excused'}[x.status] || '';
-        return `<tr><td>${x.session_date}</td><td>الحصة ${sesLabel}</td><td><span class="badge ${badgeCls}">${escapeHtml(ATT_LABELS[x.status]||x.status)}</span></td></tr>`;
-      }).join("") || `<tr><td colspan="3" style="color:#94A3B8;">لا يوجد سجل حضور</td></tr>`}</tbody></table>
-      <div class="signature">
-        <div class="box">توقيع المشرف<div class="line"></div></div>
-        <div class="box">ختم المركز<div class="line"></div></div>
+
+      <div class="section-title"><span class="bar"></span> الكويزات</div>
+      <div class="card table-card">
+        <table><thead><tr><th>الكويز</th><th>التاريخ</th><th>الدرجة</th></tr></thead>
+        <tbody>${d.scores.map(s=>`<tr><td>${escapeHtml(s.title)}</td><td>${s.quiz_date||'—'}</td><td>${s.score??'—'} / ${s.max_score}</td></tr>`).join("") || `<tr><td colspan="3" style="color:#94A3B8;">لا يوجد كويزات</td></tr>`}</tbody></table>
       </div>
-      <div class="footer"><span>تم إنشاء هذا التقرير بتاريخ ${todayLabel}</span><span>EduFlow</span></div>
+
+      <div class="section-title"><span class="bar"></span> الحضور التفصيلي</div>
+      <div class="card table-card">
+        <table><thead><tr><th>التاريخ</th><th>الحصة</th><th>الحالة</th></tr></thead>
+        <tbody>${d.attendance.map(x=>{
+          const sesLabel = sesLabels[x.session_number] || `#${x.session_number}`;
+          const badgeCls = {present:'b-present',absent:'b-absent',late:'b-late',excused:'b-excused'}[x.status] || '';
+          return `<tr><td>${x.session_date}</td><td>الحصة ${sesLabel}</td><td><span class="badge ${badgeCls}">${escapeHtml(ATT_LABELS[x.status]||x.status)}</span></td></tr>`;
+        }).join("") || `<tr><td colspan="3" style="color:#94A3B8;">لا يوجد سجل حضور</td></tr>`}</tbody></table>
+      </div>
+
+      <div class="card rec-card">
+        <div class="rec-ic">${RPT_ICONS.note}</div>
+        <div>
+          <div class="rec-title">ملاحظات وتوصيات</div>
+          <div class="rec-text">${escapeHtml(rec1)}<br>${escapeHtml(rec2)}</div>
+        </div>
+      </div>
+
+      <div class="rpt-footer">
+        <div class="tagline">بالتوفيق دائمًا نحو التميز والنجاح</div>
+        <div>تم إنشاء هذا التقرير بتاريخ ${todayLabel} · EduFlow</div>
+      </div>
     </div>
     </body></html>
   `);
