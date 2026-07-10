@@ -1741,7 +1741,7 @@ def get_monthly_report(student_id: int, month: str, session=Depends(get_current_
     with get_connection() as conn:
         student = conn.execute("""
             SELECT s.*, g.name as group_name, st.name as stage_name, gov.name as governorate_name,
-                   u.full_name as supervisor_name
+                   u.full_name as supervisor_name, u.phone as supervisor_phone
             FROM students s
             JOIN groups g ON g.id = s.group_id
             JOIN stages st ON st.id = g.stage_id
