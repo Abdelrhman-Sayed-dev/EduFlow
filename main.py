@@ -1386,7 +1386,7 @@ def get_attendance_by_date(session_date: str, group_id: Optional[int] = None,
             assert_supervisor_owns_group(conn, session, group_id)
 
         query = """
-            SELECT s.id as student_id, s.full_name, a.status, a.notes, a.id as attendance_id,
+            SELECT s.id as student_id, s.full_name, s.attendance_code, a.status, a.notes, a.id as attendance_id,
                    a.session_number, s.group_id
             FROM students s
             LEFT JOIN attendance a ON a.student_id = s.id
@@ -1564,40 +1564,32 @@ def get_student_payments(student_id: int, session=Depends(get_current_session)):
 
 def _build_ranking_message(rank_score, total_score, rank_att, total_att, trend):
     """
-    بيبني رسالة تحفيزية حسب ترتيب الطالب - دايمًا إيجابية ومحفزة حتى لو الترتيب متأخر.
+    بيبني رسالة تحفيزية واحدة بسيطة وواضحة حسب حالة الطالب - دايمًا إيجابية
+    ومحفزة حتى لو الترتيب متأخر، ومن غير ما نكدّس أكتر من جملة فوق بعض.
     """
     if rank_score and total_score and total_score >= 1:
         pct = rank_score / total_score  # كل ما قل كل ما كان الترتيب أحسن
     else:
         pct = None
 
-    if pct is not None and rank_score == 1:
-        title = "🏆 أنت الأول في مجموعتك!"
-        body = "أداء رائع، استمر بنفس المستوى وحافظ على مكانك في القمة."
-    elif pct is not None and rank_score <= 3:
-        title = "🥈 من ضمن أفضل 3 في مجموعتك!"
-        body = "أنت قريب جدًا من القمة، شوية تركيز كمان وهتوصل للمركز الأول."
-    elif pct is not None and pct <= 0.5:
-        title = "📈 أداء كويس ومتقدم!"
-        body = "أنت في النص الأفضل من مجموعتك، استمر في المذاكرة بانتظام وهتتقدم أكتر."
-    elif pct is not None:
-        title = "🌱 كل رحلة بتبدأ بخطوة"
-        body = "الترتيب رقم مش نهاية الطريق - ركّز على مراجعة الأجزاء اللي بتواجه فيها صعوبة، وحاول تحل كويزات أكتر. كل مذاكرة بتفرق."
-    else:
-        title = "👋 لسه بدايتك"
-        body = "لسه معندكش درجات كويزات كفاية نحسب ترتيبك بيها. اول ما تاخد كام كويز هتقدر تشوف ترتيبك."
+    good_attendance = bool(rank_att and total_att and (rank_att / total_att) <= 0.3)
 
-    # لو في تحسن ملحوظ، نضيف جملة تحفيزية إضافية
-    if trend == "up":
-        body += " 📈 كمان لاحظنا إنك بتتحسن عن الفترة اللي فاتت، استمر كده!"
-    elif trend == "down" and pct is not None and pct > 0.5:
-        body += " ملاحظة بسيطة: أدائك في آخر كويزات كان أقل شوية من قبل، جرّب تراجع وقتك في المذاكرة."
+    # عنده درجات كويزات كفاية نحسب بيها ترتيب
+    if pct is not None:
+        if rank_score == 1:
+            return "🏆 أنت الأول في مجموعتك!", "أداء رائع، استمر بنفس المستوى وحافظ على مكانك في القمة."
+        if rank_score <= 3:
+            return "🥈 من ضمن أفضل 3 في مجموعتك!", "أنت قريب جدًا من القمة، شوية تركيز كمان وهتوصل للمركز الأول."
+        if trend == "up":
+            return "📈 في تحسن ملحوظ!", "لاحظنا إن أداءك بيتحسن عن الفترة اللي فاتت، استمر بنفس الحماس ده."
+        if pct <= 0.5:
+            return "👍 أداء كويس ومتقدم", "أنت في النص الأفضل من مجموعتك، استمر في المذاكرة بانتظام وهتتقدم أكتر."
+        return "🌱 كل رحلة بتبدأ بخطوة", "ركّز على مراجعة الأجزاء اللي بتواجه فيها صعوبة وحاول تحل كويزات أكتر، كل مذاكرة بتفرق."
 
-    # حضور ممتاز حتى لو الدرجات مش عالية - نبرزه كنقطة قوة
-    if rank_att and total_att and (rank_att / total_att) <= 0.3 and (pct is None or pct > 0.5):
-        body += " 🎯 والتزامك بالحضور ممتاز، وده نص الطريق للنجاح."
-
-    return title, body
+    # لسه معندهوش درجات كويزات كفاية - نرجّع رسالة بسيطة واحدة بس
+    if good_attendance:
+        return "🎯 حضورك ممتاز من الأول!", "استمر على الالتزام ده، وأول ما تاخد أول كويز هتقدر تشوف ترتيبك في الدرجات كمان."
+    return "👋 لسه بدايتك", "ذاكر كويس واحضر بانتظام، وهتقدر تشوف ترتيبك أول ما تاخد أول كويز."
 
 
 @app.get("/api/students/{student_id}/ranking")
@@ -1748,11 +1740,13 @@ def get_monthly_report(student_id: int, month: str, session=Depends(get_current_
     """
     with get_connection() as conn:
         student = conn.execute("""
-            SELECT s.*, g.name as group_name, st.name as stage_name, gov.name as governorate_name
+            SELECT s.*, g.name as group_name, st.name as stage_name, gov.name as governorate_name,
+                   u.full_name as supervisor_name
             FROM students s
             JOIN groups g ON g.id = s.group_id
             JOIN stages st ON st.id = g.stage_id
             JOIN governorates gov ON gov.id = g.governorate_id
+            LEFT JOIN users u ON u.id = g.supervisor_id
             WHERE s.id = ?
         """, (student_id,)).fetchone()
         if not student:
