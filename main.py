@@ -13,16 +13,17 @@ import os
 import base64
 import uuid
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, Header, Depends
+from fastapi import FastAPI, HTTPException, Header, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
 from database import (
     get_connection, init_db, hash_password, verify_password, gen_token,
-    gen_access_code, gen_numeric_code, gen_temp_password, session_expiry, cleanup_expired_sessions
+    gen_access_code, gen_numeric_code, gen_temp_password, session_expiry, cleanup_expired_sessions,
+    is_login_blocked, record_failed_login, clear_failed_logins, cleanup_old_login_attempts
 )
 
 app = FastAPI(title="منصة المدرس - نظام إدارة الطلاب والمجموعات")
@@ -45,6 +46,32 @@ app.add_middleware(
 
 # تشغيل قاعدة البيانات أول ما السيرفر يبدأ
 init_db()
+
+# ---------------------------------------------------------------------------
+# تحذيرات أمان بتظهر في اللوجز عند تشغيل السيرفر - عشان محدش ينسى يقفل الثغرات
+# دي قبل ما يعمل نشر فعلي (production)
+# ---------------------------------------------------------------------------
+def _print_startup_security_warnings():
+    if ALLOWED_ORIGINS == ["*"]:
+        print("=" * 70)
+        print("⚠️  تحذير أمان: CORS مفتوح لأي دومين (ALLOWED_ORIGINS=*).")
+        print("   حدد دومين موقعك الحقيقي في متغير البيئة ALLOWED_ORIGINS قبل الإنتاج.")
+        print("=" * 70)
+    try:
+        with get_connection() as conn:
+            admin = conn.execute(
+                "SELECT password_hash FROM users WHERE username='admin' AND role='admin'"
+            ).fetchone()
+            if admin and verify_password("admin123", admin["password_hash"])[0]:
+                print("=" * 70)
+                print("🚨 تحذير أمان خطير: حساب الأدمن لسه بالباسورد الافتراضي (admin123)!")
+                print("   غيّره فورًا من إعدادات الحساب قبل ما تنشر السيستم فعليًا.")
+                print("=" * 70)
+    except Exception:
+        pass
+
+
+_print_startup_security_warnings()
 
 # مجلد رفع الصور (سبورة الحصص) - بيتم تخزين الصور كملفات على الـ disk
 # مش base64 جوه قاعدة البيانات، عشان الداتابيز ما تكبرش وتبقى بطيئة
@@ -69,33 +96,33 @@ class ScheduleSlotIn(BaseModel):
 
 
 class GroupIn(BaseModel):
-    name: str
+    name: str = Field(..., max_length=150)
     stage_id: int
     governorate_id: int
-    notes: Optional[str] = None
+    notes: Optional[str] = Field(None, max_length=2000)
     session_price: Optional[float] = None
     supervisor_id: Optional[int] = None
     schedule_slots: Optional[list[ScheduleSlotIn]] = None  # مواعيد المجموعة (يوم + وقت)
 
 
 class StudentIn(BaseModel):
-    full_name: str
-    phone: Optional[str] = None
-    parent_phone: Optional[str] = None
+    full_name: str = Field(..., max_length=150)
+    phone: Optional[str] = Field(None, max_length=30)
+    parent_phone: Optional[str] = Field(None, max_length=30)
     group_id: int
-    notes: Optional[str] = None
+    notes: Optional[str] = Field(None, max_length=2000)
 
 
 class QuizIn(BaseModel):
-    title: str
-    description: Optional[str] = None
+    title: str = Field(..., max_length=200)
+    description: Optional[str] = Field(None, max_length=2000)
     quiz_date: Optional[str] = None
     max_score: float = 100
     group_id: Optional[int] = None  # نظام قديم للتوافق - كويز خاص بمجموعة واحدة
     stage_id: Optional[int] = None  # كويز عام على مستوى مرحلة كاملة (النظام الجديد)
     session_number: Optional[int] = None
     image_data: Optional[str] = None  # صورة الكويز/الامتحان (base64)
-    version_label: Optional[str] = None  # اسم النموذج لو فيه أكتر من نموذج امتحان
+    version_label: Optional[str] = Field(None, max_length=100)  # اسم النموذج لو فيه أكتر من نموذج امتحان
     quiz_type: str = "quiz"  # "quiz" كويز عادي أو "exam" امتحان شامل
 
 
@@ -111,27 +138,27 @@ class HomeworkIn(BaseModel):
     group_id: int
     session_number: int
     session_date: Optional[str] = None
-    description: str
+    description: str = Field(..., max_length=3000)
 
 
 class HomeworkSubmissionIn(BaseModel):
     student_id: int
     done: Optional[bool] = None
-    notes: Optional[str] = None
+    notes: Optional[str] = Field(None, max_length=2000)
 
 
 class QuizScoreIn(BaseModel):
     student_id: int
     quiz_id: int
     score: float
-    notes: Optional[str] = None
+    notes: Optional[str] = Field(None, max_length=2000)
 
 
 class AttendanceIn(BaseModel):
     student_id: int
     session_date: str
     status: str  # present / absent / late / excused
-    notes: Optional[str] = None
+    notes: Optional[str] = Field(None, max_length=2000)
     session_number: int = 1  # رقم الحصة في نفس اليوم (لو في أكتر من حصة)
 
 
@@ -143,42 +170,37 @@ class AttendanceCodeIn(BaseModel):
 
 
 class LoginIn(BaseModel):
-    username: str
-    password: str
-
-
-class ChangePasswordIn(BaseModel):
-    current_password: str
-    new_password: str
+    username: str = Field(..., max_length=100)
+    password: str = Field(..., max_length=200)
 
 
 class StudentLoginIn(BaseModel):
-    access_code: str
+    access_code: str = Field(..., max_length=50)
 
 
 class CodeLoginIn(BaseModel):
     """تسجيل دخول موحّد بالكود - يصلح للطالب أو المشرف أو المدرس"""
-    access_code: str
+    access_code: str = Field(..., max_length=50)
 
 
 class UserIn(BaseModel):
-    username: str
-    password: Optional[str] = None  # لو فاضي، النظام يولّد كلمة مرور تلقائية ويرجّعها
-    full_name: str
-    phone: Optional[str] = None
+    username: str = Field(..., max_length=100)
+    password: Optional[str] = Field(None, min_length=6, max_length=200)  # لو فاضي، النظام يولّد كلمة مرور تلقائية ويرجّعها
+    full_name: str = Field(..., max_length=150)
+    phone: Optional[str] = Field(None, max_length=30)
     role: str = "supervisor"  # supervisor أو teacher (الأدمن مينضافش من هنا)
     governorate_id: Optional[int] = None  # للمشرف بس - المحافظة المسؤول عنها
 
 
 class ChangePasswordIn(BaseModel):
-    current_password: str
-    new_password: str
+    current_password: str = Field(..., max_length=200)
+    new_password: str = Field(..., min_length=6, max_length=200)
 
 
 class UserUpdateIn(BaseModel):
-    full_name: Optional[str] = None
-    phone: Optional[str] = None
-    password: Optional[str] = None
+    full_name: Optional[str] = Field(None, max_length=150)
+    phone: Optional[str] = Field(None, max_length=30)
+    password: Optional[str] = Field(None, min_length=6, max_length=200)
     is_active: Optional[bool] = None
     governorate_id: Optional[int] = None
 
@@ -188,8 +210,8 @@ class ScheduleIn(BaseModel):
     start_time: str
     end_time: Optional[str] = None
     group_id: Optional[int] = None
-    title: Optional[str] = None
-    notes: Optional[str] = None
+    title: Optional[str] = Field(None, max_length=200)
+    notes: Optional[str] = Field(None, max_length=2000)
 
 
 class BoardImageIn(BaseModel):
@@ -197,7 +219,7 @@ class BoardImageIn(BaseModel):
     session_number: int
     session_date: Optional[str] = None
     image_data: str  # base64 data url
-    caption: Optional[str] = None
+    caption: Optional[str] = Field(None, max_length=500)
 
 
 class AssignSupervisorIn(BaseModel):
@@ -206,7 +228,7 @@ class AssignSupervisorIn(BaseModel):
 
 class BehaviorNoteIn(BaseModel):
     student_id: int
-    note: str
+    note: str = Field(..., max_length=2000)
     note_type: str = "neutral"  # positive / negative / neutral
 
 
@@ -216,17 +238,17 @@ class PaymentIn(BaseModel):
     amount: Optional[float] = None
     is_paid: bool = False
     paid_date: Optional[str] = None
-    notes: Optional[str] = None
+    notes: Optional[str] = Field(None, max_length=2000)
 
 
 class StudentRequestIn(BaseModel):
     request_type: str  # attendance_change / issue / explanation / other
-    details: Optional[str] = None
+    details: Optional[str] = Field(None, max_length=2000)
 
 
 class StudentRequestStatusIn(BaseModel):
     status: str  # pending / in_progress / resolved
-    supervisor_reply: Optional[str] = None
+    supervisor_reply: Optional[str] = Field(None, max_length=2000)
 
 
 # ---------------------------------------------------------------------------
@@ -322,22 +344,46 @@ def serve_frontend():
 # تسجيل الدخول
 # ---------------------------------------------------------------------------
 
+def _client_ip(request: Request) -> str:
+    """بيجيب IP بتاع الطلب - بياخد بالحسبان إنه ممكن يكون وراء proxy (زي Render)"""
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
 @app.post("/api/auth/login")
-def login(data: LoginIn):
+def login(data: LoginIn, request: Request):
     """تسجيل دخول الأدمن / المدرس / المشرف"""
+    ip_key = f"ip:{_client_ip(request)}"
+    user_key = f"user:{data.username.strip().lower()}"
     with get_connection() as conn:
         cleanup_expired_sessions(conn)
+        cleanup_old_login_attempts(conn)
+
+        if is_login_blocked(conn, ip_key) or is_login_blocked(conn, user_key):
+            raise HTTPException(status_code=429, detail="محاولات دخول كتير غلط، استنى شوية وحاول تاني")
+
         user = conn.execute(
             "SELECT * FROM users WHERE username=?", (data.username,)
         ).fetchone()
         if not user:
+            record_failed_login(conn, ip_key)
+            record_failed_login(conn, user_key)
+            conn.commit()  # لازم commit قبل الـ raise، لأن get_connection بيعمل rollback عند أي Exception
             raise HTTPException(status_code=401, detail="اسم المستخدم أو كلمة المرور غلط")
 
         ok, needs_upgrade = verify_password(data.password, user["password_hash"])
         if not ok:
+            record_failed_login(conn, ip_key)
+            record_failed_login(conn, user_key)
+            conn.commit()  # لازم commit قبل الـ raise، لأن get_connection بيعمل rollback عند أي Exception
             raise HTTPException(status_code=401, detail="اسم المستخدم أو كلمة المرور غلط")
         if not user["is_active"]:
             raise HTTPException(status_code=403, detail="الحساب موقوف، كلم الأدمن")
+
+        clear_failed_logins(conn, ip_key)
+        clear_failed_logins(conn, user_key)
 
         # لو الحساب لسه بالتشفير القديم (sha256)، حدّثه تلقائي لـ bcrypt دلوقتي
         if needs_upgrade:
@@ -359,19 +405,28 @@ def login(data: LoginIn):
 
 
 @app.post("/api/auth/login-code")
-def login_with_code(data: CodeLoginIn):
+def login_with_code(data: CodeLoginIn, request: Request = None):
     """
     تسجيل دخول موحّد بالكود - يصلح للطالب أو المشرف أو المدرس.
     بيدور على الكود في جدول الطلاب الأول، ولو مش موجود يدور في جدول المستخدمين (مشرف/مدرس).
     """
     code = data.access_code.strip()
+    ip_key = f"ip:{_client_ip(request)}" if request is not None else None
+    code_key = f"code:{code.lower()}"
     with get_connection() as conn:
         cleanup_expired_sessions(conn)
+        cleanup_old_login_attempts(conn)
+
+        if is_login_blocked(conn, code_key) or (ip_key and is_login_blocked(conn, ip_key)):
+            raise HTTPException(status_code=429, detail="محاولات دخول كتير غلط، استنى شوية وحاول تاني")
 
         student = conn.execute("SELECT * FROM students WHERE access_code=?", (code,)).fetchone()
         if student:
             if not student["is_active"]:
                 raise HTTPException(status_code=403, detail="الحساب موقوف، كلم المشرف")
+            clear_failed_logins(conn, code_key)
+            if ip_key:
+                clear_failed_logins(conn, ip_key)
             token = gen_token()
             conn.execute(
                 "INSERT INTO sessions (token, user_type, user_id, expires_at) VALUES (?, 'student', ?, ?)",
@@ -388,6 +443,9 @@ def login_with_code(data: CodeLoginIn):
         if user:
             if not user["is_active"]:
                 raise HTTPException(status_code=403, detail="الحساب موقوف، كلم الأدمن")
+            clear_failed_logins(conn, code_key)
+            if ip_key:
+                clear_failed_logins(conn, ip_key)
             token = gen_token()
             conn.execute(
                 "INSERT INTO sessions (token, user_type, user_id, expires_at) VALUES (?, 'user', ?, ?)",
@@ -398,13 +456,17 @@ def login_with_code(data: CodeLoginIn):
                 "username": user["username"], "id": user["id"]
             }
 
+        record_failed_login(conn, code_key)
+        if ip_key:
+            record_failed_login(conn, ip_key)
+        conn.commit()  # لازم commit قبل الـ raise، لأن get_connection بيعمل rollback عند أي Exception
         raise HTTPException(status_code=401, detail="كود الدخول غلط")
 
 
 @app.post("/api/auth/student-login")
-def student_login(data: StudentLoginIn):
+def student_login(data: StudentLoginIn, request: Request):
     """تسجيل دخول الطالب بكود الدخول الخاص بيه (للتوافق مع نسخ قديمة - استخدم /login-code الأحدث)"""
-    return login_with_code(CodeLoginIn(access_code=data.access_code))
+    return login_with_code(CodeLoginIn(access_code=data.access_code), request)
 
 
 @app.post("/api/auth/logout")

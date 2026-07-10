@@ -660,6 +660,23 @@ function showToast(msg, type="info"){
   setTimeout(()=>{ div.classList.add("out"); setTimeout(()=>div.remove(), 200); }, 2600);
 }
 
+/* =====================================================================
+   حماية من XSS - أي نص كتبه المستخدم (اسم، ملاحظة، رد، تفاصيل...) لازم
+   يعدي على escapeHtml قبل ما يتحط في innerHTML، وعلى jsAttr لو هيتحط
+   جوه onclick="...('...')"
+===================================================================== */
+function escapeHtml(str){
+  return String(str ?? "").replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+function jsAttr(str){
+  // آمن لتضمين نص جوه onclick="fn('...')" - بيهرب الباك سلاش والكوتيشن الفردي
+  // الأول (عشان الـ JS string منفسهاش) وبعدين بيعمل HTML escape كامل (عشان الـ HTML attribute)
+  const s = String(str ?? "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+  return escapeHtml(s);
+}
+
 async function api(path, options={}){
   const headers = Object.assign({"Content-Type":"application/json"}, options.headers || {});
   if (TOKEN) headers["Authorization"] = "Bearer " + TOKEN;
@@ -851,8 +868,8 @@ async function toggleNotificationsPanel(){
     <div class="notif-item ${n.is_read?'read':'unread'}" onclick="markNotificationRead(${n.id}, this)">
       <span class="notif-item-dot"></span>
       <div style="flex:1;min-width:0;">
-        <div class="notif-item-title">${n.title}</div>
-        ${n.body?`<div class="notif-item-body">${n.body}</div>`:""}
+        <div class="notif-item-title">${escapeHtml(n.title)}</div>
+        ${n.body?`<div class="notif-item-body">${escapeHtml(n.body)}</div>`:""}
         <div class="notif-item-time">${timeAgoAr(n.created_at)}</div>
       </div>
     </div>
@@ -893,7 +910,7 @@ function openAccountModal(){
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;">
       <div class="avatar" style="width:42px;height:42px;font-size:16px;">${(SESSION.full_name||"?").trim()[0]||"?"}</div>
       <div>
-        <div style="font-weight:700;font-size:14px;">${SESSION.full_name}</div>
+        <div style="font-weight:700;font-size:14px;">${escapeHtml(SESSION.full_name)}</div>
         <div style="font-size:12px;color:var(--text-3);">${ROLE_LABELS[SESSION.role]||""}</div>
       </div>
     </div>
@@ -1238,8 +1255,8 @@ function renderTodayScheduleCard(todayName, items){
             ${it.end_time?`<div style="font-size:10.5px;color:var(--text-3);">${it.end_time}</div>`:""}
           </div>
           <div style="flex:1;">
-            <div style="font-weight:700;font-size:13.5px;">${it.title || "حصة"}</div>
-            <div style="font-size:12px;color:var(--text-3);">${it.group_name ? `مجموعة: ${it.group_name}${it.stage_name?` (${it.stage_name})`:''}` : "موعد عام"}${it.notes?(' • '+it.notes):''}</div>
+            <div style="font-weight:700;font-size:13.5px;">${escapeHtml(it.title || "حصة")}</div>
+            <div style="font-size:12px;color:var(--text-3);">${it.group_name ? `مجموعة: ${escapeHtml(it.group_name)}${it.stage_name?` (${escapeHtml(it.stage_name)})`:''}` : "موعد عام"}${it.notes?(' • '+escapeHtml(it.notes)):''}</div>
           </div>
           <i data-lucide="arrow-left" style="width:14px;height:14px;color:var(--text-3);flex-shrink:0;"></i>
         </div>
@@ -1260,7 +1277,7 @@ async function renderDashboardPage(){
   const c = document.getElementById("pageContainer");
   c.innerHTML = `
     <div class="page-header">
-      <div><h1>أهلاً، ${SESSION.full_name} 👋</h1><p>نظرة سريعة على حالة المنصة دلوقتي</p></div>
+      <div><h1>أهلاً، ${escapeHtml(SESSION.full_name)} 👋</h1><p>نظرة سريعة على حالة المنصة دلوقتي</p></div>
     </div>
     <div class="stats-grid">
       <div class="stat-card"><div class="stat-top"><div class="stat-icon teal"><i data-lucide="users" style="width:18px;height:18px;"></i></div></div>
@@ -1281,7 +1298,7 @@ async function renderDashboardPage(){
           ${groups.slice(0,8).map(g=>`
             <tr>
               <td class="td-name">${g.name}</td>
-              <td><span class="badge badge-teal">${g.stage_name}</span></td>
+              <td><span class="badge badge-teal">${escapeHtml(g.stage_name)}</span></td>
               <td>${g.governorate_name}</td>
               <td>${g.supervisor_name ? g.supervisor_name : `<span class="badge badge-gray">بدون مشرف</span>`}</td>
               <td>${g.students_count}</td>
@@ -1353,7 +1370,7 @@ async function renderTeacherDashboardPage(){
   c.innerHTML = `
     <div class="student-hero">
       <div>
-        <h1>👋 أهلاً، ${SESSION.full_name}</h1>
+        <h1>👋 أهلاً، ${escapeHtml(SESSION.full_name)}</h1>
         <p>نظرة تنفيذية سريعة على أداء المنصة دلوقتي</p>
       </div>
       <div class="student-hero-ic"><i data-lucide="presentation" style="width:26px;height:26px;"></i></div>
@@ -1439,7 +1456,7 @@ async function renderTeacherAnalyticsPage(){
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;max-width:700px;">
       ${stages.map(st=>`
-        <div class="stat-card" style="cursor:pointer;border:2px solid transparent;transition:border-color .15s;" onclick="selectAnalyticsStage(${st.id}, '${st.name.replace(/'/g,"\\'")}')">
+        <div class="stat-card" style="cursor:pointer;border:2px solid transparent;transition:border-color .15s;" onclick="selectAnalyticsStage(${st.id}, '${jsAttr(st.name)}')">
           <div class="stat-top"><div class="stat-icon teal"><i data-lucide="graduation-cap" style="width:18px;height:18px;"></i></div></div>
           <div class="stat-value" style="font-size:15px;">${st.name}</div>
           <div class="stat-label">اختار للتحليل</div>
@@ -1539,7 +1556,7 @@ async function renderAnalyticsStageView(){
     <div class="table-card" style="padding:14px 16px;margin-bottom:16px;">
       <div style="font-weight:700;font-size:13.5px;margin-bottom:10px;display:flex;align-items:center;gap:6px;"><i data-lucide="alert-triangle" style="width:15px;height:15px;color:var(--warning);"></i> مجموعات تحتاج متابعة (${needsAttention.length})</div>
       ${needsAttention.map(g=>`
-        <div class="alert-card" style="cursor:pointer;" onclick="selectAnalyticsGroup(${g.id},'${g.name.replace(/'/g,"\\'")}')">
+        <div class="alert-card" style="cursor:pointer;" onclick="selectAnalyticsGroup(${g.id},'${jsAttr(g.name)}')">
           <i data-lucide="alert-circle" style="width:15px;height:15px;color:var(--warning);flex-shrink:0;"></i>
           <div style="flex:1;font-size:12.5px;"><b>${g.name}</b> — ${g.avg_score_percent!=null&&g.avg_score_percent<50?`درجات ${g.avg_score_percent}% ↓`:""}${g.attendance_rate!=null&&g.attendance_rate<50?` حضور ${g.attendance_rate}% ↓`:""}</div>
           <i data-lucide="chevron-left" style="width:14px;height:14px;color:var(--text-3);"></i>
@@ -1603,7 +1620,7 @@ async function renderAnalyticsStageView(){
             <td>${g.avg_score_percent!=null?`<div style="display:flex;align-items:center;gap:6px;"><div class="kpi-progress" style="width:55px;margin-top:0;"><div style="width:${g.avg_score_percent}%;"></div></div>${g.avg_score_percent}%</div>`:'—'}</td>
             <td>${g.attendance_rate!=null?`<div style="display:flex;align-items:center;gap:6px;"><div class="kpi-progress" style="width:55px;margin-top:0;"><div style="width:${g.attendance_rate}%;background:var(--success);"></div></div>${g.attendance_rate}%</div>`:'—'}</td>
             <td>${g.commitment_rate!=null?g.commitment_rate+'%':'—'}</td>
-            <td><button class="btn btn-ghost btn-sm" onclick="selectAnalyticsGroup(${g.id},'${g.name.replace(/'/g,"\\'")}')"><i data-lucide="eye" style="width:13px;height:13px;"></i></button></td>
+            <td><button class="btn btn-ghost btn-sm" onclick="selectAnalyticsGroup(${g.id},'${jsAttr(g.name)}')"><i data-lucide="eye" style="width:13px;height:13px;"></i></button></td>
           </tr>`).join("")}
         </tbody>
       </table></div>
@@ -1697,7 +1714,7 @@ async function renderAnalyticsGroupView(){
       <div class="stat-card">
         <div class="stat-top"><div class="stat-icon ${data.rank.position===1?'amber':'teal'}"><i data-lucide="trophy" style="width:18px;height:18px;"></i></div></div>
         <div class="stat-value">${data.rank.position!=null?'#'+data.rank.position:'—'}</div>
-        <div class="stat-label">ترتيبها بين ${data.rank.total_groups} مجموعة في ${g.stage_name}</div>
+        <div class="stat-label">ترتيبها بين ${data.rank.total_groups} مجموعة في ${escapeHtml(g.stage_name)}</div>
       </div>
     </div>
 
@@ -1923,7 +1940,7 @@ async function loadReportData(){
         <div class="table-wrap"><table>
           <thead><tr><th>#</th><th>الطالب</th><th>المجموعة</th><th>متوسط الدرجات</th></tr></thead>
           <tbody>${data.top_students.map((s,idx)=>`
-            <tr><td>${idx+1}</td><td class="td-name">${s.full_name}</td><td>${s.group_name}</td><td>${s.avg_score_percent}%</td></tr>`).join("")||`<tr><td colspan="4" style="text-align:center;color:var(--text-3);">لا يوجد بيانات</td></tr>`}
+            <tr><td>${idx+1}</td><td class="td-name">${escapeHtml(s.full_name)}</td><td>${escapeHtml(s.group_name)}</td><td>${s.avg_score_percent}%</td></tr>`).join("")||`<tr><td colspan="4" style="text-align:center;color:var(--text-3);">لا يوجد بيانات</td></tr>`}
           </tbody>
         </table></div>
       </div>
@@ -1932,7 +1949,7 @@ async function loadReportData(){
         <div class="table-wrap"><table>
           <thead><tr><th>#</th><th>الطالب</th><th>المجموعة</th><th>نسبة الحضور</th></tr></thead>
           <tbody>${data.most_absent_students.map((s,idx)=>`
-            <tr><td>${idx+1}</td><td class="td-name">${s.full_name}</td><td>${s.group_name}</td><td style="color:var(--danger);">${s.attendance_rate}%</td></tr>`).join("")||`<tr><td colspan="4" style="text-align:center;color:var(--text-3);">لا يوجد بيانات</td></tr>`}
+            <tr><td>${idx+1}</td><td class="td-name">${escapeHtml(s.full_name)}</td><td>${escapeHtml(s.group_name)}</td><td style="color:var(--danger);">${s.attendance_rate}%</td></tr>`).join("")||`<tr><td colspan="4" style="text-align:center;color:var(--text-3);">لا يوجد بيانات</td></tr>`}
           </tbody>
         </table></div>
       </div>
@@ -2219,8 +2236,8 @@ async function renderTeacherSchedulePage(){
           <div class="schedule-item">
             <div class="schedule-time">${it.start_time}${it.end_time?` - ${it.end_time}`:""}</div>
             <div class="schedule-body">
-              <b>${it.title || "حصة"}</b>
-              <div class="sub">${it.group_name ? `مجموعة: ${it.group_name}${it.stage_name?` (${it.stage_name})`:''}` : "موعد عام"} ${it.notes?(' • '+it.notes):''}</div>
+              <b>${escapeHtml(it.title || "حصة")}</b>
+              <div class="sub">${it.group_name ? `مجموعة: ${escapeHtml(it.group_name)}${it.stage_name?` (${escapeHtml(it.stage_name)})`:''}` : "موعد عام"} ${it.notes?(' • '+escapeHtml(it.notes)):''}</div>
             </div>
           </div>
         `).join("")}
@@ -2254,8 +2271,8 @@ async function renderGroupsPage(){
         <tbody>
           ${groups.map(g=>`
             <tr>
-              <td class="td-name">${g.name}${g.notes?`<div class="td-sub">${g.notes}</div>`:""}</td>
-              <td><span class="badge badge-teal">${g.stage_name}</span></td>
+              <td class="td-name">${g.name}${g.notes?`<div class="td-sub">${escapeHtml(g.notes)}</div>`:""}</td>
+              <td><span class="badge badge-teal">${escapeHtml(g.stage_name)}</span></td>
               <td>${g.governorate_name}</td>
               <td>${g.supervisor_name ? `<span class="badge badge-amber">${g.supervisor_name}</span>` : `<span class="badge badge-gray">بدون مشرف</span>`}</td>
               <td>${g.students_count}</td>
@@ -2265,7 +2282,7 @@ async function renderGroupsPage(){
                 <button class="action-btn" title="تعيين مشرف" onclick="openAssignSupervisorModal(${g.id}, ${g.supervisor_id||'null'})"><i data-lucide="shield-check" style="width:15px;height:15px;"></i></button>
                 <span class="act-divider"></span>
                 <button class="act-btn act-edit" title="تعديل بيانات المجموعة" onclick="openEditGroupModal(${g.id})"><i data-lucide="pencil" style="width:13px;height:13px;"></i>تعديل</button>
-                <button class="act-btn act-del" title="حذف المجموعة نهائيًا" onclick="deleteGroup(${g.id}, '${g.name.replace(/'/g,"")}')"><i data-lucide="trash-2" style="width:13px;height:13px;"></i>حذف</button>
+                <button class="act-btn act-del" title="حذف المجموعة نهائيًا" onclick="deleteGroup(${g.id}, '${jsAttr(g.name)}')"><i data-lucide="trash-2" style="width:13px;height:13px;"></i>حذف</button>
               </td>` : ""}
             </tr>`).join("") || `<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:30px;">لا يوجد مجموعات بعد</td></tr>`}
         </tbody>
@@ -2283,7 +2300,7 @@ function govOptions(selected){
   return CACHE_GOVS.map(g=>`<option value="${g.id}" ${g.id==selected?"selected":""}>${g.name}</option>`).join("");
 }
 function supervisorOptions(selected){
-  return `<option value="">بدون مشرف</option>` + CACHE_SUPERVISORS.map(s=>`<option value="${s.id}" ${s.id==selected?"selected":""}>${s.full_name}</option>`).join("");
+  return `<option value="">بدون مشرف</option>` + CACHE_SUPERVISORS.map(s=>`<option value="${s.id}" ${s.id==selected?"selected":""}>${escapeHtml(s.full_name)}</option>`).join("");
 }
 
 /* =====================================================================
@@ -2436,7 +2453,7 @@ async function openEditGroupModal(id){
       <div class="form-group"><label class="form-label">سعر الحصة</label><input class="form-input" id="f_g_price" type="number" value="${g.session_price||''}"></div>
       <div class="form-group"><label class="form-label">المشرف المسؤول</label><select class="form-select" id="f_g_sup">${supervisorOptions(g.supervisor_id)}</select></div>
     </div>
-    <div class="form-group"><label class="form-label">ملاحظات</label><textarea class="form-textarea" id="f_g_notes">${g.notes||''}</textarea></div>
+    <div class="form-group"><label class="form-label">ملاحظات</label><textarea class="form-textarea" id="f_g_notes">${escapeHtml(g.notes||'')}</textarea></div>
     <div class="form-group">
       <label class="form-label">مواعيد المجموعة (الأيام والأوقات)</label>
       <div id="groupSlotsWrap"></div>
@@ -2526,26 +2543,26 @@ async function renderStudentsPage(){
           ${students.map(s=>`
             <tr data-search="${(s.id+' '+s.full_name).toLowerCase()}">
               <td style="color:var(--text-3);font-family:monospace;">#${s.id}</td>
-              <td class="td-name">${s.full_name}</td>
-              <td><span class="badge badge-teal">${s.group_name}</span></td>
-              <td>${s.phone||"—"}</td>
-              <td>${s.parent_phone||"—"}</td>
+              <td class="td-name">${escapeHtml(s.full_name)}</td>
+              <td><span class="badge badge-teal">${escapeHtml(s.group_name)}</span></td>
+              <td>${escapeHtml(s.phone||"—")}</td>
+              <td>${escapeHtml(s.parent_phone||"—")}</td>
               ${canSeeCodes ? `<td><code style="font-size:12px;background:var(--surface-3);padding:3px 8px;border-radius:6px;">${s.attendance_code||"—"}</code></td>` : ""}
               ${canManage ? `
               <td><code style="font-size:12px;background:var(--surface-3);padding:3px 8px;border-radius:6px;">${s.access_code||"—"}</code></td>
               <td>${s.is_active ? `<span class="badge badge-green">مفعّل</span>` : `<span class="badge badge-red">موقوف</span>`}</td>` : ""}
               <td class="td-actions">
-                ${(s.phone || s.parent_phone) ? `<button class="action-btn" title="تواصل" onclick="openContactPopup('${s.full_name.replace(/'/g,"")}', '${s.phone||""}', '${s.parent_phone||""}')"><i data-lucide="phone" style="width:15px;height:15px;"></i></button>` : ""}
+                ${(s.phone || s.parent_phone) ? `<button class="action-btn" title="تواصل" onclick="openContactPopup('${jsAttr(s.full_name)}', '${jsAttr(s.phone||"")}', '${jsAttr(s.parent_phone||"")}')"><i data-lucide="phone" style="width:15px;height:15px;"></i></button>` : ""}
                 ${canViewExtra ? `
-                <button class="action-btn" title="ملاحظات سلوكية" onclick="openBehaviorNotesModal(${s.id}, '${s.full_name.replace(/'/g,"")}')"><i data-lucide="message-square-text" style="width:15px;height:15px;"></i></button>
-                <button class="action-btn" title="تقرير شهري" onclick="openMonthlyReportModal(${s.id}, '${s.full_name.replace(/'/g,"")}')"><i data-lucide="file-bar-chart" style="width:15px;height:15px;"></i></button>` : ""}
+                <button class="action-btn" title="ملاحظات سلوكية" onclick="openBehaviorNotesModal(${s.id}, '${jsAttr(s.full_name)}')"><i data-lucide="message-square-text" style="width:15px;height:15px;"></i></button>
+                <button class="action-btn" title="تقرير شهري" onclick="openMonthlyReportModal(${s.id}, '${jsAttr(s.full_name)}')"><i data-lucide="file-bar-chart" style="width:15px;height:15px;"></i></button>` : ""}
                 ${canManage ? `
                 <button class="action-btn" title="كود دخول جديد" onclick="resetStudentCode(${s.id})"><i data-lucide="refresh-cw" style="width:15px;height:15px;"></i></button>
                 <button class="action-btn" title="كود حضور جديد" onclick="resetStudentAttendanceCode(${s.id})"><i data-lucide="hash" style="width:15px;height:15px;"></i></button>
                 <span class="act-divider"></span>
                 <button class="act-btn ${s.is_active?'act-pause':'act-play'}" title="${s.is_active?'إيقاف الطالب':'تفعيل الطالب'}" onclick="toggleStudentActive(${s.id})"><i data-lucide="${s.is_active?'pause':'play'}" style="width:13px;height:13px;"></i>${s.is_active?'إيقاف':'تفعيل'}</button>
                 <button class="act-btn act-edit" title="تعديل بيانات الطالب" onclick="openEditStudentModal(${s.id})"><i data-lucide="pencil" style="width:13px;height:13px;"></i>تعديل</button>
-                <button class="act-btn act-del" title="حذف الطالب نهائيًا" onclick="deleteStudent(${s.id}, '${s.full_name.replace(/'/g,"")}')"><i data-lucide="trash-2" style="width:13px;height:13px;"></i>حذف</button>` : ""}
+                <button class="act-btn act-del" title="حذف الطالب نهائيًا" onclick="deleteStudent(${s.id}, '${jsAttr(s.full_name)}')"><i data-lucide="trash-2" style="width:13px;height:13px;"></i>حذف</button>` : ""}
               </td>
             </tr>`).join("") || `<tr><td colspan="8" style="text-align:center;color:var(--text-3);padding:30px;">لا يوجد طلاب بعد</td></tr>`}
         </tbody>
@@ -2584,9 +2601,9 @@ function openContactPopup(name, phone, parentPhone){
   openModal(`التواصل مع ${name}`, `
     ${rows.map(r => `
       <div style="border:1px solid var(--border);border-radius:var(--radius-md);padding:14px;margin-bottom:10px;">
-        <div style="font-size:12.5px;color:var(--text-3);margin-bottom:8px;">${r.label} — ${r.phone}</div>
+        <div style="font-size:12.5px;color:var(--text-3);margin-bottom:8px;">${escapeHtml(r.label)} — ${escapeHtml(r.phone)}</div>
         <div style="display:flex;gap:8px;">
-          <a class="btn btn-ghost btn-sm" style="flex:1;justify-content:center;" href="tel:${r.phone}"><i data-lucide="phone" style="width:14px;height:14px;"></i> اتصال</a>
+          <a class="btn btn-ghost btn-sm" style="flex:1;justify-content:center;" href="tel:${encodeURIComponent(r.phone)}"><i data-lucide="phone" style="width:14px;height:14px;"></i> اتصال</a>
           <a class="btn btn-primary btn-sm" style="flex:1;justify-content:center;background:#25D366;" href="https://wa.me/${normalizePhoneForWa(r.phone)}" target="_blank"><i data-lucide="message-circle" style="width:14px;height:14px;"></i> واتساب</a>
         </div>
       </div>
@@ -2595,7 +2612,7 @@ function openContactPopup(name, phone, parentPhone){
 }
 
 function groupOptionsAll(selected){
-  return CACHE_ALL_GROUPS.map(g=>`<option value="${g.id}" ${g.id==selected?"selected":""}>${g.name} (${g.stage_name} - ${g.governorate_name})</option>`).join("");
+  return CACHE_ALL_GROUPS.map(g=>`<option value="${g.id}" ${g.id==selected?"selected":""}>${g.name} (${escapeHtml(g.stage_name)} - ${g.governorate_name})</option>`).join("");
 }
 
 function openAddStudentModal(){
@@ -2650,13 +2667,13 @@ async function openEditStudentModal(id){
   const s = students.find(x=>x.id===id);
   if (!s) return;
   openModal("تعديل بيانات الطالب", `
-    <div class="form-group"><label class="form-label">اسم الطالب</label><input class="form-input" id="f_s_name" value="${s.full_name}"></div>
+    <div class="form-group"><label class="form-label">اسم الطالب</label><input class="form-input" id="f_s_name" value="${escapeHtml(s.full_name)}"></div>
     <div class="form-group"><label class="form-label">المجموعة</label><select class="form-select" id="f_s_group">${groupOptionsAll(s.group_id)}</select></div>
     <div class="form-row-2">
-      <div class="form-group"><label class="form-label">رقم هاتف الطالب</label><input class="form-input" id="f_s_phone" value="${s.phone||''}"></div>
-      <div class="form-group"><label class="form-label">رقم هاتف ولي الأمر</label><input class="form-input" id="f_s_pphone" value="${s.parent_phone||''}"></div>
+      <div class="form-group"><label class="form-label">رقم هاتف الطالب</label><input class="form-input" id="f_s_phone" value="${escapeHtml(s.phone||'')}"></div>
+      <div class="form-group"><label class="form-label">رقم هاتف ولي الأمر</label><input class="form-input" id="f_s_pphone" value="${escapeHtml(s.parent_phone||'')}"></div>
     </div>
-    <div class="form-group"><label class="form-label">ملاحظات</label><textarea class="form-textarea" id="f_s_notes">${s.notes||''}</textarea></div>
+    <div class="form-group"><label class="form-label">ملاحظات</label><textarea class="form-textarea" id="f_s_notes">${escapeHtml(s.notes||'')}</textarea></div>
   `, `
     <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
     <button class="btn btn-primary" onclick="submitEditStudent(${id})"><i data-lucide="check" style="width:14px;height:14px;"></i> حفظ التغييرات</button>
@@ -2728,20 +2745,20 @@ async function renderUsersPage(role){
           ${users.map(u=>`
             <tr>
               <td style="color:var(--text-3);font-family:monospace;">#${u.id}</td>
-              <td class="td-name">${u.full_name}</td>
-              <td><code style="font-size:12.5px;">${u.username}</code></td>
+              <td class="td-name">${escapeHtml(u.full_name)}</td>
+              <td><code style="font-size:12.5px;">${escapeHtml(u.username)}</code></td>
               <td><code style="font-size:12px;background:var(--surface-3);padding:3px 8px;border-radius:6px;">${u.access_code||"—"}</code></td>
-              <td>${u.phone||"—"}</td>
+              <td>${escapeHtml(u.phone||"—")}</td>
               ${role==='supervisor' ? `
               <td>${u.governorate_name ? `<span class="badge badge-blue"><i data-lucide="map-pin" style="width:11px;height:11px;"></i> ${u.governorate_name}</span>` : `<span class="badge badge-gray">بدون محافظة</span>`}</td>
               <td>${(u.groups&&u.groups.length) ? u.groups.map(g=>`<span class="badge badge-teal" style="margin:2px;">${g.name}</span>`).join("") : `<span class="badge badge-gray">بدون مجموعة</span>`}</td>` : ''}
               <td>${u.is_active ? `<span class="badge badge-green">مفعّل</span>` : `<span class="badge badge-red">موقوف</span>`}</td>
               ${canManage ? `
               <td class="td-actions">
-                ${u.phone ? `<button class="action-btn" title="تواصل" onclick="openContactPopup('${u.full_name.replace(/'/g,"")}', '${u.phone}')"><i data-lucide="phone" style="width:15px;height:15px;"></i></button><span class="act-divider"></span>` : ""}
+                ${u.phone ? `<button class="action-btn" title="تواصل" onclick="openContactPopup('${jsAttr(u.full_name)}', '${jsAttr(u.phone)}')"><i data-lucide="phone" style="width:15px;height:15px;"></i></button><span class="act-divider"></span>` : ""}
                 <button class="act-btn ${u.is_active?'act-pause':'act-play'}" title="${u.is_active?`إيقاف ${roleLabel}`:`تفعيل ${roleLabel}`}" onclick="toggleUserActive(${u.id}, ${u.is_active}, '${role}')"><i data-lucide="${u.is_active?'pause':'play'}" style="width:13px;height:13px;"></i>${u.is_active?'إيقاف':'تفعيل'}</button>
                 <button class="act-btn act-edit" title="تعديل بيانات ${roleLabel}" onclick="openEditUserModal(${u.id}, '${role}')"><i data-lucide="pencil" style="width:13px;height:13px;"></i>تعديل</button>
-                <button class="act-btn act-del" title="حذف ${roleLabel} نهائيًا" onclick="deleteUser(${u.id}, '${u.full_name.replace(/'/g,"")}', '${role}')"><i data-lucide="trash-2" style="width:13px;height:13px;"></i>حذف</button>
+                <button class="act-btn act-del" title="حذف ${roleLabel} نهائيًا" onclick="deleteUser(${u.id}, '${jsAttr(u.full_name)}', '${role}')"><i data-lucide="trash-2" style="width:13px;height:13px;"></i>حذف</button>
               </td>` : ''}
             </tr>`).join("") || `<tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:30px;">لا يوجد ${roleLabel.replace('ال','')}ين بعد</td></tr>`}
         </tbody>
@@ -2815,9 +2832,9 @@ async function openEditUserModal(id, role){
   if (!u) return;
   if (role === "supervisor" && (!CACHE_GOVS || !CACHE_GOVS.length)) CACHE_GOVS = await loadGovernorates();
   openModal("تعديل البيانات", `
-    <div class="form-group"><label class="form-label">الاسم بالكامل</label><input class="form-input" id="f_u_name" value="${u.full_name}"></div>
+    <div class="form-group"><label class="form-label">الاسم بالكامل</label><input class="form-input" id="f_u_name" value="${escapeHtml(u.full_name)}"></div>
     <div class="form-row-2">
-      <div class="form-group"><label class="form-label">رقم الهاتف</label><input class="form-input" id="f_u_phone" value="${u.phone||''}"></div>
+      <div class="form-group"><label class="form-label">رقم الهاتف</label><input class="form-input" id="f_u_phone" value="${escapeHtml(u.phone||'')}"></div>
       ${role === "supervisor" ? `<div class="form-group"><label class="form-label">المحافظة</label>${renderSearchableSelect("f_u_gov", CACHE_GOVS, u.governorate_id, "دوس واكتب اسم المحافظة...")}</div>` : ""}
     </div>
     <div class="form-group"><label class="form-label">كلمة مرور جديدة (اختياري)</label><input class="form-input" id="f_u_password" placeholder="سيبه فاضي لو مش هتغيّرها"></div>
@@ -2890,8 +2907,8 @@ async function renderSchedulePage(){
           <div class="schedule-item">
             <div class="schedule-time">${it.start_time}${it.end_time?` - ${it.end_time}`:""}</div>
             <div class="schedule-body">
-              <b>${it.title || "حصة"}</b>
-              <div class="sub">${it.group_name ? `مجموعة: ${it.group_name}` : "موعد عام"} ${it.notes?(' • '+it.notes):''}</div>
+              <b>${escapeHtml(it.title || "حصة")}</b>
+              <div class="sub">${it.group_name ? `مجموعة: ${escapeHtml(it.group_name)}` : "موعد عام"} ${it.notes?(' • '+escapeHtml(it.notes)):''}</div>
             </div>
             ${canManage ? `
             <div class="td-actions">
@@ -2956,8 +2973,8 @@ async function openEditScheduleModal(id){
       <div class="form-group"><label class="form-label">من الساعة</label><input class="form-input" id="f_sc_start" type="time" value="${it.start_time}"></div>
       <div class="form-group"><label class="form-label">إلى الساعة</label><input class="form-input" id="f_sc_end" type="time" value="${it.end_time||''}"></div>
     </div>
-    <div class="form-group"><label class="form-label">عنوان الحصة</label><input class="form-input" id="f_sc_title" value="${it.title||''}"></div>
-    <div class="form-group"><label class="form-label">ملاحظات</label><textarea class="form-textarea" id="f_sc_notes">${it.notes||''}</textarea></div>
+    <div class="form-group"><label class="form-label">عنوان الحصة</label><input class="form-input" id="f_sc_title" value="${escapeHtml(it.title||'')}"></div>
+    <div class="form-group"><label class="form-label">ملاحظات</label><textarea class="form-textarea" id="f_sc_notes">${escapeHtml(it.notes||'')}</textarea></div>
   `, `
     <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
     <button class="btn btn-primary" onclick="submitEditSchedule(${id})"><i data-lucide="check" style="width:14px;height:14px;"></i> حفظ</button>
@@ -3013,15 +3030,15 @@ async function renderQuizzesPage(){
               <td class="td-name">
                 <div style="display:flex;align-items:center;gap:8px;">
                   ${q.image_data?`<img src="${q.image_data}" onclick="showImageLightbox('${q.image_data}')" style="width:34px;height:34px;border-radius:6px;object-fit:cover;cursor:pointer;flex-shrink:0;border:1px solid var(--border);">`:""}
-                  <div>${q.title}${q.version_label?` <span class="badge badge-gray">${q.version_label}</span>`:""}${q.description?`<div class="td-sub">${q.description}</div>`:""}</div>
+                  <div>${escapeHtml(q.title)}${q.version_label?` <span class="badge badge-gray">${q.version_label}</span>`:""}${q.description?`<div class="td-sub">${escapeHtml(q.description)}</div>`:""}</div>
                 </div>
               </td>
               <td>${q.quiz_type==='exam' ? `<span class="badge badge-red">📋 امتحان شامل</span>` : `<span class="badge badge-green">📝 كويز</span>`}</td>
-              <td>${q.stage_name ? `<span class="badge badge-blue">${q.stage_name}</span>` : (q.group_name ? `<span class="badge badge-teal">${q.group_name}</span>` : `<span class="badge badge-gray">عام لكل المجموعات</span>`)}</td>
+              <td>${q.stage_name ? `<span class="badge badge-blue">${escapeHtml(q.stage_name)}</span>` : (q.group_name ? `<span class="badge badge-teal">${escapeHtml(q.group_name)}</span>` : `<span class="badge badge-gray">عام لكل المجموعات</span>`)}</td>
               <td>${q.quiz_date||"—"}</td>
               <td>${q.max_score}</td>
               <td class="td-actions">
-                ${canScore ? `<button class="btn btn-ghost btn-sm" onclick="openQuizScoresModal(${q.id}, '${q.title.replace(/'/g,"")}', ${q.max_score})"><i data-lucide="list-checks" style="width:14px;height:14px;"></i> الدرجات</button>` : ""}
+                ${canScore ? `<button class="btn btn-ghost btn-sm" onclick="openQuizScoresModal(${q.id}, '${jsAttr(q.title)}', ${q.max_score})"><i data-lucide="list-checks" style="width:14px;height:14px;"></i> الدرجات</button>` : ""}
                 ${canCreate ? `<button class="action-btn del" onclick="deleteQuiz(${q.id})"><i data-lucide="trash-2" style="width:15px;height:15px;"></i></button>` : ""}
               </td>
             </tr>`).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:30px;">${SESSION.role==="supervisor"?"لا يوجد كويزات أو امتحانات مضافة من المشرف العام لمرحلتك حتى الآن":"لا يوجد كويزات بعد"}</td></tr>`}
@@ -3055,16 +3072,16 @@ async function renderHsQuizzesPage(){
               <td class="td-name">
                 <div style="display:flex;align-items:center;gap:8px;">
                   ${q.image_data?`<img src="${q.image_data}" onclick="showImageLightbox('${q.image_data}')" style="width:34px;height:34px;border-radius:6px;object-fit:cover;cursor:pointer;flex-shrink:0;border:1px solid var(--border);">`:""}
-                  <div>${q.title}${q.version_label?` <span class="badge badge-gray">${q.version_label}</span>`:""}${q.description?`<div class="td-sub">${q.description}</div>`:""}</div>
+                  <div>${escapeHtml(q.title)}${q.version_label?` <span class="badge badge-gray">${q.version_label}</span>`:""}${q.description?`<div class="td-sub">${escapeHtml(q.description)}</div>`:""}</div>
                 </div>
               </td>
               <td>${q.quiz_type==='exam' ? `<span class="badge badge-red">📋 امتحان شامل</span>` : `<span class="badge badge-green">📝 كويز</span>`}</td>
-              <td>${q.stage_name ? `<span class="badge badge-blue">${q.stage_name}</span>` : `<span class="badge badge-gray">عام</span>`}</td>
+              <td>${q.stage_name ? `<span class="badge badge-blue">${escapeHtml(q.stage_name)}</span>` : `<span class="badge badge-gray">عام</span>`}</td>
               <td>${q.session_number ?? "—"}</td>
               <td>${q.quiz_date||"—"}</td>
               <td>${q.max_score}</td>
               <td class="td-actions">
-                <button class="btn btn-ghost btn-sm" onclick="openQuizScoresModal(${q.id}, '${q.title.replace(/'/g,"")}', ${q.max_score})"><i data-lucide="list-checks" style="width:14px;height:14px;"></i> الدرجات</button>
+                <button class="btn btn-ghost btn-sm" onclick="openQuizScoresModal(${q.id}, '${jsAttr(q.title)}', ${q.max_score})"><i data-lucide="list-checks" style="width:14px;height:14px;"></i> الدرجات</button>
                 <button class="action-btn" onclick='openHsQuizModal(${JSON.stringify(q).replace(/'/g,"&#39;")})'><i data-lucide="pencil" style="width:14px;height:14px;"></i></button>
                 <button class="action-btn del" onclick="deleteQuiz(${q.id})"><i data-lucide="trash-2" style="width:15px;height:15px;"></i></button>
               </td>
@@ -3203,7 +3220,7 @@ async function loadSupervisorHomework(groupId){
           <i data-lucide="presentation" style="width:14px;height:14px;color:var(--primary);flex-shrink:0;"></i>
           <b style="font-size:13.5px;">الحصة ${hw.session_number}</b>
           ${hw.session_date?`<span style="font-size:12px;color:var(--text-3);">${hw.session_date}</span>`:""}
-          <span style="font-size:12px;color:var(--text-2);">${hw.description||""}</span>
+          <span style="font-size:12px;color:var(--text-2);">${escapeHtml(hw.description||"")}</span>
           <span class="badge ${doneCount===subs.length&&subs.length?'badge-green':doneCount>0?'badge-amber':'badge-gray'}" style="margin-right:auto;">${doneCount}/${subs.length} سلّموا</span>
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
@@ -3217,7 +3234,7 @@ async function loadSupervisorHomework(groupId){
           <tbody>
             ${subs.map(s=>`
               <tr>
-                <td class="td-name">${s.full_name}</td>
+                <td class="td-name">${escapeHtml(s.full_name)}</td>
                 <td>
                   <div class="seg-toggle">
                     <button class="seg-btn ${s.done?'active-green':''}" onclick="setHomeworkStatus(${hw.id}, ${s.student_id}, true, ${hw.group_id})">✅ تم التسليم</button>
@@ -3379,7 +3396,7 @@ function qsRenderBody(){
               <td>
                 <div class="qs-name-cell">
                   <div class="qs-avatar" style="background:${qsAvatarColor(r.student_id)};"><i data-lucide="user" style="width:15px;height:15px;"></i></div>
-                  <span class="td-name">${r.full_name}</span>
+                  <span class="td-name">${escapeHtml(r.full_name)}</span>
                 </div>
               </td>
               <td>${st.canEdit
@@ -3676,7 +3693,7 @@ async function loadAttendanceTableForSession(groupId, sn){
   tbody.innerHTML = rows.map(r=>`
     <tr data-status="${r.status || 'unmarked'}">
       <td style="color:var(--text-3);font-family:monospace;font-size:12px;">#${r.student_id}</td>
-      <td class="td-name">${r.full_name}</td>
+      <td class="td-name">${escapeHtml(r.full_name)}</td>
       <td>
         <div class="pill-group sm">
           ${Object.keys(ATT_LABELS).map(k=>`<button type="button" class="pill-btn ${r.status===k?'active':''}" data-status="${k}" onclick="saveAttendance('${date}', ${r.student_id}, '${k}', this, '${key}')"><span class="dot"></span>${ATT_LABELS[k]}</button>`).join("")}
@@ -3755,7 +3772,7 @@ async function submitQuickAttendance(groupId, sn){
   const sessionLabel = ATT_SESSION_NAMES[sn] || sn;
   try{
     const res = await api("/api/attendance/by-code", {method:"POST", body: JSON.stringify({access_code: code, session_date: date, status, session_number: sn})});
-    resultEl.innerHTML = `<span class="badge badge-green"><i data-lucide="check" style="width:12px;height:12px;"></i> "${res.student_name}" - ${ATT_LABELS[status]} - الحصة ${sessionLabel}</span>`;
+    resultEl.innerHTML = `<span class="badge badge-green"><i data-lucide="check" style="width:12px;height:12px;"></i> "${escapeHtml(res.student_name)}" - ${ATT_LABELS[status]} - الحصة ${sessionLabel}</span>`;
     codeInput.value = "";
     codeInput.focus();
     icons();
@@ -3985,17 +4002,17 @@ async function renderMyGroupPage(){
     </div>
     ${groups.map(g=>`
       <div class="table-card">
-        <div class="toolbar"><b style="font-size:14px;">${g.name}</b><span class="badge badge-teal" style="margin-right:6px;">${g.stage_name}</span><span class="badge badge-gray">${g.governorate_name}</span></div>
+        <div class="toolbar"><b style="font-size:14px;">${g.name}</b><span class="badge badge-teal" style="margin-right:6px;">${escapeHtml(g.stage_name)}</span><span class="badge badge-gray">${g.governorate_name}</span></div>
         <div class="table-wrap"><table>
           <thead><tr><th>#</th><th>الطالب</th><th>رقم الهاتف</th><th>ولي الأمر</th><th></th></tr></thead>
           <tbody>
             ${allStudents.filter(s=>s.group_id===g.id).map(s=>`
               <tr>
                 <td style="color:var(--text-3);font-family:monospace;">#${s.id}</td>
-                <td class="td-name">${s.full_name}</td><td>${s.phone||"—"}</td><td>${s.parent_phone||"—"}</td>
+                <td class="td-name">${escapeHtml(s.full_name)}</td><td>${escapeHtml(s.phone||"—")}</td><td>${escapeHtml(s.parent_phone||"—")}</td>
                 <td class="td-actions">
-                  ${(s.phone || s.parent_phone) ? `<button class="action-btn" title="تواصل" onclick="openContactPopup('${s.full_name.replace(/'/g,"")}', '${s.phone||""}', '${s.parent_phone||""}')"><i data-lucide="phone" style="width:15px;height:15px;"></i></button>` : ""}
-                  <button class="action-btn" title="ملاحظات سلوكية" onclick="openBehaviorNotesModal(${s.id}, '${s.full_name.replace(/'/g,"")}')"><i data-lucide="message-square-text" style="width:15px;height:15px;"></i></button>
+                  ${(s.phone || s.parent_phone) ? `<button class="action-btn" title="تواصل" onclick="openContactPopup('${jsAttr(s.full_name)}', '${jsAttr(s.phone||"")}', '${jsAttr(s.parent_phone||"")}')"><i data-lucide="phone" style="width:15px;height:15px;"></i></button>` : ""}
+                  <button class="action-btn" title="ملاحظات سلوكية" onclick="openBehaviorNotesModal(${s.id}, '${jsAttr(s.full_name)}')"><i data-lucide="message-square-text" style="width:15px;height:15px;"></i></button>
                 </td>
               </tr>
             `).join("") || `<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:20px;">لا يوجد طلاب في المجموعة دي بعد</td></tr>`}
@@ -4042,7 +4059,7 @@ async function renderStudentDashboardPage(){
         <div class="student-group-label">مجموعتي</div>
         <div class="student-group-name">${groupInfo.name}</div>
         <div class="student-group-badges">
-          <span class="student-group-badge">${groupInfo.stage_name}</span>
+          <span class="student-group-badge">${escapeHtml(groupInfo.stage_name)}</span>
           <span class="student-group-badge">${groupInfo.governorate_name}</span>
         </div>
         <div class="student-group-meta">
@@ -4084,10 +4101,10 @@ async function renderStudentDashboardPage(){
           <i data-lucide="trophy" style="width:18px;height:18px;color:var(--warning);"></i>
         </div>
         <div style="flex:1;">
-          <div style="font-weight:800;font-size:14px;">${ranking.message_title}</div>
+          <div style="font-weight:800;font-size:14px;">${escapeHtml(ranking.message_title)}</div>
         </div>
       </div>
-      <div style="font-size:12.5px;color:var(--text-2);line-height:1.7;margin-bottom:12px;">${ranking.message_body}</div>
+      <div style="font-size:12.5px;color:var(--text-2);line-height:1.7;margin-bottom:12px;">${escapeHtml(ranking.message_body)}</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;">
         <div style="flex:1;min-width:130px;background:var(--surface);border-radius:var(--radius-md);padding:10px 12px;text-align:center;">
           <div style="font-size:18px;font-weight:800;color:var(--primary);">${ranking.rank_by_score ? `${ranking.rank_by_score} / ${ranking.total_with_scores}` : "—"}</div>
@@ -4104,7 +4121,7 @@ async function renderStudentDashboardPage(){
         ${ranking.top3.map((t,i)=>`
           <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;padding:3px 0;">
             <span>${["🥇","🥈","🥉"][i]||""}</span>
-            <span style="flex:1;">${t.full_name}</span>
+            <span style="flex:1;">${escapeHtml(t.full_name)}</span>
             <span style="color:var(--text-3);">${t.avg_score_percent}%</span>
           </div>
         `).join("")}
@@ -4117,7 +4134,7 @@ async function renderStudentDashboardPage(){
       <div class="table-wrap"><table>
         <thead><tr><th>الكويز</th><th>التاريخ</th><th>الدرجة</th></tr></thead>
         <tbody>
-          ${scores.slice(0,6).map(s=>`<tr><td class="td-name">${s.title}</td><td>${s.quiz_date||"—"}</td><td>${s.score??"—"} / ${s.max_score}</td></tr>`).join("")}
+          ${scores.slice(0,6).map(s=>`<tr><td class="td-name">${escapeHtml(s.title)}</td><td>${s.quiz_date||"—"}</td><td>${s.score??"—"} / ${s.max_score}</td></tr>`).join("")}
         </tbody>
       </table></div>` : `
       <div class="empty-state">
@@ -4275,7 +4292,7 @@ async function renderMyScoresPage(){
           ${scores.map(s=>{
             const pct = s.score!=null ? Math.round((s.score/s.max_score)*100) : null;
             return `<tr>
-              <td class="td-name">${s.title}</td><td>${s.quiz_date||"—"}</td>
+              <td class="td-name">${escapeHtml(s.title)}</td><td>${s.quiz_date||"—"}</td>
               <td>${s.score??"—"} / ${s.max_score}</td>
               <td>${pct!=null ? `<span class="badge ${pct>=50?'badge-green':'badge-red'}">${pct}%</span>` : "—"}</td>
             </tr>`;
@@ -4296,7 +4313,7 @@ async function renderMyAttendancePage(){
         <thead><tr><th>التاريخ</th><th>الحالة</th><th>ملاحظات</th></tr></thead>
         <tbody>
           ${attendance.map(a=>`
-            <tr><td class="td-name">${a.session_date}</td><td><span class="badge ${ATT_BADGE[a.status]}">${ATT_LABELS[a.status]}</span></td><td>${a.notes||"—"}</td></tr>
+            <tr><td class="td-name">${a.session_date}</td><td><span class="badge ${ATT_BADGE[a.status]}">${ATT_LABELS[a.status]}</span></td><td>${escapeHtml(a.notes||"—")}</td></tr>
           `).join("") || `<tr><td colspan="3" style="text-align:center;color:var(--text-3);padding:30px;">لا يوجد سجل حضور بعد</td></tr>`}
         </tbody>
       </table></div>
@@ -4350,11 +4367,11 @@ async function loadMyHomework(){
       </div>
       <div style="padding:14px 16px;">
         <div style="font-size:12px;font-weight:700;color:var(--text-3);margin-bottom:6px;">الواجب</div>
-        <div style="font-size:13.5px;color:var(--text);margin-bottom:${mine && mine.notes ? '12px':'0'};">${hw.description||'واجب الحصة'}</div>
+        <div style="font-size:13.5px;color:var(--text);margin-bottom:${mine && mine.notes ? '12px':'0'};">${escapeHtml(hw.description||'واجب الحصة')}</div>
         ${mine && mine.notes ? `
         <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:10px 14px;border-right:3px solid var(--primary);">
           <div style="font-size:11px;font-weight:700;color:var(--text-3);margin-bottom:3px;">ملاحظة مشرفك</div>
-          <div style="font-size:13px;color:var(--text);">${mine.notes}</div>
+          <div style="font-size:13px;color:var(--text);">${escapeHtml(mine.notes)}</div>
         </div>` : ""}
       </div>
     </div>`;
@@ -4398,7 +4415,7 @@ async function renderMyBoardPage(){
 
   const c = document.getElementById("pageContainer");
   c.innerHTML = `
-    <div class="page-header"><div><h1>سبورة مجموعتي</h1><p>صور شرح كل حصة وواجباتها في مجموعتك: ${SESSION.group_name||''}</p></div></div>
+    <div class="page-header"><div><h1>سبورة مجموعتي</h1><p>صور شرح كل حصة وواجباتها في مجموعتك: ${escapeHtml(SESSION.group_name||'')}</p></div></div>
     <div id="myBoardWrap">
       ${sessions.length ? sessions.map((sn, idx)=>{
         const sec = bySession[sn];
@@ -4423,7 +4440,7 @@ async function renderMyBoardPage(){
             ${hw ? `
             <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:12px 16px;margin:12px 16px 0;border-right:3px solid var(--primary);">
               <div style="font-size:12px;font-weight:700;color:var(--text-3);margin-bottom:4px;">الواجب</div>
-              <div style="font-size:13.5px;color:var(--text);">${hw.description||'واجب الحصة'}</div>
+              <div style="font-size:13.5px;color:var(--text);">${escapeHtml(hw.description||'واجب الحصة')}</div>
             </div>` : ""}
             ${sec.imgs.length ? `
             <div class="cards-grid" style="padding:14px 16px;">
@@ -4495,12 +4512,12 @@ async function loadMyRequests(){
         <b style="font-size:13.5px;">${REQUEST_TYPE_LABELS[r.request_type]||r.request_type}</b>
         <span class="badge ${REQUEST_STATUS_BADGE[r.status]||'badge-gray'}" style="margin-right:auto;">${REQUEST_STATUS_LABELS[r.status]||r.status}</span>
       </div>
-      ${r.details?`<div style="font-size:12.5px;color:var(--text-2);margin-bottom:8px;">${r.details}</div>`:""}
+      ${r.details?`<div style="font-size:12.5px;color:var(--text-2);margin-bottom:8px;">${escapeHtml(r.details)}</div>`:""}
       <div style="font-size:11px;color:var(--text-3);">قُدّم بتاريخ ${(r.created_at||"").slice(0,16).replace("T"," ")}</div>
       ${r.supervisor_reply?`
         <div style="margin-top:10px;padding:10px 12px;background:var(--surface-2);border-radius:var(--radius-md);border-right:3px solid var(--primary);">
           <div style="font-size:11.5px;color:var(--text-3);margin-bottom:4px;">رد المشرف:</div>
-          <div style="font-size:12.5px;">${r.supervisor_reply}</div>
+          <div style="font-size:12.5px;">${escapeHtml(r.supervisor_reply)}</div>
         </div>`:""}
     </div>
   `).join("");
@@ -4586,16 +4603,16 @@ async function loadStudentRequestsList(){
     <div class="table-card" style="padding:16px 18px;margin-bottom:12px;">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
         <i data-lucide="${REQUEST_TYPE_ICONS[r.request_type]||'message-square'}" style="width:16px;height:16px;color:var(--primary);flex-shrink:0;"></i>
-        <b style="font-size:13.5px;">${r.student_name}</b>
-        <span style="font-size:12px;color:var(--text-3);">${REQUEST_TYPE_LABELS[r.request_type]||r.request_type} • ${r.group_name}</span>
+        <b style="font-size:13.5px;">${escapeHtml(r.student_name)}</b>
+        <span style="font-size:12px;color:var(--text-3);">${REQUEST_TYPE_LABELS[r.request_type]||r.request_type} • ${escapeHtml(r.group_name)}</span>
         <span class="badge ${REQUEST_STATUS_BADGE[r.status]||'badge-gray'}" style="margin-right:auto;">${REQUEST_STATUS_LABELS[r.status]||r.status}</span>
       </div>
-      ${r.details?`<div style="font-size:12.5px;color:var(--text-2);margin-bottom:8px;">${r.details}</div>`:""}
+      ${r.details?`<div style="font-size:12.5px;color:var(--text-2);margin-bottom:8px;">${escapeHtml(r.details)}</div>`:""}
       <div style="font-size:11px;color:var(--text-3);margin-bottom:10px;">قُدّم بتاريخ ${(r.created_at||"").slice(0,16).replace("T"," ")}</div>
       ${r.supervisor_reply?`
         <div style="margin-bottom:10px;padding:10px 12px;background:var(--surface-2);border-radius:var(--radius-md);border-right:3px solid var(--primary);">
           <div style="font-size:11.5px;color:var(--text-3);margin-bottom:4px;">ردّك:</div>
-          <div style="font-size:12.5px;">${r.supervisor_reply}</div>
+          <div style="font-size:12.5px;">${escapeHtml(r.supervisor_reply)}</div>
         </div>`:""}
       <button class="btn btn-ghost btn-sm" onclick="openReplyStudentRequestModal(${r.id})"><i data-lucide="reply" style="width:14px;height:14px;"></i> رد / تحديث الحالة</button>
     </div>
@@ -4686,19 +4703,19 @@ async function doStudentSearch(){
         <div style="border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;margin-bottom:14px;background:var(--surface);">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
             <div>
-              <div style="font-weight:700;font-size:15px;">${s.full_name}
+              <div style="font-weight:700;font-size:15px;">${escapeHtml(s.full_name)}
                 <span style="font-size:12px;color:var(--text-3);font-weight:400;font-family:monospace;margin-right:8px;">#${s.id}</span>
               </div>
               <div style="margin-top:4px;">
-                <span class="badge badge-teal">${s.group_name}</span>
-                <span class="badge badge-gray" style="margin-right:4px;">${s.stage_name}</span>
+                <span class="badge badge-teal">${escapeHtml(s.group_name)}</span>
+                <span class="badge badge-gray" style="margin-right:4px;">${escapeHtml(s.stage_name)}</span>
                 <span class="badge badge-blue" style="margin-right:4px;">${s.governorate_name}</span>
               </div>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-              ${(s.phone||s.parent_phone) ? `<button class="action-btn" title="تواصل" onclick="openContactPopup('${s.full_name.replace(/'/g,"")}','${s.phone||""}','${s.parent_phone||""}')"><i data-lucide="phone" style="width:15px;height:15px;"></i></button>` : ""}
-              <button class="action-btn" title="تقرير شهري" onclick="openMonthlyReportModal(${s.id},'${s.full_name.replace(/'/g,"")}')"><i data-lucide="file-bar-chart" style="width:15px;height:15px;"></i></button>
-              <button class="action-btn" title="ملاحظات سلوكية" onclick="openBehaviorNotesModal(${s.id},'${s.full_name.replace(/'/g,"")}')"><i data-lucide="message-square-text" style="width:15px;height:15px;"></i></button>
+              ${(s.phone||s.parent_phone) ? `<button class="action-btn" title="تواصل" onclick="openContactPopup('${jsAttr(s.full_name)}','${jsAttr(s.phone||"")}','${jsAttr(s.parent_phone||"")}')"><i data-lucide="phone" style="width:15px;height:15px;"></i></button>` : ""}
+              <button class="action-btn" title="تقرير شهري" onclick="openMonthlyReportModal(${s.id},'${jsAttr(s.full_name)}')"><i data-lucide="file-bar-chart" style="width:15px;height:15px;"></i></button>
+              <button class="action-btn" title="ملاحظات سلوكية" onclick="openBehaviorNotesModal(${s.id},'${jsAttr(s.full_name)}')"><i data-lucide="message-square-text" style="width:15px;height:15px;"></i></button>
             </div>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
@@ -4721,7 +4738,7 @@ async function doStudentSearch(){
               ${s.scores.map(sc => {
                 const pct = sc.score != null ? Math.round((sc.score/sc.max_score)*100) : null;
                 return `<tr>
-                  <td>${sc.title}</td>
+                  <td>${escapeHtml(sc.title)}</td>
                   <td>${sc.quiz_date||'—'}</td>
                   <td>${sc.score??'—'} / ${sc.max_score}</td>
                   <td>${pct!=null ? `<span class="badge ${pct>=50?'badge-green':'badge-red'}">${pct}%</span>` : '—'}</td>
@@ -4753,7 +4770,7 @@ async function openBehaviorNotesModal(studentId, studentName){
         <option value="negative">سلبية</option>
       </select>
       <textarea class="form-textarea" id="bn_text" placeholder="اكتب ملاحظتك عن الطالب..."></textarea>
-      <button class="btn btn-primary btn-sm" style="margin-top:8px;" onclick="submitBehaviorNote(${studentId}, '${studentName.replace(/'/g,"")}')"><i data-lucide="plus" style="width:14px;height:14px;"></i> إضافة الملاحظة</button>
+      <button class="btn btn-primary btn-sm" style="margin-top:8px;" onclick="submitBehaviorNote(${studentId}, '${jsAttr(studentName)}')"><i data-lucide="plus" style="width:14px;height:14px;"></i> إضافة الملاحظة</button>
     </div>
     <div class="form-label" style="margin-top:18px;">الملاحظات السابقة</div>
     <div id="bnListWrap" style="margin-top:8px;"><div class="form-hint">بتحمّل...</div></div>
@@ -4768,7 +4785,7 @@ async function loadBehaviorNotes(studentId){
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">
       <div>
         <span class="badge ${NOTE_TYPE_BADGE[n.note_type]}" style="margin-bottom:5px;">${NOTE_TYPE_LABELS[n.note_type]}</span>
-        <div style="font-size:13.5px;margin-top:4px;">${n.note}</div>
+        <div style="font-size:13.5px;margin-top:4px;">${escapeHtml(n.note)}</div>
         <div class="td-sub">${n.author_name||'—'} • ${n.created_at}</div>
       </div>
       ${canDelete ? `<button class="action-btn del" onclick="deleteBehaviorNote(${n.id}, ${studentId})"><i data-lucide="trash-2" style="width:14px;height:14px;"></i></button>` : ""}
@@ -4819,11 +4836,11 @@ async function renderMonthlyReportsPage(){
         <thead><tr><th>#</th><th>الطالب</th><th>المجموعة</th><th></th></tr></thead>
         <tbody id="mrTableBody">
           ${students.map(s=>`
-            <tr data-search="${s.full_name.toLowerCase()}">
+            <tr data-search="${escapeHtml(s.full_name.toLowerCase())}">
               <td style="color:var(--text-3);font-family:monospace;">#${s.id}</td>
-              <td class="td-name">${s.full_name}</td>
-              <td><span class="badge badge-teal">${s.group_name}</span></td>
-              <td class="td-actions"><button class="btn btn-primary btn-sm" onclick="openMonthlyReportModal(${s.id}, '${s.full_name.replace(/'/g,"")}')"><i data-lucide="file-bar-chart" style="width:14px;height:14px;"></i> عرض التقرير</button></td>
+              <td class="td-name">${escapeHtml(s.full_name)}</td>
+              <td><span class="badge badge-teal">${escapeHtml(s.group_name)}</span></td>
+              <td class="td-actions"><button class="btn btn-primary btn-sm" onclick="openMonthlyReportModal(${s.id}, '${jsAttr(s.full_name)}')"><i data-lucide="file-bar-chart" style="width:14px;height:14px;"></i> عرض التقرير</button></td>
             </tr>
           `).join("") || `<tr><td colspan="4" style="text-align:center;color:var(--text-3);padding:20px;">لا يوجد طلاب في مجموعاتك بعد</td></tr>`}
         </tbody>
@@ -4855,7 +4872,7 @@ function openMonthlyReportModal(studentId, studentName){
     <div id="mrWrap"><div class="form-hint">بتحمّل...</div></div>
   `, `
     <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>
-    <button class="btn btn-primary" onclick="printMonthlyReport(${studentId}, '${studentName.replace(/'/g,"")}')"><i data-lucide="printer" style="width:14px;height:14px;"></i> طباعة / حفظ PDF</button>
+    <button class="btn btn-primary" onclick="printMonthlyReport(${studentId}, '${jsAttr(studentName)}')"><i data-lucide="printer" style="width:14px;height:14px;"></i> طباعة / حفظ PDF</button>
   `);
   loadMonthlyReport(studentId, canEditPayment);
 }
@@ -4879,7 +4896,7 @@ async function loadMonthlyReport(studentId, canEditPayment){
     <div class="form-label">الكويزات في الشهر ده</div>
     <div class="table-wrap" style="margin:8px 0 14px;"><table>
       <thead><tr><th>الكويز</th><th>التاريخ</th><th>الدرجة</th></tr></thead>
-      <tbody>${data.scores.map(s=>`<tr><td>${s.title}</td><td>${s.quiz_date||'—'}</td><td>${s.score??'—'} / ${s.max_score}</td></tr>`).join("") || `<tr><td colspan="3" style="text-align:center;color:var(--text-3);">لا يوجد كويزات</td></tr>`}</tbody>
+      <tbody>${data.scores.map(s=>`<tr><td>${escapeHtml(s.title)}</td><td>${s.quiz_date||'—'}</td><td>${s.score??'—'} / ${s.max_score}</td></tr>`).join("") || `<tr><td colspan="3" style="text-align:center;color:var(--text-3);">لا يوجد كويزات</td></tr>`}</tbody>
     </table></div>
     ${data.attendance.length ? `
     <div class="form-label">سجل الحضور التفصيلي</div>
@@ -4923,7 +4940,7 @@ function printMonthlyReport(studentId, studentName){
       @media print{ body{padding:10px;} }
     </style></head><body>
     <h1>تقرير ${studentName}</h1>
-    <div class="sub">المجموعة: ${d.student.group_name} — الشهر: ${d.month}</div>
+    <div class="sub">المجموعة: ${escapeHtml(d.student.group_name)} — الشهر: ${d.month}</div>
     <div class="stats">
       <div class="stat"><b>${a.present}</b>حاضر</div>
       <div class="stat"><b>${a.absent}</b>غايب</div>
@@ -4932,7 +4949,7 @@ function printMonthlyReport(studentId, studentName){
     </div>
     <h3>الكويزات</h3>
     <table><thead><tr><th>الكويز</th><th>التاريخ</th><th>الدرجة</th></tr></thead>
-    <tbody>${d.scores.map(s=>`<tr><td>${s.title}</td><td>${s.quiz_date||'—'}</td><td>${s.score??'—'} / ${s.max_score}</td></tr>`).join("") || `<tr><td colspan="3">لا يوجد كويزات</td></tr>`}</tbody></table>
+    <tbody>${d.scores.map(s=>`<tr><td>${escapeHtml(s.title)}</td><td>${s.quiz_date||'—'}</td><td>${s.score??'—'} / ${s.max_score}</td></tr>`).join("") || `<tr><td colspan="3">لا يوجد كويزات</td></tr>`}</tbody></table>
     <h3>الحضور التفصيلي</h3>
     <table><thead><tr><th>التاريخ</th><th>الحالة</th></tr></thead>
     <tbody>${d.attendance.map(x=>`<tr><td>${x.session_date}</td><td>${ATT_LABELS[x.status]||x.status}</td></tr>`).join("") || `<tr><td colspan="2">لا يوجد سجل حضور</td></tr>`}</tbody></table>

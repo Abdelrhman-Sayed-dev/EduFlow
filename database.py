@@ -190,6 +190,50 @@ def cleanup_expired_sessions(conn):
         pass
 
 
+# ---------------------------------------------------------------------------
+# حماية من محاولات تسجيل الدخول الغلط المتكررة (brute-force protection)
+# ---------------------------------------------------------------------------
+LOGIN_ATTEMPT_WINDOW_MINUTES = 15   # المدة اللي بنعد فيها المحاولات الفاشلة
+LOGIN_ATTEMPT_MAX = 8               # أقصى عدد محاولات فاشلة مسموح بيه في المدة دي
+
+
+def is_login_blocked(conn, identifier: str) -> bool:
+    """بيتأكد إن الـ identifier (يوزرنيم أو كود دخول أو IP) معملش محاولات فاشلة كتير قوي مؤخرًا"""
+    # ملحوظة: عمود created_at بيتخزن بصيغة SQLite's CURRENT_TIMESTAMP ("YYYY-MM-DD HH:MM:SS"
+    # بمسافة)، فلازم الـ cutoff يتقارن بنفس الصيغة بالظبط (مش isoformat اللي بيحط "T")
+    cutoff = (datetime.utcnow() - timedelta(minutes=LOGIN_ATTEMPT_WINDOW_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+    row = conn.execute(
+        "SELECT COUNT(*) as c FROM login_attempts WHERE identifier=? AND created_at >= ?",
+        (identifier, cutoff)
+    ).fetchone()
+    return row["c"] >= LOGIN_ATTEMPT_MAX
+
+
+def record_failed_login(conn, identifier: str):
+    """يسجل محاولة دخول فاشلة"""
+    try:
+        conn.execute("INSERT INTO login_attempts (identifier) VALUES (?)", (identifier,))
+    except Exception:
+        pass
+
+
+def clear_failed_logins(conn, identifier: str):
+    """يمسح محاولات الفشل بعد نجاح تسجيل الدخول"""
+    try:
+        conn.execute("DELETE FROM login_attempts WHERE identifier=?", (identifier,))
+    except Exception:
+        pass
+
+
+def cleanup_old_login_attempts(conn):
+    """مسح دوري لمحاولات الدخول القديمة عشان الجدول ما يكبرش من غير داعي"""
+    cutoff = (datetime.utcnow() - timedelta(hours=6)).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        conn.execute("DELETE FROM login_attempts WHERE created_at < ?", (cutoff,))
+    except Exception:
+        pass
+
+
 def init_db():
     """إنشاء كل الجداول المطلوبة لو لسه غير موجودة"""
     with get_connection() as conn:
@@ -241,6 +285,18 @@ def init_db():
         )
         """)
         _safe_alter(cur, "ALTER TABLE sessions ADD COLUMN expires_at TEXT")
+
+        # ---------------------------------------------------------------
+        # محاولات تسجيل الدخول الفاشلة - للحماية من محاولات التخمين المتكررة (brute-force)
+        # ---------------------------------------------------------------
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS login_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            identifier TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_login_attempts_identifier ON login_attempts(identifier, created_at)")
 
         # جدول المجموعات - كل مجموعة تابعة لمرحلة ومحافظة، وممكن يكون ليها مشرف
         cur.execute("""
