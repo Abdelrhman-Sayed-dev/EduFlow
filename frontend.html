@@ -146,7 +146,7 @@ select option{font-family:'Cairo',sans-serif;}
 /* SEARCHABLE SELECT (دروب داون بحث) */
 .searchable-select{position:relative;}
 .searchable-select input{cursor:text;}
-.searchable-dropdown{position:absolute;top:calc(100% + 4px);right:0;left:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow-lg);max-height:220px;overflow-y:auto;z-index:50;display:none;}
+.searchable-dropdown{position:fixed;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow-lg);max-height:220px;overflow-y:auto;z-index:9999;display:none;}
 .searchable-dropdown.open{display:block;}
 .searchable-option{padding:9px 12px;font-size:13px;cursor:pointer;color:var(--text);transition:background .1s;}
 .searchable-option:hover,.searchable-option.active{background:var(--primary-10);color:var(--primary-80);}
@@ -2324,12 +2324,35 @@ function initSearchableSelect(idPrefix, options){
   const hidden = document.getElementById(idPrefix+"_value");
   const dropdown = document.getElementById(idPrefix+"_dropdown");
   if (!input || !hidden || !dropdown) return;
+  const originalParent = dropdown.parentElement; // بنفتكر مكانه الأصلي عشان نرجعه له لما يقفل
+
+  // بنشيل الـ dropdown من جوه المودال ونحطه مباشرة جوه body، عشان ما يتقصش
+  // (overflow-y:auto) بتاع المودال - ده بيخلي القايمة تظهر كاملة دايمًا
+  function positionDropdown(){
+    const rect = input.getBoundingClientRect();
+    dropdown.style.left = rect.left + "px";
+    dropdown.style.top = (rect.bottom + 4) + "px";
+    dropdown.style.width = rect.width + "px";
+  }
+
+  function openDropdown(){
+    if (dropdown.parentElement !== document.body) document.body.appendChild(dropdown);
+    positionDropdown();
+    dropdown.classList.add("open");
+  }
+
+  function closeDropdown(){
+    dropdown.classList.remove("open");
+    if (dropdown.parentElement === document.body && originalParent && originalParent.isConnected){
+      originalParent.appendChild(dropdown); // نرجعه لمكانه الأصلي عشان مايتسربش جوه الـ body
+    }
+  }
 
   function renderList(filterText){
     const f = (filterText||"").trim().toLowerCase();
     const filtered = f ? options.filter(o => o.name.toLowerCase().includes(f)) : options;
     dropdown.innerHTML = filtered.length ? filtered.map(o => `
-      <div class="searchable-option" data-id="${o.id}" data-name="${(o.name||"").replace(/"/g,"&quot;")}">${o.name}</div>
+      <div class="searchable-option" data-id="${o.id}" data-name="${escapeHtml(o.name)}">${escapeHtml(o.name)}</div>
     `).join("") : `<div class="searchable-option-empty">لا يوجد نتائج مطابقة</div>`;
 
     dropdown.querySelectorAll(".searchable-option").forEach(el=>{
@@ -2337,14 +2360,16 @@ function initSearchableSelect(idPrefix, options){
         e.preventDefault();
         hidden.value = el.dataset.id;
         input.value = el.dataset.name;
-        dropdown.classList.remove("open");
+        closeDropdown();
       });
     });
   }
 
-  input.addEventListener("focus", ()=>{ renderList(""); dropdown.classList.add("open"); });
-  input.addEventListener("input", ()=>{ hidden.value = ""; renderList(input.value); dropdown.classList.add("open"); });
-  input.addEventListener("blur", ()=>{ setTimeout(()=>dropdown.classList.remove("open"), 150); });
+  input.addEventListener("focus", ()=>{ renderList(""); openDropdown(); });
+  input.addEventListener("input", ()=>{ hidden.value = ""; renderList(input.value); openDropdown(); });
+  input.addEventListener("blur", ()=>{ setTimeout(closeDropdown, 150); });
+  window.addEventListener("resize", ()=>{ if (dropdown.classList.contains("open")) positionDropdown(); });
+  window.addEventListener("scroll", ()=>{ if (dropdown.classList.contains("open")) positionDropdown(); }, true);
 }
 
 let GROUP_SCHEDULE_SLOTS = [];
