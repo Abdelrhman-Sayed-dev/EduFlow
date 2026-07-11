@@ -836,6 +836,13 @@ def get_students(group_id: Optional[int] = None, stage_id: Optional[int] = None,
 @app.post("/api/students")
 def add_student(student: StudentIn, session=Depends(require_roles("admin"))):
     with get_connection() as conn:
+        existing = conn.execute(
+            "SELECT id FROM students WHERE group_id=? AND is_active=1 AND LOWER(TRIM(full_name))=LOWER(TRIM(?))",
+            (student.group_id, student.full_name)
+        ).fetchone()
+        if existing:
+            raise HTTPException(status_code=409, detail="فيه طالب بنفس الاسم مسجل بالفعل في نفس المجموعة")
+
         code = gen_access_code()
         # تأكد إن الكود فريد (احتمالية تكرار شبه معدومة بس للأمان)
         while conn.execute("SELECT id FROM students WHERE access_code=?", (code,)).fetchone():
@@ -858,6 +865,7 @@ def bulk_add_students(payload: BulkStudentsRequest, session=Depends(require_role
     بيرجع تقرير: مين اتضاف بنجاح (مع الأكواد بتاعته) ومين فشل ولية"""
     with get_connection() as conn:
         created, errors = [], []
+        seen_in_batch = set()  # (group_id, اسم بعد التطبيع) عشان نمسك تكرار جوه نفس الملف
         for idx, s in enumerate(payload.students, start=1):
             name = (s.full_name or "").strip()
             if not name:
@@ -867,6 +875,19 @@ def bulk_add_students(payload: BulkStudentsRequest, session=Depends(require_role
             if not grp:
                 errors.append({"row": idx, "name": name, "error": "المجموعة غير موجودة"})
                 continue
+
+            dedup_key = (s.group_id, name.strip().lower())
+            if dedup_key in seen_in_batch:
+                errors.append({"row": idx, "name": name, "error": "اسم مكرر أكتر من مرة في نفس الملف"})
+                continue
+            existing = conn.execute(
+                "SELECT id FROM students WHERE group_id=? AND is_active=1 AND LOWER(TRIM(full_name))=LOWER(TRIM(?))",
+                (s.group_id, name)
+            ).fetchone()
+            if existing:
+                errors.append({"row": idx, "name": name, "error": "طالب بنفس الاسم موجود بالفعل في نفس المجموعة"})
+                continue
+
             try:
                 code = gen_access_code()
                 while conn.execute("SELECT id FROM students WHERE access_code=?", (code,)).fetchone():
@@ -880,6 +901,7 @@ def bulk_add_students(payload: BulkStudentsRequest, session=Depends(require_role
                     (name, (s.phone or "").strip() or None, (s.parent_phone or "").strip() or None,
                      s.group_id, (s.notes or "").strip() or None, code, att_code)
                 )
+                seen_in_batch.add(dedup_key)
                 created.append({"id": cur.lastrowid, "full_name": name, "access_code": code, "attendance_code": att_code})
             except Exception:
                 errors.append({"row": idx, "name": name, "error": "حصلت مشكلة أثناء الإضافة"})
