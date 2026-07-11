@@ -2564,6 +2564,7 @@ async function renderStudentsPage(){
   const canSeeCodes = canManage || SESSION.role === "supervisor";
   const [students, groups] = await Promise.all([loadStudents(), loadGroups()]);
   CACHE_ALL_GROUPS = groups;
+  STUDENTS_PAGE_DATA = students;
   const canViewExtra = SESSION.role === "admin" || SESSION.role === "teacher";
 
   const c = document.getElementById("pageContainer");
@@ -2577,6 +2578,7 @@ async function renderStudentsPage(){
           <option value="">كل المجموعات</option>
           ${groups.map(g=>`<option value="${g.id}">${escapeHtml(g.name)}</option>`).join("")}
         </select>` : ""}
+        <button class="btn btn-ghost btn-sm" onclick="exportStudentsToCsv()"><i data-lucide="download" style="width:14px;height:14px;"></i> تصدير CSV</button>
         ${canManage ? `<button class="btn btn-primary btn-sm" onclick="openAddStudentModal()"><i data-lucide="user-plus" style="width:14px;height:14px;"></i> إضافة طالب</button>`:""}
       </div>
     </div>
@@ -2626,11 +2628,41 @@ function filterStudentsTable(){
   });
 }
 
+let STUDENTS_PAGE_DATA = [];
+
+// بيصدّر بيانات الطلاب لملف CSV تقدر تحتفظ بيه كنسخة احتياطية أو تفتحه في Excel.
+// بيصدّر الطلاب المعروضين حاليًا بس (لو مطبّق فلتر بحث/مجموعة، بيحترمه)
+function exportStudentsToCsv(){
+  if (!STUDENTS_PAGE_DATA.length){ showToast("لا يوجد بيانات لتصديرها", "error"); return; }
+  const visibleIds = new Set(
+    Array.from(document.querySelectorAll("#studentsTableBody tr[data-search]"))
+      .filter(tr => tr.style.display !== "none")
+      .map(tr => tr.dataset.search.split(" ")[0])
+  );
+  const rows = STUDENTS_PAGE_DATA.filter(s => visibleIds.has(String(s.id)));
+  const canSeeCodes = SESSION.role === "admin" || SESSION.role === "supervisor";
+
+  const header = ["ID", "اسم_الطالب", "المجموعة", "رقم_هاتف_الطالب", "رقم_هاتف_ولي_الأمر", "الحالة"];
+  if (canSeeCodes) header.push("كود_الحضور");
+  if (SESSION.role === "admin") header.push("كود_الدخول");
+
+  const lines = [header, ...rows.map(s => {
+    const r = [s.id, s.full_name, s.group_name || "", s.phone || "", s.parent_phone || "", s.is_active ? "مفعّل" : "موقوف"];
+    if (canSeeCodes) r.push(s.attendance_code || "");
+    if (SESSION.role === "admin") r.push(s.access_code || "");
+    return r;
+  })].map(r => r.map(csvEscapeCell).join(",")).join("\r\n");
+
+  downloadTextAsFile(`بيانات_الطلاب_${todayStr()}.csv`, "\uFEFF" + lines, "text/csv;charset=utf-8;");
+  showToast(`تم تصدير ${rows.length} طالب`, "success");
+}
+
 /* =====================================================================
    استيراد طلاب من ملف CSV - تحميل نموذج، رفع الملف، معاينة، ثم الإضافة دفعة واحدة
 ===================================================================== */
 const IMPORT_CSV_HEADERS = ["اسم_الطالب", "المجموعة", "رقم_هاتف_الطالب", "رقم_هاتف_ولي_الأمر", "ملاحظات"];
 let IMPORT_PARSED_ROWS = [];
+let IMPORT_EXISTING_STUDENTS = [];
 
 function downloadStudentsCsvTemplate(){
   const sampleRows = [
@@ -2681,6 +2713,7 @@ function parseCsvText(text){
 async function renderImportStudentsPage(){
   const groups = await loadGroups();
   CACHE_ALL_GROUPS = groups;
+  IMPORT_EXISTING_STUDENTS = await loadStudents();
   const c = document.getElementById("pageContainer");
   c.innerHTML = `
     <div class="page-header"><div><h1>استيراد طلاب (CSV)</h1><p>ارفع كل بيانات الطلاب مرة واحدة بدل الإدخال اليدوي طالب طالب</p></div></div>
@@ -2727,6 +2760,10 @@ function handleImportCsvFile(file){
 
 function parseAndPreviewImportRows(dataRows){
   const groupsByName = new Map(CACHE_ALL_GROUPS.map(g => [g.name.trim().toLowerCase(), g]));
+  // مفتاح تكرار: (مجموعة + اسم بعد التطبيع) لكل طالب موجود بالفعل في النظام
+  const existingKeys = new Set(IMPORT_EXISTING_STUDENTS.map(s => `${s.group_id}::${s.full_name.trim().toLowerCase()}`));
+  const seenInFile = new Set();
+
   IMPORT_PARSED_ROWS = dataRows.map((cols, idx) => {
     const full_name = (cols[0] || "").trim();
     const groupNameRaw = (cols[1] || "").trim();
@@ -2738,6 +2775,12 @@ function parseAndPreviewImportRows(dataRows){
     if (!full_name) error = "الاسم فاضي";
     else if (!groupNameRaw) error = "المجموعة فاضية";
     else if (!matchedGroup) error = "المجموعة مش موجودة في النظام";
+    else {
+      const dedupKey = `${matchedGroup.id}::${full_name.toLowerCase()}`;
+      if (existingKeys.has(dedupKey)) error = "الطالب ده موجود بالفعل في نفس المجموعة";
+      else if (seenInFile.has(dedupKey)) error = "الاسم مكرر أكتر من مرة في نفس الملف";
+      else seenInFile.add(dedupKey);
+    }
     return {
       row: idx + 1, full_name, groupNameRaw, phone, parent_phone, notes,
       group_id: matchedGroup ? matchedGroup.id : null, error,
@@ -2803,6 +2846,7 @@ async function submitImportStudents(){
   }
 
   showToast(`تم إضافة ${res.created_count} طالب بنجاح`, "success");
+  IMPORT_EXISTING_STUDENTS = await loadStudents();
   const resultWrap = document.getElementById("importResultWrap");
   resultWrap.innerHTML = `
     <div class="table-card" style="margin-top:16px;padding:16px;">
