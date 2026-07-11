@@ -1000,7 +1000,7 @@ const NAV_BY_ROLE = {
     {id:"boards", label:"سبورة الحصة", icon:"presentation"},
     {id:"quizzes", label:"الكويزات والامتحانات", icon:"file-check-2"},
     {id:"homework", label:"الواجبات", icon:"clipboard-list"},
-    {id:"student_videos", label:"فيديوهات الطلاب", icon:"video"},
+    {id:"student_videos", label:"فيديوهات المجموعة", icon:"video"},
     {id:"attendance", label:"الحضور والغياب", icon:"calendar-check"},
     {id:"monthly_reports", label:"التقرير الشهري", icon:"file-bar-chart"},
     {id:"student_requests", label:"طلبات الطلاب", icon:"inbox"},
@@ -1151,7 +1151,7 @@ const PAGE_TITLES = {
   teacher_analytics:"التحليلات", teacher_compare:"مقارنة المجموعات",
   teacher_ranking:"الترتيب المتقدم", teacher_reports:"التقارير", teacher_schedule:"جدولي",
   myrequests:"طلباتي", student_requests:"طلبات الطلاب",
-  student_videos:"فيديوهات الطلاب", myvideos:"فيديوهاتي",
+  student_videos:"فيديوهات المجموعة", myvideos:"فيديوهاتي",
 };
 
 async function renderPage(page){
@@ -4085,8 +4085,8 @@ function deleteBoardImage(id){
 }
 
 /* =====================================================================
-   فيديوهات الطلاب - المشرف بيرفع فيديو لطالب معين، والطالب يتفرج عليه
-   بس من غير ما يقدر ينزّله (رابط البث محمي بصلاحيات + تحكمات المشغل)
+   فيديوهات المجموعة - المشرف بيرفع فيديو لمجموعته، وكل طلاب المجموعة
+   يقدروا يتفرجوا عليه بس من غير ما يقدروا ينزّلوه (رابط البث محمي بصلاحيات)
 ===================================================================== */
 let CURRENT_VIDEOS_GROUP_ID = null;
 
@@ -4101,7 +4101,6 @@ async function renderSupervisorVideosPage(){
     CURRENT_VIDEOS_GROUP_ID = groups[0].id;
   }
   const groupId = CURRENT_VIDEOS_GROUP_ID;
-  const students = await loadStudents({group_id: groupId});
 
   const c = document.getElementById("pageContainer");
   const groupSwitcher = groups.length > 1 ? `
@@ -4110,26 +4109,18 @@ async function renderSupervisorVideosPage(){
       </select>` : "";
 
   c.innerHTML = `
-    <div class="page-header"><div><h1>فيديوهات الطلاب</h1><p>ارفع فيديو خاص لأي طالب في مجموعتك، والطالب يقدر يتفرج عليه بس من غير تنزيل</p></div>
-      <div class="header-actions" style="gap:10px;">${groupSwitcher}</div>
+    <div class="page-header"><div><h1>فيديوهات المجموعة</h1><p>ارفع فيديو لمجموعتك، وكل طلاب المجموعة يقدروا يتفرجوا عليه من غير تنزيل</p></div>
+      <div class="header-actions" style="gap:10px;">
+        ${groupSwitcher}
+        <button class="btn btn-primary btn-sm" onclick="openUploadVideoModal(${groupId})"><i data-lucide="upload" style="width:14px;height:14px;"></i> رفع فيديو جديد</button>
+      </div>
     </div>
     <div class="table-card">
-      <div class="table-wrap"><table>
-        <thead><tr><th>#</th><th>الطالب</th><th></th></tr></thead>
-        <tbody>
-          ${students.map(s=>`
-            <tr>
-              <td style="color:var(--text-3);font-family:monospace;">#${s.id}</td>
-              <td class="td-name">${escapeHtml(s.full_name)}</td>
-              <td class="td-actions">
-                <button class="btn btn-primary btn-sm" onclick="openStudentVideosModal(${s.id}, '${jsAttr(s.full_name)}')"><i data-lucide="video" style="width:14px;height:14px;"></i> الفيديوهات</button>
-              </td>
-            </tr>`).join("") || `<tr><td colspan="3" style="text-align:center;color:var(--text-3);padding:30px;">لا يوجد طلاب في المجموعة دي</td></tr>`}
-        </tbody>
-      </table></div>
+      <div id="groupVideosList" style="padding:8px;"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>
     </div>
   `;
   icons();
+  await loadGroupVideosList(groupId);
 }
 
 function videoFileSizeLabel(bytes){
@@ -4138,32 +4129,28 @@ function videoFileSizeLabel(bytes){
   return mb >= 1024 ? `${(mb/1024).toFixed(1)} جيجا` : `${mb.toFixed(1)} ميجا`;
 }
 
-async function openStudentVideosModal(studentId, studentName){
+async function loadGroupVideosList(groupId){
+  const wrap = document.getElementById("groupVideosList");
+  if (!wrap) return;
   const canManage = SESSION.role !== "student";
-  const videos = await api(`/api/students/${studentId}/videos`);
-  openModal(`فيديوهات ${escapeHtml(studentName)}`, `
-    <div id="studentVideosList">
-      ${videos.length ? videos.map(v=>`
-        <div class="video-row">
-          <div class="video-row-ic"><i data-lucide="video" style="width:18px;height:18px;"></i></div>
-          <div style="flex:1;min-width:0;">
-            <div style="font-weight:700;font-size:13.5px;">${escapeHtml(v.title)}</div>
-            <div style="font-size:11.5px;color:var(--text-3);">${escapeHtml(v.description||"")}${v.description?" · ":""}${videoFileSizeLabel(v.file_size)} · ${(v.created_at||"").slice(0,10)}</div>
-          </div>
-          <button class="btn btn-primary btn-sm" onclick="openVideoPlayerModal(${v.id}, '${jsAttr(v.title)}')"><i data-lucide="play" style="width:13px;height:13px;"></i> تشغيل</button>
-          ${canManage ? `<button class="action-btn" title="حذف الفيديو" onclick="deleteStudentVideo(${v.id}, ${studentId}, '${jsAttr(studentName)}')"><i data-lucide="trash-2" style="width:15px;height:15px;color:var(--danger);"></i></button>` : ""}
-        </div>
-      `).join("") : `<div class="empty-state" style="padding:20px;"><div class="empty-title">لا يوجد فيديوهات لسه</div></div>`}
+  const videos = await api(`/api/groups/${groupId}/videos`);
+  wrap.innerHTML = videos.length ? videos.map(v=>`
+    <div class="video-row">
+      <div class="video-row-ic"><i data-lucide="video" style="width:18px;height:18px;"></i></div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:700;font-size:13.5px;">${escapeHtml(v.title)}</div>
+        <div style="font-size:11.5px;color:var(--text-3);">${escapeHtml(v.description||"")}${v.description?" · ":""}${videoFileSizeLabel(v.file_size)} · ${(v.created_at||"").slice(0,10)}</div>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="openVideoPlayerModal(${v.id}, '${jsAttr(v.title)}')"><i data-lucide="play" style="width:13px;height:13px;"></i> تشغيل</button>
+      ${canManage ? `<button class="action-btn" title="حذف الفيديو" onclick="deleteGroupVideo(${v.id}, ${groupId})"><i data-lucide="trash-2" style="width:15px;height:15px;color:var(--danger);"></i></button>` : ""}
     </div>
-  `, canManage ? `
-    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>
-    <button class="btn btn-primary" onclick="openUploadVideoModal(${studentId}, '${jsAttr(studentName)}')"><i data-lucide="upload" style="width:14px;height:14px;"></i> رفع فيديو جديد</button>
-  ` : `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`);
+  `).join("") : `<div class="empty-state" style="padding:30px;"><div class="empty-title">لا يوجد فيديوهات لسه</div></div>`;
+  icons();
 }
 
-function openUploadVideoModal(studentId, studentName){
-  openModal(`رفع فيديو لـ ${escapeHtml(studentName)}`, `
-    <div class="form-group"><label class="form-label">عنوان الفيديو <span class="req">*</span></label><input class="form-input" id="f_vid_title" placeholder="مثال: حل نموذج امتحان"></div>
+function openUploadVideoModal(groupId){
+  openModal("رفع فيديو للمجموعة", `
+    <div class="form-group"><label class="form-label">عنوان الفيديو <span class="req">*</span></label><input class="form-input" id="f_vid_title" placeholder="مثال: شرح حصة اليوم"></div>
     <div class="form-group"><label class="form-label">وصف (اختياري)</label><textarea class="form-textarea" id="f_vid_desc"></textarea></div>
     <div class="form-group"><label class="form-label">ملف الفيديو <span class="req">*</span></label><input class="form-input" id="f_vid_file" type="file" accept="video/*"></div>
     <div id="vidUploadProgressWrap" style="display:none;margin-top:10px;">
@@ -4172,11 +4159,11 @@ function openUploadVideoModal(studentId, studentName){
     </div>
   `, `
     <button class="btn btn-ghost" id="vidUploadCancelBtn" onclick="closeOverlay('genericModal')">إلغاء</button>
-    <button class="btn btn-primary" id="vidUploadSubmitBtn" onclick="submitUploadVideo(${studentId}, '${jsAttr(studentName)}')"><i data-lucide="upload" style="width:14px;height:14px;"></i> رفع</button>
+    <button class="btn btn-primary" id="vidUploadSubmitBtn" onclick="submitUploadVideo(${groupId})"><i data-lucide="upload" style="width:14px;height:14px;"></i> رفع</button>
   `);
 }
 
-function submitUploadVideo(studentId, studentName){
+function submitUploadVideo(groupId){
   const title = document.getElementById("f_vid_title").value.trim();
   const description = document.getElementById("f_vid_desc").value.trim();
   const fileInput = document.getElementById("f_vid_file");
@@ -4198,7 +4185,7 @@ function submitUploadVideo(studentId, studentName){
   cancelBtn.disabled = true; cancelBtn.style.opacity = "0.6";
 
   const xhr = new XMLHttpRequest();
-  xhr.open("POST", API + `/api/students/${studentId}/videos`);
+  xhr.open("POST", API + `/api/groups/${groupId}/videos`);
   if (TOKEN) xhr.setRequestHeader("Authorization", "Bearer " + TOKEN);
 
   xhr.upload.onprogress = (e) => {
@@ -4212,7 +4199,7 @@ function submitUploadVideo(studentId, studentName){
     if (xhr.status >= 200 && xhr.status < 300) {
       showToast("تم رفع الفيديو بنجاح", "success");
       closeOverlay("genericModal");
-      openStudentVideosModal(studentId, studentName);
+      loadGroupVideosList(groupId);
     } else {
       let msg = "حصلت مشكلة أثناء رفع الفيديو";
       try { msg = JSON.parse(xhr.responseText).detail || msg; } catch(e){}
@@ -4229,11 +4216,11 @@ function submitUploadVideo(studentId, studentName){
   xhr.send(form);
 }
 
-function deleteStudentVideo(videoId, studentId, studentName){
+function deleteGroupVideo(videoId, groupId){
   confirmAction("حذف الفيديو", "متأكد إنك عايز تحذف الفيديو ده نهائيًا؟", async ()=>{
     await api(`/api/videos/${videoId}`, {method:"DELETE"});
     showToast("تم حذف الفيديو", "success");
-    openStudentVideosModal(studentId, studentName);
+    loadGroupVideosList(groupId);
   });
 }
 
@@ -4252,26 +4239,20 @@ function openVideoPlayerModal(videoId, title){
 }
 
 async function renderMyVideosPage(){
-  const videos = await api(`/api/students/${SESSION.id}/videos`);
   const c = document.getElementById("pageContainer");
+  const groupId = SESSION.group_id;
+  if (!groupId){
+    c.innerHTML = `<div class="empty-state"><div class="empty-title">مفيش مجموعة مسجل فيها</div></div>`;
+    return;
+  }
   c.innerHTML = `
-    <div class="page-header"><div><h1>فيديوهاتي</h1><p>فيديوهات رفعها لك المشرف - للمشاهدة فقط</p></div></div>
+    <div class="page-header"><div><h1>فيديوهاتي</h1><p>فيديوهات رفعها المشرف لمجموعتك - للمشاهدة فقط</p></div></div>
     <div class="table-card">
-      <div id="studentVideosList" style="padding:8px;">
-        ${videos.length ? videos.map(v=>`
-          <div class="video-row">
-            <div class="video-row-ic"><i data-lucide="video" style="width:18px;height:18px;"></i></div>
-            <div style="flex:1;min-width:0;">
-              <div style="font-weight:700;font-size:13.5px;">${escapeHtml(v.title)}</div>
-              <div style="font-size:11.5px;color:var(--text-3);">${escapeHtml(v.description||"")}${v.description?" · ":""}${(v.created_at||"").slice(0,10)}</div>
-            </div>
-            <button class="btn btn-primary btn-sm" onclick="openVideoPlayerModal(${v.id}, '${jsAttr(v.title)}')"><i data-lucide="play" style="width:13px;height:13px;"></i> تشغيل</button>
-          </div>
-        `).join("") : `<div class="empty-state" style="padding:30px;"><div class="empty-title">لا يوجد فيديوهات لسه</div></div>`}
-      </div>
+      <div id="groupVideosList" style="padding:8px;"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>
     </div>
   `;
   icons();
+  await loadGroupVideosList(groupId);
 }
 
 /* =====================================================================
@@ -4536,7 +4517,7 @@ async function renderSupervisorMorePage(){
       </div>
       <div class="student-more-item" onclick="navigateTo('student_videos')">
         <div class="student-more-ic"><i data-lucide="video" style="width:18px;height:18px;"></i></div>
-        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">فيديوهات الطلاب</div><div style="font-size:11.5px;color:var(--text-3);">ارفع فيديو خاص لأي طالب، للمشاهدة فقط</div></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">فيديوهات المجموعة</div><div style="font-size:11.5px;color:var(--text-3);">ارفع فيديو لمجموعتك، والطلاب يتفرجوا عليه بس من غير تنزيل</div></div>
         <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
       </div>
     </div>
@@ -4567,7 +4548,7 @@ async function renderStudentMorePage(){
       </div>
       <div class="student-more-item" onclick="navigateTo('myvideos')">
         <div class="student-more-ic"><i data-lucide="video" style="width:18px;height:18px;"></i></div>
-        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">فيديوهاتي</div><div style="font-size:11.5px;color:var(--text-3);">فيديوهات رفعها لك المشرف، للمشاهدة فقط</div></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">فيديوهاتي</div><div style="font-size:11.5px;color:var(--text-3);">فيديوهات رفعها المشرف لمجموعتك، للمشاهدة فقط</div></div>
         <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
       </div>
     </div>

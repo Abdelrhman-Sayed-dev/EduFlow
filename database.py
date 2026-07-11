@@ -518,14 +518,14 @@ def init_db():
         """)
 
         # ---------------------------------------------------------------
-        # فيديوهات الطلاب - المشرف بيرفع فيديو خاص بطالب معين، والطالب يقدر يتفرج
-        # عليه بس (بدون تنزيل) - الملف نفسه بيتخزن على الـ disk برا مجلد الـ uploads
-        # العام، وبيتبث عن طريق endpoint فيه تحقق صلاحيات
+        # فيديوهات المجموعة - المشرف بيرفع فيديو لمجموعة معينة، وكل طلاب
+        # المجموعة يقدروا يتفرجوا عليه (بدون تنزيل) - الملف نفسه بيتخزن على
+        # الـ disk برا مجلد الـ uploads العام، وبيتبث عن طريق endpoint فيه تحقق صلاحيات
         # ---------------------------------------------------------------
         cur.execute("""
-        CREATE TABLE IF NOT EXISTS student_videos (
+        CREATE TABLE IF NOT EXISTS group_videos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            student_id INTEGER NOT NULL,
+            group_id INTEGER NOT NULL,
             title TEXT NOT NULL,
             description TEXT,
             file_path TEXT NOT NULL,
@@ -533,7 +533,7 @@ def init_db():
             mime_type TEXT,
             uploaded_by INTEGER,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+            FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
             FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL
         )
         """)

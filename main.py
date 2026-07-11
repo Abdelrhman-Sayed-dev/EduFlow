@@ -1178,55 +1178,52 @@ def delete_board_image(image_id: int, session=Depends(require_roles("supervisor"
 
 
 # ---------------------------------------------------------------------------
-# فيديوهات الطلاب - المشرف بيرفع فيديو خاص بطالب معين، والطالب يتفرج عليه بس
-# (بث محمي بصلاحيات + بدون رابط تحميل مباشر)
+# فيديوهات المجموعة - المشرف بيرفع فيديو لمجموعة معينة، وكل طلاب المجموعة
+# يقدروا يتفرجوا عليه (بث محمي بصلاحيات + بدون رابط تحميل مباشر)
 # ---------------------------------------------------------------------------
 
-def assert_can_access_student_media(conn, session, student_id: int):
-    """يتأكد إن صاحب الجلسة مسموح له يشوف فيديوهات/ملفات الطالب ده:
-    - الطالب نفسه بس
-    - المشرف المسؤول عن مجموعة الطالب
+def assert_can_access_group_media(conn, session, group_id: int):
+    """يتأكد إن صاحب الجلسة مسموح له يشوف فيديوهات المجموعة دي:
+    - أي طالب في المجموعة نفسها
+    - المشرف المسؤول عن المجموعة
     - الأدمن / مشرف المشرفين / المدرس"""
     if session["role"] == "student":
-        if session["id"] != student_id:
-            raise HTTPException(status_code=403, detail="مش مسموح لك تشوف فيديوهات طالب تاني")
+        if session.get("group_id") != group_id:
+            raise HTTPException(status_code=403, detail="مش مسموح لك تشوف فيديوهات مجموعة تانية")
         return
-    student = conn.execute("SELECT group_id FROM students WHERE id=?", (student_id,)).fetchone()
-    if not student:
-        raise HTTPException(status_code=404, detail="الطالب غير موجود")
     if session["role"] == "supervisor":
-        assert_supervisor_owns_group(conn, session, student["group_id"])
+        assert_supervisor_owns_group(conn, session, group_id)
         return
     if session["role"] in ("admin", "head_supervisor", "teacher"):
         return
     raise HTTPException(status_code=403, detail="مفيش صلاحية للوصول لده")
 
 
-@app.get("/api/students/{student_id}/videos")
-def list_student_videos(student_id: int, session=Depends(get_current_session)):
+@app.get("/api/groups/{group_id}/videos")
+def list_group_videos(group_id: int, session=Depends(get_current_session)):
     with get_connection() as conn:
-        assert_can_access_student_media(conn, session, student_id)
+        assert_can_access_group_media(conn, session, group_id)
         rows = conn.execute("""
-            SELECT sv.id, sv.student_id, sv.title, sv.description, sv.file_size, sv.mime_type,
-                   sv.created_at, u.full_name as uploaded_by_name
-            FROM student_videos sv
-            LEFT JOIN users u ON u.id = sv.uploaded_by
-            WHERE sv.student_id = ?
-            ORDER BY sv.created_at DESC
-        """, (student_id,)).fetchall()
+            SELECT gv.id, gv.group_id, gv.title, gv.description, gv.file_size, gv.mime_type,
+                   gv.created_at, u.full_name as uploaded_by_name
+            FROM group_videos gv
+            LEFT JOIN users u ON u.id = gv.uploaded_by
+            WHERE gv.group_id = ?
+            ORDER BY gv.created_at DESC
+        """, (group_id,)).fetchall()
         return [dict(r) for r in rows]
 
 
-@app.post("/api/students/{student_id}/videos")
-async def upload_student_video(
-    student_id: int,
+@app.post("/api/groups/{group_id}/videos")
+async def upload_group_video(
+    group_id: int,
     title: str = Form(...),
     description: Optional[str] = Form(None),
     file: UploadFile = File(...),
     session=Depends(require_roles("admin", "head_supervisor", "supervisor", "teacher")),
 ):
     with get_connection() as conn:
-        assert_can_access_student_media(conn, session, student_id)
+        assert_can_access_group_media(conn, session, group_id)
 
         ext = os.path.splitext(file.filename or "")[1].lower()
         if ext not in ALLOWED_VIDEO_EXTENSIONS:
@@ -1256,24 +1253,27 @@ async def upload_student_video(
             raise HTTPException(status_code=500, detail="حصلت مشكلة أثناء رفع الفيديو")
 
         cur = conn.execute("""
-            INSERT INTO student_videos (student_id, title, description, file_path, file_size, mime_type, uploaded_by)
+            INSERT INTO group_videos (group_id, title, description, file_path, file_size, mime_type, uploaded_by)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (student_id, title.strip(), (description or "").strip() or None, stored_name, size,
+        """, (group_id, title.strip(), (description or "").strip() or None, stored_name, size,
               file.content_type or "video/mp4", session["id"]))
 
-        create_notification(conn, student_id, "فيديو جديد", f"المشرف رفع فيديو جديد: {title.strip()}")
+        # إشعار كل طلاب المجموعة إن فيه فيديو جديد
+        student_ids = [r["id"] for r in conn.execute("SELECT id FROM students WHERE group_id=? AND is_active=1", (group_id,)).fetchall()]
+        for sid in student_ids:
+            create_notification(conn, sid, "فيديو جديد", f"المشرف رفع فيديو جديد: {title.strip()}")
 
         return {"id": cur.lastrowid, "message": "تم رفع الفيديو بنجاح"}
 
 
 @app.delete("/api/videos/{video_id}")
-def delete_student_video(video_id: int, session=Depends(require_roles("admin", "head_supervisor", "supervisor", "teacher"))):
+def delete_group_video(video_id: int, session=Depends(require_roles("admin", "head_supervisor", "supervisor", "teacher"))):
     with get_connection() as conn:
-        vid = conn.execute("SELECT * FROM student_videos WHERE id=?", (video_id,)).fetchone()
+        vid = conn.execute("SELECT * FROM group_videos WHERE id=?", (video_id,)).fetchone()
         if not vid:
             raise HTTPException(status_code=404, detail="الفيديو غير موجود")
-        assert_can_access_student_media(conn, session, vid["student_id"])
-        conn.execute("DELETE FROM student_videos WHERE id=?", (video_id,))
+        assert_can_access_group_media(conn, session, vid["group_id"])
+        conn.execute("DELETE FROM group_videos WHERE id=?", (video_id,))
         file_path = os.path.join(VIDEOS_DIR, vid["file_path"])
         try:
             if os.path.exists(file_path):
@@ -1284,15 +1284,15 @@ def delete_student_video(video_id: int, session=Depends(require_roles("admin", "
 
 
 @app.get("/api/videos/{video_id}/stream")
-def stream_student_video(video_id: int, request: Request, session=Depends(get_session_for_media)):
+def stream_group_video(video_id: int, request: Request, session=Depends(get_session_for_media)):
     """بث الفيديو مع دعم Range requests (ضروري عشان المستخدم يقدر يتقدم/يرجع في فيديو طويل).
     الفيديو مش متاح كملف عام قابل للتنزيل - بيتبث بس من خلال الـ endpoint ده بعد التحقق من الصلاحية،
     وبـ Content-Disposition: inline (مش attachment) عشان يتشغل جوه المشغل مباشرة."""
     with get_connection() as conn:
-        vid = conn.execute("SELECT * FROM student_videos WHERE id=?", (video_id,)).fetchone()
+        vid = conn.execute("SELECT * FROM group_videos WHERE id=?", (video_id,)).fetchone()
         if not vid:
             raise HTTPException(status_code=404, detail="الفيديو غير موجود")
-        assert_can_access_student_media(conn, session, vid["student_id"])
+        assert_can_access_group_media(conn, session, vid["group_id"])
 
         file_path = os.path.join(VIDEOS_DIR, vid["file_path"])
         if not os.path.exists(file_path):
