@@ -3205,23 +3205,42 @@ async function submitHsQuiz(isEdit){
 /* =====================================================================
    الواجبات - إدارة المشرف (تحديد تم التسليم / لم يتم لكل طالب)
 ===================================================================== */
+let CURRENT_HOMEWORK_GROUP_ID = null;
+
 async function renderSupervisorHomeworkPage(){
   const groups = SESSION.role === "supervisor" ? await loadGroups() : [];
-  const myGroup = groups[0] || null;
-  const groupId = myGroup ? myGroup.id : null;
-
-  const c = document.getElementById("pageContainer");
-  if (!groupId){
+  if (!groups.length){
+    const c = document.getElementById("pageContainer");
     c.innerHTML = `<div class="empty-state"><div class="empty-icon"><i data-lucide="users" style="width:26px;height:26px;"></i></div><div class="empty-title">معندكش مجموعة لسه</div><div class="empty-desc">كلم الأدمن عشان يعينك على مجموعة.</div></div>`;
     return;
   }
+  // لو المشرف عنده أكتر من مجموعة، نفتكر آخر مجموعة كان شايفها؛ لو مفيش أو مبقتش تبعه، نرجع لأول مجموعة
+  if (!CURRENT_HOMEWORK_GROUP_ID || !groups.some(g => g.id === CURRENT_HOMEWORK_GROUP_ID)) {
+    CURRENT_HOMEWORK_GROUP_ID = groups[0].id;
+  }
+  const groupId = CURRENT_HOMEWORK_GROUP_ID;
+
+  const c = document.getElementById("pageContainer");
+  const groupSwitcher = groups.length > 1 ? `
+      <select class="form-select" id="hwGroupSwitcher" style="width:auto;min-width:200px;" onchange="switchHomeworkGroup(this.value)">
+        ${groups.map(g => `<option value="${g.id}" ${g.id===groupId?"selected":""}>${escapeHtml(g.name)}</option>`).join("")}
+      </select>` : "";
   c.innerHTML = `
     <div class="page-header"><div><h1>الواجبات</h1><p>حدد لكل طالب: تم تسليم الواجب أو لأ</p></div>
-      <div class="header-actions"><button class="btn btn-primary btn-sm" onclick="openAddHomeworkModal(${groupId})"><i data-lucide="plus" style="width:14px;height:14px;"></i> إضافة واجب حصة</button></div>
+      <div class="header-actions" style="gap:10px;">
+        ${groupSwitcher}
+        <button class="btn btn-primary btn-sm" onclick="openAddHomeworkModal(${groupId})"><i data-lucide="plus" style="width:14px;height:14px;"></i> إضافة واجب حصة</button>
+      </div>
     </div>
     <div id="supHomeworkWrap"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>
   `;
+  icons();
   await loadSupervisorHomework(groupId);
+}
+
+function switchHomeworkGroup(groupId){
+  CURRENT_HOMEWORK_GROUP_ID = parseInt(groupId);
+  renderSupervisorHomeworkPage();
 }
 
 async function loadSupervisorHomework(groupId){
@@ -4876,14 +4895,18 @@ async function renderMonthlyReportsPage(){
       <div><h1>التقرير الشهري</h1><p>تقرير حضور ودرجات كل طالب، جاهز للطباعة</p></div>
     </div>
     <div class="table-card">
-      <div class="toolbar">
+      <div class="toolbar" style="gap:10px;">
         <div class="search-wrap"><i data-lucide="search" class="search-ic" style="width:14px;height:14px;"></i><input id="mrSearchInput" placeholder="بحث بالاسم..." oninput="filterMonthlyReportsTable()"></div>
+        <select class="form-select" id="mrGroupFilter" style="width:auto;min-width:180px;" onchange="filterMonthlyReportsTable()">
+          <option value="">كل المجموعات</option>
+          ${groups.map(g=>`<option value="${g.id}">${escapeHtml(g.name)}</option>`).join("")}
+        </select>
       </div>
       <div class="table-wrap"><table>
         <thead><tr><th>#</th><th>الطالب</th><th>المجموعة</th><th></th></tr></thead>
         <tbody id="mrTableBody">
           ${students.map(s=>`
-            <tr data-search="${escapeHtml(s.full_name.toLowerCase())}">
+            <tr data-search="${escapeHtml(s.full_name.toLowerCase())}" data-group="${s.group_id}">
               <td style="color:var(--text-3);font-family:monospace;">#${s.id}</td>
               <td class="td-name">${escapeHtml(s.full_name)}</td>
               <td><span class="badge badge-teal">${escapeHtml(s.group_name)}</span></td>
@@ -4903,8 +4926,11 @@ async function renderMonthlyReportsPage(){
 
 function filterMonthlyReportsTable(){
   const q = (document.getElementById("mrSearchInput")?.value||"").toLowerCase();
+  const groupId = document.getElementById("mrGroupFilter")?.value || "";
   document.querySelectorAll("#mrTableBody tr[data-search]").forEach(tr=>{
-    tr.style.display = tr.dataset.search.includes(q) ? "" : "none";
+    const matchesSearch = tr.dataset.search.includes(q);
+    const matchesGroup = !groupId || tr.dataset.group === groupId;
+    tr.style.display = (matchesSearch && matchesGroup) ? "" : "none";
   });
 }
 
