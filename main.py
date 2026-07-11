@@ -120,6 +120,18 @@ class StudentIn(BaseModel):
     notes: Optional[str] = Field(None, max_length=2000)
 
 
+class BulkStudentIn(BaseModel):
+    full_name: str = Field(..., max_length=150)
+    group_id: int
+    phone: Optional[str] = Field(None, max_length=30)
+    parent_phone: Optional[str] = Field(None, max_length=30)
+    notes: Optional[str] = Field(None, max_length=2000)
+
+
+class BulkStudentsRequest(BaseModel):
+    students: list[BulkStudentIn]
+
+
 class QuizIn(BaseModel):
     title: str = Field(..., max_length=200)
     description: Optional[str] = Field(None, max_length=2000)
@@ -838,6 +850,41 @@ def add_student(student: StudentIn, session=Depends(require_roles("admin"))):
              student.group_id, student.notes, code, att_code)
         )
         return {"id": cur.lastrowid, "access_code": code, "attendance_code": att_code, "message": "تم إضافة الطالب بنجاح"}
+
+
+@app.post("/api/students/bulk")
+def bulk_add_students(payload: BulkStudentsRequest, session=Depends(require_roles("admin"))):
+    """استيراد مجموعة طلاب دفعة واحدة (من ملف CSV بيتقرا في الفرونت إند وبيتبعت هنا كـ JSON).
+    بيرجع تقرير: مين اتضاف بنجاح (مع الأكواد بتاعته) ومين فشل ولية"""
+    with get_connection() as conn:
+        created, errors = [], []
+        for idx, s in enumerate(payload.students, start=1):
+            name = (s.full_name or "").strip()
+            if not name:
+                errors.append({"row": idx, "name": s.full_name or "", "error": "الاسم مطلوب"})
+                continue
+            grp = conn.execute("SELECT id FROM groups WHERE id=?", (s.group_id,)).fetchone()
+            if not grp:
+                errors.append({"row": idx, "name": name, "error": "المجموعة غير موجودة"})
+                continue
+            try:
+                code = gen_access_code()
+                while conn.execute("SELECT id FROM students WHERE access_code=?", (code,)).fetchone():
+                    code = gen_access_code()
+                att_code = gen_numeric_code()
+                while conn.execute("SELECT id FROM students WHERE attendance_code=?", (att_code,)).fetchone():
+                    att_code = gen_numeric_code()
+                cur = conn.execute(
+                    """INSERT INTO students (full_name, phone, parent_phone, group_id, notes, access_code, attendance_code)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (name, (s.phone or "").strip() or None, (s.parent_phone or "").strip() or None,
+                     s.group_id, (s.notes or "").strip() or None, code, att_code)
+                )
+                created.append({"id": cur.lastrowid, "full_name": name, "access_code": code, "attendance_code": att_code})
+            except Exception:
+                errors.append({"row": idx, "name": name, "error": "حصلت مشكلة أثناء الإضافة"})
+
+        return {"created_count": len(created), "created": created, "errors": errors}
 
 
 @app.put("/api/students/{student_id}")
