@@ -2560,6 +2560,11 @@ async function renderStudentsPage(){
       <div><h1>الطلاب</h1><p>${students.length} طالب مسجل في النظام</p></div>
       <div class="header-actions">
         <div class="search-wrap" style="width:220px;"><i data-lucide="search" class="search-ic" style="width:14px;height:14px;"></i><input id="studentSearchInput" placeholder="بحث بالاسم أو الـ ID..." oninput="filterStudentsTable()"></div>
+        ${groups.length > 1 ? `
+        <select class="form-select" id="studentsGroupFilter" style="width:auto;min-width:170px;" onchange="filterStudentsTable()">
+          <option value="">كل المجموعات</option>
+          ${groups.map(g=>`<option value="${g.id}">${escapeHtml(g.name)}</option>`).join("")}
+        </select>` : ""}
         ${canManage ? `<button class="btn btn-primary btn-sm" onclick="openAddStudentModal()"><i data-lucide="user-plus" style="width:14px;height:14px;"></i> إضافة طالب</button>`:""}
       </div>
     </div>
@@ -2568,7 +2573,7 @@ async function renderStudentsPage(){
         <thead><tr><th>#</th><th>الطالب</th><th>المجموعة</th><th>رقم الهاتف</th><th>ولي الأمر</th>${canSeeCodes?'<th>كود الحضور</th>':''}${canManage?'<th>كود الدخول</th><th>الحالة</th>':''}<th></th></tr></thead>
         <tbody id="studentsTableBody">
           ${students.map(s=>`
-            <tr data-search="${(s.id+' '+s.full_name).toLowerCase()}">
+            <tr data-search="${(s.id+' '+s.full_name).toLowerCase()}" data-group="${s.group_id}">
               <td style="color:var(--text-3);font-family:monospace;">#${s.id}</td>
               <td class="td-name">${escapeHtml(s.full_name)}</td>
               <td><span class="badge badge-teal">${escapeHtml(s.group_name)}</span></td>
@@ -2596,12 +2601,16 @@ async function renderStudentsPage(){
       </table></div>
     </div>
   `;
+  icons();
 }
 
 function filterStudentsTable(){
   const q = document.getElementById("studentSearchInput").value.trim().toLowerCase();
+  const groupId = document.getElementById("studentsGroupFilter")?.value || "";
   document.querySelectorAll("#studentsTableBody tr[data-search]").forEach(row=>{
-    row.style.display = row.dataset.search.includes(q) ? "" : "none";
+    const matchesSearch = row.dataset.search.includes(q);
+    const matchesGroup = !groupId || row.dataset.group === groupId;
+    row.style.display = (matchesSearch && matchesGroup) ? "" : "none";
   });
 }
 
@@ -3385,7 +3394,9 @@ function qsInitial(name){ return (name||"?").trim().charAt(0); }
 
 async function openQuizScoresModal(quizId, title, maxScore){
   const rows = await api(`/api/quizzes/${quizId}/scores`);
-  QS_STATE = { quizId, title, maxScore, canEdit: SESSION.role !== "student", rows, search:"", sortDir:"asc" };
+  const groupsInRows = Array.from(new Map(rows.filter(r=>r.group_id!=null).map(r=>[r.group_id, r.group_name || ""])).entries())
+    .map(([id, name])=>({id, name}));
+  QS_STATE = { quizId, title, maxScore, canEdit: SESSION.role !== "student", rows, search:"", sortDir:"asc", groupFilter:"", groups: groupsInRows };
   openModal(`
     <div class="qs-head">
       <div class="qs-head-text">
@@ -3416,12 +3427,20 @@ function qsRenderBody(){
   const body = document.getElementById("qsModalBody");
   if (!body || !st) return;
 
+  // لو الكويز شامل أكتر من مجموعة (كويز مرحلة/عام والمشرف مسؤول عن أكتر من مجموعة)، نظهر فلتر بالمجموعة
+  const showGroupFilter = st.groups && st.groups.length > 1;
+
   body.innerHTML = `
     <div class="qs-toolbar">
       <div class="search-wrap">
         <i data-lucide="search" class="search-ic" style="width:15px;height:15px;"></i>
         <input class="form-input" style="padding-right:12px;" id="qsSearchInput" placeholder="ابحث برقم كود الطالب..." value="${st.search}" oninput="QS_STATE.search=this.value; qsRenderRows();">
       </div>
+      ${showGroupFilter ? `
+      <select class="form-select" id="qsGroupFilter" style="width:auto;min-width:170px;" onchange="QS_STATE.groupFilter=this.value; qsRenderRows();">
+        <option value="">كل المجموعات</option>
+        ${st.groups.map(g=>`<option value="${g.id}">${escapeHtml(g.name)}</option>`).join("")}
+      </select>` : ""}
       <button class="qs-sort-btn" onclick="QS_STATE.sortDir = QS_STATE.sortDir==='asc'?'desc':'asc'; qsRenderRows();">
         <i data-lucide="arrow-up-down" style="width:14px;height:14px;"></i> ترتيب الاسم
       </button>
@@ -3431,6 +3450,7 @@ function qsRenderBody(){
         <thead><tr>
           <th><i data-lucide="hash" style="width:12px;height:12px;"></i>كود الطالب</th>
           <th><i data-lucide="user" style="width:12px;height:12px;"></i>اسم الطالب</th>
+          ${showGroupFilter ? `<th><i data-lucide="users" style="width:12px;height:12px;"></i>المجموعة</th>` : ""}
           <th><i data-lucide="star" style="width:12px;height:12px;"></i>الدرجة (من ${st.maxScore})</th>
           ${st.canEdit ? `<th><i data-lucide="settings" style="width:12px;height:12px;"></i>الإجراءات</th>` : ""}
         </tr></thead>
@@ -3447,8 +3467,10 @@ function qsRenderRows(){
   const tbody = document.getElementById("qsTableBody");
   if (!tbody || !st) return;
 
+  const showGroupCol = st.groups && st.groups.length > 1;
   const q = (st.search||"").trim().toLowerCase();
   let list = st.rows.filter(r => !q || r.full_name.toLowerCase().includes(q) || (r.attendance_code||"").toLowerCase().includes(q));
+  if (st.groupFilter) list = list.filter(r => String(r.group_id) === String(st.groupFilter));
   list = list.slice().sort((a,b)=> st.sortDir==="asc" ? a.full_name.localeCompare(b.full_name,'ar') : b.full_name.localeCompare(a.full_name,'ar'));
 
   tbody.innerHTML = list.map(r=>`
@@ -3460,6 +3482,7 @@ function qsRenderRows(){
             <span class="td-name">${escapeHtml(r.full_name)}</span>
           </div>
         </td>
+        ${showGroupCol ? `<td><span class="badge badge-teal">${escapeHtml(r.group_name||"—")}</span></td>` : ""}
         <td>${st.canEdit
           ? `<input class="form-input qs-score-input" id="score_${r.student_id}" type="number" max="${st.maxScore}" min="0" value="${r.score??''}" onkeydown="if(event.key==='Enter'){event.preventDefault();saveQuizScore(${st.quizId}, ${r.student_id}, this.value, this)}"> / ${st.maxScore}`
           : `${r.score ?? "—"} / ${st.maxScore}`
@@ -3471,7 +3494,7 @@ function qsRenderRows(){
               <button class="qs-save-row" onclick="saveQuizScore(${st.quizId}, ${r.student_id}, document.getElementById('score_${r.student_id}').value, document.getElementById('score_${r.student_id}'))"><i data-lucide="save" style="width:13px;height:13px;"></i> حفظ</button>
             </div>
           </td>` : ""}
-      </tr>`).join("") || `<tr><td colspan="${st.canEdit?4:3}" style="text-align:center;color:var(--text-3);padding:24px;">لا يوجد طلاب</td></tr>`;
+      </tr>`).join("") || `<tr><td colspan="${(showGroupCol?1:0)+(st.canEdit?4:3)}" style="text-align:center;color:var(--text-3);padding:24px;">لا يوجد طلاب</td></tr>`;
   icons();
 }
 
@@ -4639,9 +4662,15 @@ async function submitStudentRequest(){
 ===================================================================== */
 async function renderStudentRequestsPage(){
   const c = document.getElementById("pageContainer");
+  const groups = SESSION.role === "supervisor" ? await loadGroups() : [];
   c.innerHTML = `
     <div class="page-header"><div><h1>طلبات الطلاب</h1><p>طلبات طلاب مجموعتك (إذن حضور / مشكلة / شرح)</p></div>
       <div class="header-actions">
+        ${groups.length > 1 ? `
+        <select class="form-input" id="f_req_group_filter" style="width:auto;" onchange="loadStudentRequestsList()">
+          <option value="">كل المجموعات</option>
+          ${groups.map(g=>`<option value="${g.id}">${escapeHtml(g.name)}</option>`).join("")}
+        </select>` : ""}
         <select class="form-input" id="f_req_status_filter" style="width:auto;" onchange="loadStudentRequestsList()">
           <option value="">كل الحالات</option>
           <option value="pending">قيد الانتظار</option>
@@ -4659,7 +4688,9 @@ async function loadStudentRequestsList(){
   const wrap = document.getElementById("studentRequestsWrap");
   if (!wrap) return;
   const status = document.getElementById("f_req_status_filter")?.value || "";
-  const items = await api("/api/student-requests" + (status?`?status=${status}`:""));
+  const groupId = document.getElementById("f_req_group_filter")?.value || "";
+  const qs = [status?`status=${status}`:"", groupId?`group_id=${groupId}`:""].filter(Boolean).join("&");
+  const items = await api("/api/student-requests" + (qs?`?${qs}`:""));
   window._studentRequestsCache = items;
   if (!items.length){
     wrap.innerHTML = `<div class="empty-state"><div class="empty-icon"><i data-lucide="inbox" style="width:26px;height:26px;"></i></div><div class="empty-title">لا يوجد طلبات</div></div>`;
