@@ -971,6 +971,7 @@ const NAV_BY_ROLE = {
     {id:"dashboard", label:"لوحة التحكم", icon:"layout-dashboard"},
     {id:"groups", label:"المجموعات", icon:"users"},
     {id:"students", label:"الطلاب", icon:"user"},
+    {id:"import_students", label:"استيراد طلاب (CSV)", icon:"upload"},
     {id:"supervisors", label:"المشرفين", icon:"shield-check"},
     {id:"head_supervisors", label:"مشرفي المشرفين", icon:"shield"},
     {id:"teachers", label:"المدرسين", icon:"presentation"},
@@ -1139,7 +1140,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
    موجه الصفحات الرئيسي
 ===================================================================== */
 const PAGE_TITLES = {
-  dashboard:"لوحة التحكم", groups:"المجموعات", students:"الطلاب",
+  dashboard:"لوحة التحكم", groups:"المجموعات", students:"الطلاب", import_students:"استيراد طلاب",
   supervisors:"المشرفين", teachers:"المدرسين", schedule:"جدول المواعيد",
   head_supervisors:"مشرفي المشرفين",
   quizzes:"الكويزات والامتحانات", attendance:"الحضور والغياب", boards:"سبورة الحصص",
@@ -1164,6 +1165,7 @@ async function renderPage(page){
       dashboard: renderDashboardPage,
       groups: renderGroupsPage,
       students: renderStudentsPage,
+      import_students: renderImportStudentsPage,
       supervisors: ()=>renderUsersPage("supervisor"),
       teachers: ()=>renderUsersPage("teacher"),
       head_supervisors: ()=>renderUsersPage("head_supervisor"),
@@ -2622,6 +2624,206 @@ function filterStudentsTable(){
     const matchesGroup = !groupId || row.dataset.group === groupId;
     row.style.display = (matchesSearch && matchesGroup) ? "" : "none";
   });
+}
+
+/* =====================================================================
+   استيراد طلاب من ملف CSV - تحميل نموذج، رفع الملف، معاينة، ثم الإضافة دفعة واحدة
+===================================================================== */
+const IMPORT_CSV_HEADERS = ["اسم_الطالب", "المجموعة", "رقم_هاتف_الطالب", "رقم_هاتف_ولي_الأمر", "ملاحظات"];
+let IMPORT_PARSED_ROWS = [];
+
+function downloadStudentsCsvTemplate(){
+  const sampleRows = [
+    ["أحمد محمد علي", "الجمعة الساعة 8", "01012345678", "01098765432", ""],
+    ["سارة أحمد", "السبت الساعة 4", "01055554444", "", ""],
+  ];
+  const lines = [IMPORT_CSV_HEADERS, ...sampleRows].map(r => r.map(csvEscapeCell).join(",")).join("\r\n");
+  downloadTextAsFile("نموذج_استيراد_الطلاب.csv", "\uFEFF" + lines, "text/csv;charset=utf-8;");
+}
+
+function csvEscapeCell(val){
+  val = String(val ?? "");
+  if (/[",\r\n]/.test(val)) return `"${val.replace(/"/g, '""')}"`;
+  return val;
+}
+
+function downloadTextAsFile(filename, content, mime){
+  const blob = new Blob([content], {type: mime || "text/plain;charset=utf-8;"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 10000);
+}
+
+// بارسر CSV بسيط بيراعي الحقول اللي فيها فواصل أو سطور جديدة جوه علامات تنصيص "..."
+function parseCsvText(text){
+  text = text.replace(/^\uFEFF/, ""); // شيل الـ BOM لو موجود
+  const rows = [];
+  let row = [], cell = "", inQuotes = false;
+  for (let i = 0; i < text.length; i++){
+    const c = text[i], next = text[i+1];
+    if (inQuotes){
+      if (c === '"' && next === '"'){ cell += '"'; i++; }
+      else if (c === '"'){ inQuotes = false; }
+      else { cell += c; }
+    } else {
+      if (c === '"'){ inQuotes = true; }
+      else if (c === ','){ row.push(cell); cell = ""; }
+      else if (c === '\r'){ /* skip */ }
+      else if (c === '\n'){ row.push(cell); rows.push(row); row = []; cell = ""; }
+      else { cell += c; }
+    }
+  }
+  if (cell.length || row.length){ row.push(cell); rows.push(row); }
+  return rows.filter(r => r.some(c => (c||"").trim() !== ""));
+}
+
+async function renderImportStudentsPage(){
+  const groups = await loadGroups();
+  CACHE_ALL_GROUPS = groups;
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header"><div><h1>استيراد طلاب (CSV)</h1><p>ارفع كل بيانات الطلاب مرة واحدة بدل الإدخال اليدوي طالب طالب</p></div></div>
+
+    <div class="table-card" style="padding:20px;">
+      <div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;">
+        <div style="flex:1;min-width:260px;">
+          <div style="font-weight:700;font-size:14px;margin-bottom:6px;">الخطوات</div>
+          <ol style="margin:0;padding-right:18px;font-size:13px;color:var(--text-2);line-height:2;">
+            <li>حمّل نموذج الـ CSV، واملى فيه بيانات الطلاب (كل طالب في سطر).</li>
+            <li>عمود "المجموعة" لازم يبقى مطابق لاسم مجموعة موجودة فعلاً في النظام بالظبط.</li>
+            <li>ارفع الملف بعد ما تملاه، وهتظهرلك معاينة قبل ما تأكد الإضافة.</li>
+          </ol>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;min-width:200px;">
+          <button class="btn btn-ghost" onclick="downloadStudentsCsvTemplate()"><i data-lucide="download" style="width:14px;height:14px;"></i> تحميل نموذج CSV</button>
+          <label class="btn btn-primary" style="cursor:pointer;">
+            <i data-lucide="upload" style="width:14px;height:14px;"></i> اختيار ملف CSV
+            <input type="file" accept=".csv,text/csv" id="importCsvFile" style="display:none;" onchange="handleImportCsvFile(this.files[0])">
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div id="importPreviewWrap"></div>
+  `;
+  icons();
+}
+
+function handleImportCsvFile(file){
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const rows = parseCsvText(String(e.target.result || ""));
+    if (!rows.length){ showToast("الملف فاضي أو مش مقروء", "error"); return; }
+    // لو أول سطر شبه الهيدر (فيه "اسم" مثلاً) نشيله
+    const first = (rows[0][0] || "").trim();
+    const dataRows = /اسم|name/i.test(first) ? rows.slice(1) : rows;
+    parseAndPreviewImportRows(dataRows);
+  };
+  reader.onerror = () => showToast("تعذر قراءة الملف", "error");
+  reader.readAsText(file, "UTF-8");
+}
+
+function parseAndPreviewImportRows(dataRows){
+  const groupsByName = new Map(CACHE_ALL_GROUPS.map(g => [g.name.trim().toLowerCase(), g]));
+  IMPORT_PARSED_ROWS = dataRows.map((cols, idx) => {
+    const full_name = (cols[0] || "").trim();
+    const groupNameRaw = (cols[1] || "").trim();
+    const phone = (cols[2] || "").trim();
+    const parent_phone = (cols[3] || "").trim();
+    const notes = (cols[4] || "").trim();
+    const matchedGroup = groupsByName.get(groupNameRaw.toLowerCase());
+    let error = null;
+    if (!full_name) error = "الاسم فاضي";
+    else if (!groupNameRaw) error = "المجموعة فاضية";
+    else if (!matchedGroup) error = "المجموعة مش موجودة في النظام";
+    return {
+      row: idx + 1, full_name, groupNameRaw, phone, parent_phone, notes,
+      group_id: matchedGroup ? matchedGroup.id : null, error,
+    };
+  });
+  renderImportPreview();
+}
+
+function renderImportPreview(){
+  const wrap = document.getElementById("importPreviewWrap");
+  if (!wrap) return;
+  const validCount = IMPORT_PARSED_ROWS.filter(r => !r.error).length;
+  const errorCount = IMPORT_PARSED_ROWS.length - validCount;
+
+  wrap.innerHTML = `
+    <div class="table-card" style="margin-top:16px;">
+      <div class="toolbar" style="justify-content:space-between;">
+        <div style="display:flex;gap:10px;align-items:center;">
+          <span class="badge badge-green">${validCount} صف سليم</span>
+          ${errorCount ? `<span class="badge badge-red">${errorCount} صف فيه مشكلة</span>` : ""}
+        </div>
+        <button class="btn btn-primary btn-sm" id="importSubmitBtn" ${validCount ? "" : "disabled"} onclick="submitImportStudents()"><i data-lucide="check" style="width:14px;height:14px;"></i> إضافة ${validCount} طالب</button>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>#</th><th>الاسم</th><th>المجموعة</th><th>هاتف الطالب</th><th>هاتف ولي الأمر</th><th>الحالة</th></tr></thead>
+        <tbody>
+          ${IMPORT_PARSED_ROWS.map(r => `
+            <tr style="${r.error?'background:var(--danger-bg);':''}">
+              <td style="color:var(--text-3);">${r.row}</td>
+              <td class="td-name">${escapeHtml(r.full_name || "—")}</td>
+              <td>${escapeHtml(r.groupNameRaw || "—")}</td>
+              <td>${escapeHtml(r.phone || "—")}</td>
+              <td>${escapeHtml(r.parent_phone || "—")}</td>
+              <td>${r.error ? `<span class="badge badge-red">${escapeHtml(r.error)}</span>` : `<span class="badge badge-green">جاهز</span>`}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table></div>
+    </div>
+    <div id="importResultWrap"></div>
+  `;
+  icons();
+}
+
+async function submitImportStudents(){
+  const validRows = IMPORT_PARSED_ROWS.filter(r => !r.error);
+  if (!validRows.length) return;
+  const btn = document.getElementById("importSubmitBtn");
+  if (btn){ btn.disabled = true; btn.textContent = "بيترفع..."; }
+
+  const payload = { students: validRows.map(r => ({
+    full_name: r.full_name, group_id: r.group_id,
+    phone: r.phone || null, parent_phone: r.parent_phone || null, notes: r.notes || null,
+  })) };
+
+  let res;
+  try {
+    res = await api("/api/students/bulk", {method:"POST", body: JSON.stringify(payload)});
+  } catch(e){
+    showToast("حصلت مشكلة أثناء رفع الطلاب", "error");
+    if (btn){ btn.disabled = false; btn.innerHTML = `<i data-lucide="check" style="width:14px;height:14px;"></i> إضافة ${validRows.length} طالب`; icons(); }
+    return;
+  }
+
+  showToast(`تم إضافة ${res.created_count} طالب بنجاح`, "success");
+  const resultWrap = document.getElementById("importResultWrap");
+  resultWrap.innerHTML = `
+    <div class="table-card" style="margin-top:16px;padding:16px;">
+      <div style="font-weight:700;font-size:14px;margin-bottom:10px;">النتيجة: ${res.created_count} طالب اتضاف${res.errors.length?`, ${res.errors.length} فشل`:""}</div>
+      ${res.created.length ? `<button class="btn btn-ghost btn-sm" onclick='downloadCreatedStudentsCodes(${JSON.stringify(res.created).replace(/'/g, "&apos;")})'><i data-lucide="download" style="width:14px;height:14px;"></i> تنزيل أكواد الدخول (CSV)</button>` : ""}
+      ${res.errors.length ? `
+        <div style="margin-top:14px;">
+          <div style="font-weight:700;font-size:13px;color:var(--danger);margin-bottom:6px;">صفوف فشلت:</div>
+          ${res.errors.map(e=>`<div style="font-size:12.5px;color:var(--text-2);padding:4px 0;border-bottom:1px solid var(--border);">صف ${e.row} - ${escapeHtml(e.name)}: ${escapeHtml(e.error)}</div>`).join("")}
+        </div>` : ""}
+    </div>
+  `;
+  icons();
+  IMPORT_PARSED_ROWS = [];
+}
+
+function downloadCreatedStudentsCodes(created){
+  const header = ["اسم_الطالب", "كود_الدخول", "كود_الحضور"];
+  const lines = [header, ...created.map(c => [c.full_name, c.access_code, c.attendance_code])]
+    .map(r => r.map(csvEscapeCell).join(",")).join("\r\n");
+  downloadTextAsFile("أكواد_الطلاب_الجدد.csv", "\uFEFF" + lines, "text/csv;charset=utf-8;");
 }
 
 /* =====================================================================
