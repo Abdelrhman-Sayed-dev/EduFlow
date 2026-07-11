@@ -1296,8 +1296,10 @@ def get_quiz_scores(quiz_id: int, session=Depends(get_current_session)):
             rows = conn.execute(base_query, params).fetchall()
         else:
             base_query = """
-                SELECT s.id as student_id, s.full_name, s.attendance_code, qs.score, qs.notes, qs.id as score_id, s.group_id
+                SELECT s.id as student_id, s.full_name, s.attendance_code, qs.score, qs.notes, qs.id as score_id,
+                       s.group_id, g.name as group_name
                 FROM students s
+                JOIN groups g ON g.id = s.group_id
                 LEFT JOIN quiz_scores qs ON qs.student_id = s.id AND qs.quiz_id = ?
                 WHERE s.is_active=1
             """
@@ -2028,7 +2030,7 @@ def create_student_request(data: StudentRequestIn, session=Depends(get_current_s
 
 
 @app.get("/api/student-requests")
-def get_student_requests(status: Optional[str] = None, session=Depends(get_current_session)):
+def get_student_requests(status: Optional[str] = None, group_id: Optional[int] = None, session=Depends(get_current_session)):
     """
     عرض الطلبات:
     - الطالب: يشوف طلباته هو بس
@@ -2061,6 +2063,9 @@ def get_student_requests(status: Optional[str] = None, session=Depends(get_curre
         if status:
             query += " AND sr.status = ?"
             params.append(status)
+        if group_id:
+            query += " AND sr.group_id = ?"
+            params.append(group_id)
 
         query += " ORDER BY sr.created_at DESC"
         rows = conn.execute(query, params).fetchall()
