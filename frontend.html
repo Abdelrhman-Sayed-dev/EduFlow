@@ -505,6 +505,11 @@ body.is-student .bottom-nav, body.is-supervisor .bottom-nav, body.is-teacher .bo
 .student-more-item{display:flex;align-items:center;gap:12px;padding:12px 6px;border-bottom:1px solid var(--border);cursor:pointer;}
 .student-more-item:last-child{border-bottom:none;}
 .student-more-ic{width:38px;height:38px;border-radius:var(--radius-sm);background:var(--primary-10);color:var(--primary);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+
+/* صفوف فيديوهات الطالب */
+.video-row{display:flex;align-items:center;gap:12px;padding:12px 8px;border-bottom:1px solid var(--border);}
+.video-row:last-child{border-bottom:none;}
+.video-row-ic{width:38px;height:38px;border-radius:var(--radius-sm);background:var(--primary-10);color:var(--primary);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
 </style>
 </head>
 <body>
@@ -995,6 +1000,7 @@ const NAV_BY_ROLE = {
     {id:"boards", label:"سبورة الحصة", icon:"presentation"},
     {id:"quizzes", label:"الكويزات والامتحانات", icon:"file-check-2"},
     {id:"homework", label:"الواجبات", icon:"clipboard-list"},
+    {id:"student_videos", label:"فيديوهات الطلاب", icon:"video"},
     {id:"attendance", label:"الحضور والغياب", icon:"calendar-check"},
     {id:"monthly_reports", label:"التقرير الشهري", icon:"file-bar-chart"},
     {id:"student_requests", label:"طلبات الطلاب", icon:"inbox"},
@@ -1006,6 +1012,7 @@ const NAV_BY_ROLE = {
     {id:"myscores", label:"درجاتي", icon:"file-check-2"},
     {id:"myattendance", label:"حضوري", icon:"calendar-check"},
     {id:"myboard", label:"سبورة مجموعتي", icon:"presentation"},
+    {id:"myvideos", label:"فيديوهاتي", icon:"video"},
     {id:"myrequests", label:"طلباتي", icon:"send"},
   ],
 };
@@ -1144,6 +1151,7 @@ const PAGE_TITLES = {
   teacher_analytics:"التحليلات", teacher_compare:"مقارنة المجموعات",
   teacher_ranking:"الترتيب المتقدم", teacher_reports:"التقارير", teacher_schedule:"جدولي",
   myrequests:"طلباتي", student_requests:"طلبات الطلاب",
+  student_videos:"فيديوهات الطلاب", myvideos:"فيديوهاتي",
 };
 
 async function renderPage(page){
@@ -1184,6 +1192,8 @@ async function renderPage(page){
       teacher_schedule: renderTeacherSchedulePage,
       myrequests: renderMyRequestsPage,
       student_requests: renderStudentRequestsPage,
+      student_videos: renderSupervisorVideosPage,
+      myvideos: renderMyVideosPage,
     };
     const fn = renderers[page];
     if (fn) await fn();
@@ -3218,6 +3228,7 @@ let CURRENT_HOMEWORK_GROUP_ID = null;
 
 async function renderSupervisorHomeworkPage(){
   const groups = SESSION.role === "supervisor" ? await loadGroups() : [];
+  CACHE_ALL_GROUPS = groups;
   if (!groups.length){
     const c = document.getElementById("pageContainer");
     c.innerHTML = `<div class="empty-state"><div class="empty-icon"><i data-lucide="users" style="width:26px;height:26px;"></i></div><div class="empty-title">معندكش مجموعة لسه</div><div class="empty-desc">كلم الأدمن عشان يعينك على مجموعة.</div></div>`;
@@ -3307,18 +3318,21 @@ async function loadSupervisorHomework(groupId){
 
 function openAddHomeworkModal(groupId){
   openModal("إضافة واجب حصة", `
+    <div class="form-group"><label class="form-label">المجموعة <span class="req">*</span></label><select class="form-select" id="f_hw_group">${groupOptionsAll(groupId)}</select></div>
     <div class="form-group"><label class="form-label">رقم الحصة <span class="req">*</span></label><input class="form-input" id="f_hw_session" type="number" min="1"></div>
     <div class="form-group"><label class="form-label">تاريخ الحصة</label><input class="form-input" id="f_hw_date" type="date" value="${todayStr()}"></div>
     <div class="form-group"><label class="form-label">وصف الواجب <span class="req">*</span></label><textarea class="form-textarea" id="f_hw_desc"></textarea></div>
   `, `
     <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
-    <button class="btn btn-primary" onclick="submitAddHomework(${groupId})"><i data-lucide="check" style="width:14px;height:14px;"></i> إضافة</button>
+    <button class="btn btn-primary" onclick="submitAddHomework()"><i data-lucide="check" style="width:14px;height:14px;"></i> إضافة</button>
   `);
 }
 
-async function submitAddHomework(groupId){
+async function submitAddHomework(){
+  const groupId = parseInt(document.getElementById("f_hw_group").value);
   const sessionNumber = document.getElementById("f_hw_session").value;
   const description = document.getElementById("f_hw_desc").value.trim();
+  if (!groupId){ showToast("لازم تحدد المجموعة", "error"); return; }
   if (!sessionNumber || !description){ showToast("لازم تحدد رقم الحصة ووصف الواجب", "error"); return; }
   await api("/api/homework", {method:"POST", body: JSON.stringify({
     group_id: groupId, session_number: parseInt(sessionNumber),
@@ -3326,6 +3340,9 @@ async function submitAddHomework(groupId){
   })});
   showToast("تم إضافة الواجب", "success");
   closeOverlay("genericModal");
+  CURRENT_HOMEWORK_GROUP_ID = groupId;
+  const switcher = document.getElementById("hwGroupSwitcher");
+  if (switcher) switcher.value = groupId;
   loadSupervisorHomework(groupId);
 }
 
@@ -4068,6 +4085,196 @@ function deleteBoardImage(id){
 }
 
 /* =====================================================================
+   فيديوهات الطلاب - المشرف بيرفع فيديو لطالب معين، والطالب يتفرج عليه
+   بس من غير ما يقدر ينزّله (رابط البث محمي بصلاحيات + تحكمات المشغل)
+===================================================================== */
+let CURRENT_VIDEOS_GROUP_ID = null;
+
+async function renderSupervisorVideosPage(){
+  const groups = SESSION.role === "supervisor" ? await loadGroups() : [];
+  if (!groups.length){
+    const c = document.getElementById("pageContainer");
+    c.innerHTML = `<div class="empty-state"><div class="empty-icon"><i data-lucide="users" style="width:26px;height:26px;"></i></div><div class="empty-title">معندكش مجموعة لسه</div><div class="empty-desc">كلم الأدمن عشان يعينك على مجموعة.</div></div>`;
+    return;
+  }
+  if (!CURRENT_VIDEOS_GROUP_ID || !groups.some(g => g.id === CURRENT_VIDEOS_GROUP_ID)) {
+    CURRENT_VIDEOS_GROUP_ID = groups[0].id;
+  }
+  const groupId = CURRENT_VIDEOS_GROUP_ID;
+  const students = await loadStudents({group_id: groupId});
+
+  const c = document.getElementById("pageContainer");
+  const groupSwitcher = groups.length > 1 ? `
+      <select class="form-select" id="vidGroupSwitcher" style="width:auto;min-width:200px;" onchange="CURRENT_VIDEOS_GROUP_ID=parseInt(this.value); renderSupervisorVideosPage();">
+        ${groups.map(g => `<option value="${g.id}" ${g.id===groupId?"selected":""}>${escapeHtml(g.name)}</option>`).join("")}
+      </select>` : "";
+
+  c.innerHTML = `
+    <div class="page-header"><div><h1>فيديوهات الطلاب</h1><p>ارفع فيديو خاص لأي طالب في مجموعتك، والطالب يقدر يتفرج عليه بس من غير تنزيل</p></div>
+      <div class="header-actions" style="gap:10px;">${groupSwitcher}</div>
+    </div>
+    <div class="table-card">
+      <div class="table-wrap"><table>
+        <thead><tr><th>#</th><th>الطالب</th><th></th></tr></thead>
+        <tbody>
+          ${students.map(s=>`
+            <tr>
+              <td style="color:var(--text-3);font-family:monospace;">#${s.id}</td>
+              <td class="td-name">${escapeHtml(s.full_name)}</td>
+              <td class="td-actions">
+                <button class="btn btn-primary btn-sm" onclick="openStudentVideosModal(${s.id}, '${jsAttr(s.full_name)}')"><i data-lucide="video" style="width:14px;height:14px;"></i> الفيديوهات</button>
+              </td>
+            </tr>`).join("") || `<tr><td colspan="3" style="text-align:center;color:var(--text-3);padding:30px;">لا يوجد طلاب في المجموعة دي</td></tr>`}
+        </tbody>
+      </table></div>
+    </div>
+  `;
+  icons();
+}
+
+function videoFileSizeLabel(bytes){
+  if (!bytes) return "—";
+  const mb = bytes / (1024*1024);
+  return mb >= 1024 ? `${(mb/1024).toFixed(1)} جيجا` : `${mb.toFixed(1)} ميجا`;
+}
+
+async function openStudentVideosModal(studentId, studentName){
+  const canManage = SESSION.role !== "student";
+  const videos = await api(`/api/students/${studentId}/videos`);
+  openModal(`فيديوهات ${escapeHtml(studentName)}`, `
+    <div id="studentVideosList">
+      ${videos.length ? videos.map(v=>`
+        <div class="video-row">
+          <div class="video-row-ic"><i data-lucide="video" style="width:18px;height:18px;"></i></div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:700;font-size:13.5px;">${escapeHtml(v.title)}</div>
+            <div style="font-size:11.5px;color:var(--text-3);">${escapeHtml(v.description||"")}${v.description?" · ":""}${videoFileSizeLabel(v.file_size)} · ${(v.created_at||"").slice(0,10)}</div>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="openVideoPlayerModal(${v.id}, '${jsAttr(v.title)}')"><i data-lucide="play" style="width:13px;height:13px;"></i> تشغيل</button>
+          ${canManage ? `<button class="action-btn" title="حذف الفيديو" onclick="deleteStudentVideo(${v.id}, ${studentId}, '${jsAttr(studentName)}')"><i data-lucide="trash-2" style="width:15px;height:15px;color:var(--danger);"></i></button>` : ""}
+        </div>
+      `).join("") : `<div class="empty-state" style="padding:20px;"><div class="empty-title">لا يوجد فيديوهات لسه</div></div>`}
+    </div>
+  `, canManage ? `
+    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>
+    <button class="btn btn-primary" onclick="openUploadVideoModal(${studentId}, '${jsAttr(studentName)}')"><i data-lucide="upload" style="width:14px;height:14px;"></i> رفع فيديو جديد</button>
+  ` : `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`);
+}
+
+function openUploadVideoModal(studentId, studentName){
+  openModal(`رفع فيديو لـ ${escapeHtml(studentName)}`, `
+    <div class="form-group"><label class="form-label">عنوان الفيديو <span class="req">*</span></label><input class="form-input" id="f_vid_title" placeholder="مثال: حل نموذج امتحان"></div>
+    <div class="form-group"><label class="form-label">وصف (اختياري)</label><textarea class="form-textarea" id="f_vid_desc"></textarea></div>
+    <div class="form-group"><label class="form-label">ملف الفيديو <span class="req">*</span></label><input class="form-input" id="f_vid_file" type="file" accept="video/*"></div>
+    <div id="vidUploadProgressWrap" style="display:none;margin-top:10px;">
+      <div style="height:8px;background:var(--surface-3);border-radius:99px;overflow:hidden;"><div id="vidUploadProgressBar" style="height:100%;width:0%;background:var(--primary);transition:width .15s;"></div></div>
+      <div id="vidUploadProgressLabel" style="font-size:11.5px;color:var(--text-3);margin-top:5px;">بيترفع... 0%</div>
+    </div>
+  `, `
+    <button class="btn btn-ghost" id="vidUploadCancelBtn" onclick="closeOverlay('genericModal')">إلغاء</button>
+    <button class="btn btn-primary" id="vidUploadSubmitBtn" onclick="submitUploadVideo(${studentId}, '${jsAttr(studentName)}')"><i data-lucide="upload" style="width:14px;height:14px;"></i> رفع</button>
+  `);
+}
+
+function submitUploadVideo(studentId, studentName){
+  const title = document.getElementById("f_vid_title").value.trim();
+  const description = document.getElementById("f_vid_desc").value.trim();
+  const fileInput = document.getElementById("f_vid_file");
+  const file = fileInput.files[0];
+  if (!title || !file){ showToast("لازم تكتب عنوان وتختار ملف فيديو", "error"); return; }
+
+  const form = new FormData();
+  form.append("title", title);
+  form.append("description", description);
+  form.append("file", file);
+
+  const progressWrap = document.getElementById("vidUploadProgressWrap");
+  const progressBar = document.getElementById("vidUploadProgressBar");
+  const progressLabel = document.getElementById("vidUploadProgressLabel");
+  const submitBtn = document.getElementById("vidUploadSubmitBtn");
+  const cancelBtn = document.getElementById("vidUploadCancelBtn");
+  progressWrap.style.display = "block";
+  submitBtn.disabled = true; submitBtn.style.opacity = "0.6";
+  cancelBtn.disabled = true; cancelBtn.style.opacity = "0.6";
+
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", API + `/api/students/${studentId}/videos`);
+  if (TOKEN) xhr.setRequestHeader("Authorization", "Bearer " + TOKEN);
+
+  xhr.upload.onprogress = (e) => {
+    if (!e.lengthComputable) return;
+    const pct = Math.round((e.loaded / e.total) * 100);
+    progressBar.style.width = pct + "%";
+    progressLabel.textContent = `بيترفع... ${pct}%`;
+  };
+
+  xhr.onload = () => {
+    if (xhr.status >= 200 && xhr.status < 300) {
+      showToast("تم رفع الفيديو بنجاح", "success");
+      closeOverlay("genericModal");
+      openStudentVideosModal(studentId, studentName);
+    } else {
+      let msg = "حصلت مشكلة أثناء رفع الفيديو";
+      try { msg = JSON.parse(xhr.responseText).detail || msg; } catch(e){}
+      showToast(msg, "error");
+      submitBtn.disabled = false; submitBtn.style.opacity = "1";
+      cancelBtn.disabled = false; cancelBtn.style.opacity = "1";
+    }
+  };
+  xhr.onerror = () => {
+    showToast("في مشكلة في الاتصال بالسيرفر", "error");
+    submitBtn.disabled = false; submitBtn.style.opacity = "1";
+    cancelBtn.disabled = false; cancelBtn.style.opacity = "1";
+  };
+  xhr.send(form);
+}
+
+function deleteStudentVideo(videoId, studentId, studentName){
+  confirmAction("حذف الفيديو", "متأكد إنك عايز تحذف الفيديو ده نهائيًا؟", async ()=>{
+    await api(`/api/videos/${videoId}`, {method:"DELETE"});
+    showToast("تم حذف الفيديو", "success");
+    openStudentVideosModal(studentId, studentName);
+  });
+}
+
+// مشغل الفيديو - بيتبث من endpoint محمي بصلاحيات (مش رابط عام)، وبنعطّل زرار
+// التنزيل من عناصر تحكم المتصفح ونمنع الكليك يمين، كأقصى حد ممكن تقنيًا من غير
+// نظام DRM حقيقي (اللي مش متاح في مشغل الفيديو العادي بالمتصفح)
+function openVideoPlayerModal(videoId, title){
+  const streamUrl = `${API}/api/videos/${videoId}/stream?token=${encodeURIComponent(TOKEN||"")}`;
+  openModal(escapeHtml(title), `
+    <div style="background:#000;border-radius:12px;overflow:hidden;">
+      <video src="${streamUrl}" controls controlsList="nodownload noremoteplayback" disablePictureInPicture oncontextmenu="return false" style="width:100%;max-height:70vh;display:block;" autoplay></video>
+    </div>
+    <div style="font-size:11.5px;color:var(--text-3);margin-top:10px;text-align:center;">هذا الفيديو للمشاهدة فقط ولا يمكن تنزيله</div>
+  `, `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`,
+  { width: "760px" });
+}
+
+async function renderMyVideosPage(){
+  const videos = await api(`/api/students/${SESSION.id}/videos`);
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header"><div><h1>فيديوهاتي</h1><p>فيديوهات رفعها لك المشرف - للمشاهدة فقط</p></div></div>
+    <div class="table-card">
+      <div id="studentVideosList" style="padding:8px;">
+        ${videos.length ? videos.map(v=>`
+          <div class="video-row">
+            <div class="video-row-ic"><i data-lucide="video" style="width:18px;height:18px;"></i></div>
+            <div style="flex:1;min-width:0;">
+              <div style="font-weight:700;font-size:13.5px;">${escapeHtml(v.title)}</div>
+              <div style="font-size:11.5px;color:var(--text-3);">${escapeHtml(v.description||"")}${v.description?" · ":""}${(v.created_at||"").slice(0,10)}</div>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="openVideoPlayerModal(${v.id}, '${jsAttr(v.title)}')"><i data-lucide="play" style="width:13px;height:13px;"></i> تشغيل</button>
+          </div>
+        `).join("") : `<div class="empty-state" style="padding:30px;"><div class="empty-title">لا يوجد فيديوهات لسه</div></div>`}
+      </div>
+    </div>
+  `;
+  icons();
+}
+
+/* =====================================================================
    مجموعتي - صفحة المشرف
 ===================================================================== */
 async function renderMyGroupPage(){
@@ -4327,6 +4534,11 @@ async function renderSupervisorMorePage(){
         <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">طلبات الطلاب</div><div style="font-size:11.5px;color:var(--text-3);">طلبات مجموعتك (إذن حضور / مشكلة / شرح)</div></div>
         <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
       </div>
+      <div class="student-more-item" onclick="navigateTo('student_videos')">
+        <div class="student-more-ic"><i data-lucide="video" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">فيديوهات الطلاب</div><div style="font-size:11.5px;color:var(--text-3);">ارفع فيديو خاص لأي طالب، للمشاهدة فقط</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
     </div>
     <div class="table-card" style="padding:6px 12px;">
       <div class="student-more-item" onclick="openAccountModal()">
@@ -4351,6 +4563,11 @@ async function renderStudentMorePage(){
       <div class="student-more-item" onclick="navigateTo('myrequests')">
         <div class="student-more-ic"><i data-lucide="send" style="width:18px;height:18px;"></i></div>
         <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">طلباتي</div><div style="font-size:11.5px;color:var(--text-3);">قدّم طلب لمشرف مجموعتك وتابع الردود</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
+      <div class="student-more-item" onclick="navigateTo('myvideos')">
+        <div class="student-more-ic"><i data-lucide="video" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">فيديوهاتي</div><div style="font-size:11.5px;color:var(--text-3);">فيديوهات رفعها لك المشرف، للمشاهدة فقط</div></div>
         <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
       </div>
     </div>

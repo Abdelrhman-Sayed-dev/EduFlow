@@ -518,6 +518,27 @@ def init_db():
         """)
 
         # ---------------------------------------------------------------
+        # فيديوهات الطلاب - المشرف بيرفع فيديو خاص بطالب معين، والطالب يقدر يتفرج
+        # عليه بس (بدون تنزيل) - الملف نفسه بيتخزن على الـ disk برا مجلد الـ uploads
+        # العام، وبيتبث عن طريق endpoint فيه تحقق صلاحيات
+        # ---------------------------------------------------------------
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS student_videos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT,
+            file_path TEXT NOT NULL,
+            file_size INTEGER,
+            mime_type TEXT,
+            uploaded_by INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+            FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL
+        )
+        """)
+
+        # ---------------------------------------------------------------
         # الإشعارات - كل عملية يعملها المشرف بتوصل للطالب (درجة/واجب/سبورة...)
         # ---------------------------------------------------------------
         cur.execute("""

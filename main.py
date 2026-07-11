@@ -13,9 +13,9 @@ import os
 import base64
 import uuid
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, Header, Depends, Request
+from fastapi import FastAPI, HTTPException, Header, Depends, Request, UploadFile, File, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -79,6 +79,13 @@ UPLOADS_DIR = os.environ.get("UPLOADS_DIR", os.path.join(os.environ.get("DATA_DI
 BOARD_IMAGES_DIR = os.path.join(UPLOADS_DIR, "board_images")
 os.makedirs(BOARD_IMAGES_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
+
+# مجلد فيديوهات الطلاب - عمدًا برّا مجلد /uploads العام (اللي متاح لأي حد بالرابط من غير تسجيل دخول)
+# عشان الفيديوهات متتفتحش غير من خلال endpoint فيه تحقق صلاحيات (مشرف المجموعة / الطالب نفسه / الأدمن)
+VIDEOS_DIR = os.environ.get("VIDEOS_DIR", os.path.join(os.environ.get("DATA_DIR", "."), "private_videos"))
+os.makedirs(VIDEOS_DIR, exist_ok=True)
+ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v"}
+MAX_VIDEO_SIZE_BYTES = 500 * 1024 * 1024  # 500 ميجا حد أقصى للفيديو الواحد
 
 
 # ---------------------------------------------------------------------------
@@ -255,11 +262,11 @@ class StudentRequestStatusIn(BaseModel):
 # نظام تسجيل الدخول والصلاحيات
 # ---------------------------------------------------------------------------
 
-def get_current_session(authorization: Optional[str] = Header(None)):
-    """يقرأ التوكن من الهيدر Authorization: Bearer <token> ويتأكد إنه لسه صالح"""
-    if not authorization or not authorization.startswith("Bearer "):
+def _resolve_session_by_token(token: Optional[str]):
+    """المنطق المشترك لقراءة الجلسة من التوكن - مستخدم في get_current_session
+    وفي get_session_for_media (اللي بتقبل التوكن من الـ query string كمان)"""
+    if not token:
         raise HTTPException(status_code=401, detail="لازم تسجل دخول الأول")
-    token = authorization.split(" ", 1)[1].strip()
     with get_connection() as conn:
         sess = conn.execute("SELECT * FROM sessions WHERE token=?", (token,)).fetchone()
         if not sess:
@@ -285,6 +292,26 @@ def get_current_session(authorization: Optional[str] = Header(None)):
                 "type": "student", "id": student["id"], "role": "student",
                 "full_name": student["full_name"], "group_id": student["group_id"]
             }
+
+
+def get_current_session(authorization: Optional[str] = Header(None)):
+    """يقرأ التوكن من الهيدر Authorization: Bearer <token> ويتأكد إنه لسه صالح"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="لازم تسجل دخول الأول")
+    token = authorization.split(" ", 1)[1].strip()
+    return _resolve_session_by_token(token)
+
+
+def get_session_for_media(request: Request, token: Optional[str] = Query(None)):
+    """زي get_current_session بالظبط، بس بتقبل التوكن من الـ query string كمان -
+    ده ضروري لعناصر <video>/<img> لأن المتصفح بيطلبها مباشرة من غير ما نقدر
+    نضيف هيدر Authorization مخصص عليها"""
+    authorization = request.headers.get("authorization")
+    if authorization and authorization.startswith("Bearer "):
+        tok = authorization.split(" ", 1)[1].strip()
+    else:
+        tok = token
+    return _resolve_session_by_token(tok)
 
 
 def require_roles(*roles):
@@ -1148,6 +1175,180 @@ def delete_board_image(image_id: int, session=Depends(require_roles("supervisor"
                 pass
 
         return {"message": "تم حذف الصورة"}
+
+
+# ---------------------------------------------------------------------------
+# فيديوهات الطلاب - المشرف بيرفع فيديو خاص بطالب معين، والطالب يتفرج عليه بس
+# (بث محمي بصلاحيات + بدون رابط تحميل مباشر)
+# ---------------------------------------------------------------------------
+
+def assert_can_access_student_media(conn, session, student_id: int):
+    """يتأكد إن صاحب الجلسة مسموح له يشوف فيديوهات/ملفات الطالب ده:
+    - الطالب نفسه بس
+    - المشرف المسؤول عن مجموعة الطالب
+    - الأدمن / مشرف المشرفين / المدرس"""
+    if session["role"] == "student":
+        if session["id"] != student_id:
+            raise HTTPException(status_code=403, detail="مش مسموح لك تشوف فيديوهات طالب تاني")
+        return
+    student = conn.execute("SELECT group_id FROM students WHERE id=?", (student_id,)).fetchone()
+    if not student:
+        raise HTTPException(status_code=404, detail="الطالب غير موجود")
+    if session["role"] == "supervisor":
+        assert_supervisor_owns_group(conn, session, student["group_id"])
+        return
+    if session["role"] in ("admin", "head_supervisor", "teacher"):
+        return
+    raise HTTPException(status_code=403, detail="مفيش صلاحية للوصول لده")
+
+
+@app.get("/api/students/{student_id}/videos")
+def list_student_videos(student_id: int, session=Depends(get_current_session)):
+    with get_connection() as conn:
+        assert_can_access_student_media(conn, session, student_id)
+        rows = conn.execute("""
+            SELECT sv.id, sv.student_id, sv.title, sv.description, sv.file_size, sv.mime_type,
+                   sv.created_at, u.full_name as uploaded_by_name
+            FROM student_videos sv
+            LEFT JOIN users u ON u.id = sv.uploaded_by
+            WHERE sv.student_id = ?
+            ORDER BY sv.created_at DESC
+        """, (student_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+@app.post("/api/students/{student_id}/videos")
+async def upload_student_video(
+    student_id: int,
+    title: str = Form(...),
+    description: Optional[str] = Form(None),
+    file: UploadFile = File(...),
+    session=Depends(require_roles("admin", "head_supervisor", "supervisor", "teacher")),
+):
+    with get_connection() as conn:
+        assert_can_access_student_media(conn, session, student_id)
+
+        ext = os.path.splitext(file.filename or "")[1].lower()
+        if ext not in ALLOWED_VIDEO_EXTENSIONS:
+            raise HTTPException(status_code=400, detail="صيغة الفيديو غير مدعومة")
+
+        stored_name = f"{uuid.uuid4().hex}{ext}"
+        dest_path = os.path.join(VIDEOS_DIR, stored_name)
+
+        size = 0
+        try:
+            with open(dest_path, "wb") as out:
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > MAX_VIDEO_SIZE_BYTES:
+                        out.close()
+                        os.remove(dest_path)
+                        raise HTTPException(status_code=413, detail="حجم الفيديو أكبر من الحد المسموح (500 ميجا)")
+                    out.write(chunk)
+        except HTTPException:
+            raise
+        except Exception:
+            if os.path.exists(dest_path):
+                os.remove(dest_path)
+            raise HTTPException(status_code=500, detail="حصلت مشكلة أثناء رفع الفيديو")
+
+        cur = conn.execute("""
+            INSERT INTO student_videos (student_id, title, description, file_path, file_size, mime_type, uploaded_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (student_id, title.strip(), (description or "").strip() or None, stored_name, size,
+              file.content_type or "video/mp4", session["id"]))
+
+        create_notification(conn, student_id, "فيديو جديد", f"المشرف رفع فيديو جديد: {title.strip()}")
+
+        return {"id": cur.lastrowid, "message": "تم رفع الفيديو بنجاح"}
+
+
+@app.delete("/api/videos/{video_id}")
+def delete_student_video(video_id: int, session=Depends(require_roles("admin", "head_supervisor", "supervisor", "teacher"))):
+    with get_connection() as conn:
+        vid = conn.execute("SELECT * FROM student_videos WHERE id=?", (video_id,)).fetchone()
+        if not vid:
+            raise HTTPException(status_code=404, detail="الفيديو غير موجود")
+        assert_can_access_student_media(conn, session, vid["student_id"])
+        conn.execute("DELETE FROM student_videos WHERE id=?", (video_id,))
+        file_path = os.path.join(VIDEOS_DIR, vid["file_path"])
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except Exception:
+            pass
+        return {"message": "تم حذف الفيديو"}
+
+
+@app.get("/api/videos/{video_id}/stream")
+def stream_student_video(video_id: int, request: Request, session=Depends(get_session_for_media)):
+    """بث الفيديو مع دعم Range requests (ضروري عشان المستخدم يقدر يتقدم/يرجع في فيديو طويل).
+    الفيديو مش متاح كملف عام قابل للتنزيل - بيتبث بس من خلال الـ endpoint ده بعد التحقق من الصلاحية،
+    وبـ Content-Disposition: inline (مش attachment) عشان يتشغل جوه المشغل مباشرة."""
+    with get_connection() as conn:
+        vid = conn.execute("SELECT * FROM student_videos WHERE id=?", (video_id,)).fetchone()
+        if not vid:
+            raise HTTPException(status_code=404, detail="الفيديو غير موجود")
+        assert_can_access_student_media(conn, session, vid["student_id"])
+
+        file_path = os.path.join(VIDEOS_DIR, vid["file_path"])
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail="ملف الفيديو مفقود")
+
+        file_size = os.path.getsize(file_path)
+        mime_type = vid["mime_type"] or "video/mp4"
+        range_header = request.headers.get("range")
+
+        base_headers = {
+            "Accept-Ranges": "bytes",
+            "Content-Disposition": "inline",
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        }
+
+        if range_header:
+            try:
+                range_val = range_header.strip().split("=")[1]
+                start_str, end_str = range_val.split("-")
+                start = int(start_str) if start_str else 0
+                end = int(end_str) if end_str else file_size - 1
+                end = min(end, file_size - 1)
+            except Exception:
+                start, end = 0, file_size - 1
+
+            chunk_size = end - start + 1
+
+            def iter_range():
+                with open(file_path, "rb") as f:
+                    f.seek(start)
+                    remaining = chunk_size
+                    while remaining > 0:
+                        data = f.read(min(1024 * 1024, remaining))
+                        if not data:
+                            break
+                        remaining -= len(data)
+                        yield data
+
+            headers = {
+                **base_headers,
+                "Content-Range": f"bytes {start}-{end}/{file_size}",
+                "Content-Length": str(chunk_size),
+            }
+            return StreamingResponse(iter_range(), status_code=206, media_type=mime_type, headers=headers)
+
+        def iter_full():
+            with open(file_path, "rb") as f:
+                while True:
+                    data = f.read(1024 * 1024)
+                    if not data:
+                        break
+                    yield data
+
+        headers = {**base_headers, "Content-Length": str(file_size)}
+        return StreamingResponse(iter_full(), media_type=mime_type, headers=headers)
 
 
 # ---------------------------------------------------------------------------
