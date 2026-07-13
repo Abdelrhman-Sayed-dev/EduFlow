@@ -338,6 +338,7 @@ def init_db():
         _safe_alter(cur, "ALTER TABLE students ADD COLUMN access_code TEXT")
         _safe_alter(cur, "ALTER TABLE students ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
         _safe_alter(cur, "ALTER TABLE students ADD COLUMN attendance_code TEXT")
+        _safe_alter(cur, "ALTER TABLE students ADD COLUMN device_id TEXT")
         _backfill_attendance_codes(cur)
 
         # ---------------------------------------------------------------

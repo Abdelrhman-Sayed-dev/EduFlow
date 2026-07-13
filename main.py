@@ -200,6 +200,7 @@ class StudentLoginIn(BaseModel):
 class CodeLoginIn(BaseModel):
     """تسجيل دخول موحّد بالكود - يصلح للطالب أو المشرف أو المدرس"""
     access_code: str = Field(..., max_length=50)
+    device_id: Optional[str] = Field(None, max_length=100)
 
 
 class UserIn(BaseModel):
@@ -463,9 +464,29 @@ def login_with_code(data: CodeLoginIn, request: Request = None):
         if student:
             if not student["is_active"]:
                 raise HTTPException(status_code=403, detail="الحساب موقوف، كلم المشرف")
+
+            incoming_device = (data.device_id or "").strip()
+            if incoming_device:
+                bound_device = student["device_id"]
+                if not bound_device:
+                    # أول مرة يتسجل بيها دخول بالكود ده - نربط الكود بالجهاز ده
+                    conn.execute("UPDATE students SET device_id=? WHERE id=?", (incoming_device, student["id"]))
+                elif bound_device != incoming_device:
+                    # الكود متربط بجهاز تاني بالفعل - نمنع الدخول من جهاز مختلف
+                    record_failed_login(conn, code_key)
+                    conn.commit()
+                    raise HTTPException(
+                        status_code=403,
+                        detail="الكود ده مسجّل بالفعل على جهاز تاني. لو الجهاز اتغيّر، كلم المشرف يعمل reset لجهازك"
+                    )
+
             clear_failed_logins(conn, code_key)
             if ip_key:
                 clear_failed_logins(conn, ip_key)
+            # منع أكتر من شخص يدخل بنفس الكود في نفس الوقت: أي تسجيل دخول جديد بالكود ده
+            # بيلغي أي جلسة سابقة مفتوحة لنفس الطالب (يعني لو صاحب الكود بعته لصاحبه، دخول
+            # صاحبه هيطلّع صاحب الكود الأصلي تلقائيًا من الجلسة القديمة بتاعته)
+            conn.execute("DELETE FROM sessions WHERE user_type='student' AND user_id=?", (student["id"],))
             token = gen_token()
             conn.execute(
                 "INSERT INTO sessions (token, user_type, user_id, expires_at) VALUES (?, 'student', ?, ?)",
@@ -924,15 +945,30 @@ def update_student(student_id: int, student: StudentIn, session=Depends(require_
 
 @app.put("/api/students/{student_id}/reset-code")
 def reset_student_code(student_id: int, session=Depends(require_roles("admin"))):
-    """توليد كود دخول جديد للطالب (لو الكود ضاع منه مثلاً)"""
+    """توليد كود دخول جديد للطالب (لو الكود ضاع منه مثلاً) - وبيلغي ربط الجهاز القديم كمان"""
     with get_connection() as conn:
         code = gen_access_code()
         while conn.execute("SELECT id FROM students WHERE access_code=?", (code,)).fetchone():
             code = gen_access_code()
-        result = conn.execute("UPDATE students SET access_code=? WHERE id=?", (code, student_id))
+        result = conn.execute("UPDATE students SET access_code=?, device_id=NULL WHERE id=?", (code, student_id))
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="الطالب غير موجود")
+        conn.execute("DELETE FROM sessions WHERE user_type='student' AND user_id=?", (student_id,))
         return {"access_code": code, "message": "تم توليد كود جديد"}
+
+
+@app.put("/api/students/{student_id}/reset-device")
+def reset_student_device(student_id: int, session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
+    """فك ربط كود الطالب بالجهاز القديم - يُستخدم لو الطالب غيّر تليفونه ومش قادر يدخل"""
+    with get_connection() as conn:
+        student = conn.execute("SELECT * FROM students WHERE id=?", (student_id,)).fetchone()
+        if not student:
+            raise HTTPException(status_code=404, detail="الطالب غير موجود")
+        if session["role"] == "supervisor":
+            assert_supervisor_owns_group(conn, session, student["group_id"])
+        conn.execute("UPDATE students SET device_id=NULL WHERE id=?", (student_id,))
+        conn.execute("DELETE FROM sessions WHERE user_type='student' AND user_id=?", (student_id,))
+        return {"message": "تم إلغاء ربط الجهاز - الطالب يقدر يدخل من أي جهاز دلوقتي"}
 
 
 @app.put("/api/students/{student_id}/reset-attendance-code")

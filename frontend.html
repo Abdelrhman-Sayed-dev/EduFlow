@@ -698,6 +698,7 @@ async function api(path, options={}){
   try{ data = await res.json(); }catch(e){ data = null; }
   if (res.status === 401){
     doLogout(true);
+    showToast("تم تسجيل خروجك - يمكن يكون حد سجل دخول بنفس الكود من مكان تاني", "info");
     throw new Error("unauthorized");
   }
   if (!res.ok){
@@ -767,6 +768,17 @@ function showLoginError(msg){
 }
 function hideLoginError(){ document.getElementById("loginError").classList.remove("show"); }
 
+// معرّف ثابت للجهاز/المتصفح ده - بيتخزن في localStorage وبيتبعت مع تسجيل الدخول بالكود
+// عشان نربط كود الطالب بجهاز واحد بس ونمنع تبادل الكود بين أكتر من حد (حتى لو مش في نفس الوقت)
+function getDeviceId(){
+  let id = localStorage.getItem("device_id");
+  if (!id){
+    id = (crypto.randomUUID ? crypto.randomUUID() : `dev-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    localStorage.setItem("device_id", id);
+  }
+  return id;
+}
+
 async function handleUnifiedLogin(ev){
   ev.preventDefault();
   hideLoginError();
@@ -784,7 +796,7 @@ async function handleUnifiedLogin(ev){
     if (access_code){
       res = await fetch(API + "/api/auth/login-code", {
         method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({access_code})
+        body: JSON.stringify({access_code, device_id: getDeviceId()})
       });
       data = await res.json();
       if (!res.ok){ showLoginError(data.detail || "كود الدخول غلط"); return false; }
@@ -2605,6 +2617,7 @@ async function renderStudentsPage(){
                 ${canManage ? `
                 <button class="action-btn" title="كود دخول جديد" onclick="resetStudentCode(${s.id})"><i data-lucide="refresh-cw" style="width:15px;height:15px;"></i></button>
                 <button class="action-btn" title="كود حضور جديد" onclick="resetStudentAttendanceCode(${s.id})"><i data-lucide="hash" style="width:15px;height:15px;"></i></button>
+                <button class="action-btn" title="فك ربط الجهاز (لو غيّر تليفونه)" onclick="resetStudentDevice(${s.id})"><i data-lucide="smartphone" style="width:15px;height:15px;"></i></button>
                 <span class="act-divider"></span>
                 <button class="act-btn ${s.is_active?'act-pause':'act-play'}" title="${s.is_active?'إيقاف الطالب':'تفعيل الطالب'}" onclick="toggleStudentActive(${s.id})"><i data-lucide="${s.is_active?'pause':'play'}" style="width:13px;height:13px;"></i>${s.is_active?'إيقاف':'تفعيل'}</button>
                 <button class="act-btn act-edit" title="تعديل بيانات الطالب" onclick="openEditStudentModal(${s.id})"><i data-lucide="pencil" style="width:13px;height:13px;"></i>تعديل</button>
@@ -2996,6 +3009,13 @@ async function resetStudentAttendanceCode(id){
   const res = await api(`/api/students/${id}/reset-attendance-code`, {method:"PUT"});
   showToast(`كود الحضور الجديد: ${res.attendance_code}`, "success");
   renderStudentsPage();
+}
+
+async function resetStudentDevice(id){
+  confirmAction("فك ربط الجهاز", "الطالب هيقدر يدخل بنفس الكود من أي جهاز تاني بعد كده. متأكد؟", async ()=>{
+    await api(`/api/students/${id}/reset-device`, {method:"PUT"});
+    showToast("تم فك ربط الجهاز بنجاح", "success");
+  });
 }
 
 async function toggleStudentActive(id){
