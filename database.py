@@ -318,6 +318,7 @@ def init_db():
 
         # migrations: أعمدة جديدة لو الجدول قديم
         _safe_alter(cur, "ALTER TABLE groups ADD COLUMN session_price REAL")
+        _safe_alter(cur, "ALTER TABLE groups ADD COLUMN monthly_fee REAL DEFAULT 0")
         _safe_alter(cur, "ALTER TABLE groups ADD COLUMN supervisor_id INTEGER REFERENCES users(id)")
 
         # جدول الطلاب - كل طالب تابع لمجموعة معينة + كود دخول خاص بيه
