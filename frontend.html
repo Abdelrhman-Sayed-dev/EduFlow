@@ -4297,7 +4297,7 @@ async function loadAttendanceTableForSession(groupId, sn){
   tbody.innerHTML = rows.map(r=>`
     <tr data-status="${r.status || 'unmarked'}" data-search="${escapeHtml(((r.attendance_code||'') + ' ' + r.full_name + ' ' + (r.phone||'') + ' ' + (r.parent_phone||'')).toLowerCase())}">
       <td style="color:var(--text-3);font-family:monospace;font-size:12px;">#${r.student_id}</td>
-      <td class="td-name">${escapeHtml(r.full_name)}</td>
+      <td class="td-name">${escapeHtml(r.full_name)}${r.subscription_paid ? "" : ` <span class="badge badge-red" title="لسه مسددش اشتراك الشهر الحالي" style="margin-right:4px;"><i data-lucide="alert-triangle" style="width:10px;height:10px;"></i> مش مسدد</span>`}</td>
       <td>
         <div class="pill-group sm">
           ${Object.keys(ATT_LABELS).map(k=>`<button type="button" class="pill-btn ${r.status===k?'active':''}" data-status="${k}" onclick="saveAttendance('${date}', ${r.student_id}, '${k}', this, '${key}')"><span class="dot"></span>${ATT_LABELS[k]}</button>`).join("")}
@@ -4318,12 +4318,14 @@ function updateAttendanceSessionBadges(key){
   rows.forEach(r=>{ if (r.status && counts.hasOwnProperty(r.status)) counts[r.status]++; });
   const total = rows.length;
   const marked = counts.present + counts.absent + counts.late + counts.excused;
+  const unpaidCount = rows.filter(r => !r.subscription_paid).length;
   const el = document.getElementById(`att_session_badges_${key}`);
   if (!el) return;
   el.innerHTML = total ? `
     <span class="badge badge-green">${counts.present} حاضر</span>
     <span class="badge badge-red">${counts.absent} غايب</span>
     ${marked < total ? `<span class="badge badge-gray">${total-marked} لسه</span>` : ""}
+    ${unpaidCount ? `<span class="badge badge-red" title="عدد الطلاب اللي لسه مسددوش اشتراك الشهر الحالي"><i data-lucide="alert-triangle" style="width:10px;height:10px;"></i> ${unpaidCount} مش مسدد</span>` : ""}
   ` : `<span class="badge badge-gray">لا يوجد طلاب</span>`;
 }
 
@@ -4400,7 +4402,8 @@ async function submitQuickAttendance(groupId, sn){
   const sessionLabel = ATT_SESSION_NAMES[sn] || sn;
   try{
     const res = await api("/api/attendance/by-code", {method:"POST", body: JSON.stringify({access_code: code, session_date: date, status, session_number: sn})});
-    resultEl.innerHTML = `<span class="badge badge-green"><i data-lucide="check" style="width:12px;height:12px;"></i> "${escapeHtml(res.student_name)}" - ${ATT_LABELS[status]} - الحصة ${sessionLabel}</span>`;
+    const unpaidWarning = res.subscription_paid ? "" : ` <span class="badge badge-red"><i data-lucide="alert-triangle" style="width:11px;height:11px;"></i> مش مسدد الاشتراك</span>`;
+    resultEl.innerHTML = `<span class="badge badge-green"><i data-lucide="check" style="width:12px;height:12px;"></i> "${escapeHtml(res.student_name)}" - ${ATT_LABELS[status]} - الحصة ${sessionLabel}</span>${unpaidWarning}`;
     codeInput.value = "";
     codeInput.focus();
     icons();
