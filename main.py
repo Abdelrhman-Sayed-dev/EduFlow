@@ -108,6 +108,7 @@ class GroupIn(BaseModel):
     governorate_id: int
     notes: Optional[str] = Field(None, max_length=2000)
     session_price: Optional[float] = None
+    monthly_fee: Optional[float] = None
     supervisor_id: Optional[int] = None
     schedule_slots: Optional[list[ScheduleSlotIn]] = None  # مواعيد المجموعة (يوم + وقت)
 
@@ -640,7 +641,7 @@ def get_groups(stage_id: Optional[int] = None, governorate_id: Optional[int] = N
                session=Depends(get_current_session)):
     """جلب المجموعات - المشرف يشوف مجموعاته بس، والطالب يشوف مجموعته بس"""
     query = """
-        SELECT g.id, g.name, g.notes, g.session_price, g.stage_id, g.governorate_id,
+        SELECT g.id, g.name, g.notes, g.session_price, g.monthly_fee, g.stage_id, g.governorate_id,
                g.supervisor_id, g.created_at, st.name as stage_name, gov.name as governorate_name,
                u.full_name as supervisor_name,
                (SELECT COUNT(*) FROM students s WHERE s.group_id = g.id) as students_count
@@ -677,7 +678,7 @@ def get_group_info(group_id: int, session=Depends(get_current_session)):
     """بيانات مجموعة معينة + بيانات المشرف (اسمه ورقمه) + مواعيد المجموعة"""
     with get_connection() as conn:
         group = conn.execute("""
-            SELECT g.id, g.name, g.notes, g.session_price, g.supervisor_id,
+            SELECT g.id, g.name, g.notes, g.session_price, g.monthly_fee, g.supervisor_id,
                    st.name as stage_name, gov.name as governorate_name,
                    u.full_name as supervisor_name, u.phone as supervisor_phone
             FROM groups g
@@ -707,10 +708,10 @@ def add_group(group: GroupIn, session=Depends(require_roles("admin"))):
     with get_connection() as conn:
         try:
             cur = conn.execute(
-                """INSERT INTO groups (name, stage_id, governorate_id, notes, session_price, supervisor_id)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO groups (name, stage_id, governorate_id, notes, session_price, monthly_fee, supervisor_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (group.name, group.stage_id, group.governorate_id, group.notes,
-                 group.session_price, group.supervisor_id)
+                 group.session_price, group.monthly_fee, group.supervisor_id)
             )
         except Exception:
             raise HTTPException(status_code=400, detail="المجموعة دي موجودة بالفعل في نفس المرحلة والمحافظة")
@@ -733,10 +734,10 @@ def add_group(group: GroupIn, session=Depends(require_roles("admin"))):
 def update_group(group_id: int, group: GroupIn, session=Depends(require_roles("admin"))):
     with get_connection() as conn:
         result = conn.execute(
-            """UPDATE groups SET name=?, stage_id=?, governorate_id=?, notes=?, session_price=?, supervisor_id=?
+            """UPDATE groups SET name=?, stage_id=?, governorate_id=?, notes=?, session_price=?, monthly_fee=?, supervisor_id=?
                WHERE id=?""",
             (group.name, group.stage_id, group.governorate_id, group.notes,
-             group.session_price, group.supervisor_id, group_id)
+             group.session_price, group.monthly_fee, group.supervisor_id, group_id)
         )
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="المجموعة غير موجودة")
@@ -752,6 +753,20 @@ def update_group(group_id: int, group: GroupIn, session=Depends(require_roles("a
                     (slot.day_of_week, slot.start_time, slot.end_time, group_id, f"حصة {group.name}")
                 )
         return {"message": "تم تعديل المجموعة"}
+
+
+class MonthlyFeeIn(BaseModel):
+    monthly_fee: float
+
+
+@app.put("/api/groups/{group_id}/monthly-fee")
+def set_group_monthly_fee(group_id: int, payload: MonthlyFeeIn, session=Depends(require_roles("admin"))):
+    """تحديد قيمة الاشتراك الشهري لكل طلاب المجموعة دفعة واحدة"""
+    with get_connection() as conn:
+        result = conn.execute("UPDATE groups SET monthly_fee=? WHERE id=?", (payload.monthly_fee, group_id))
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="المجموعة غير موجودة")
+        return {"message": "تم تحديث قيمة الاشتراك"}
 
 
 @app.put("/api/groups/{group_id}/supervisor")
@@ -787,7 +802,7 @@ def delete_group(group_id: int, session=Depends(require_roles("admin"))):
 
 @app.get("/api/students/search")
 def search_students(q: str = "", session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
-    """البحث عن طالب بالاسم أو الـ ID - يرجع بياناته + كل درجاته في الكويزات"""
+    """البحث عن طالب بالاسم أو الـ ID أو كود الحضور - يرجع بياناته + كل درجاته في الكويزات + حالة الاشتراك"""
     with get_connection() as conn:
         query = """
             SELECT s.id, s.full_name, s.phone, s.parent_phone, s.group_id,
@@ -796,9 +811,9 @@ def search_students(q: str = "", session=Depends(require_roles("admin", "head_su
             JOIN groups g ON g.id = s.group_id
             JOIN stages st ON st.id = g.stage_id
             JOIN governorates gov ON gov.id = g.governorate_id
-            WHERE (s.full_name LIKE ? OR CAST(s.id AS TEXT) = ?)
+            WHERE (s.full_name LIKE ? OR CAST(s.id AS TEXT) = ? OR s.attendance_code = ?)
         """
-        params = [f"%{q}%", q.strip()]
+        params = [f"%{q}%", q.strip(), q.strip()]
         if session["role"] == "supervisor":
             query += " AND g.supervisor_id = ?"
             params.append(session["id"])
@@ -824,6 +839,8 @@ def search_students(q: str = "", session=Depends(require_roles("admin", "head_su
             """, (s["id"],)).fetchall()
             att_summary = {r["status"]: r["cnt"] for r in att}
             sd["attendance_summary"] = att_summary
+            # حالة اشتراك الشهر الحالي
+            sd["subscription_active"] = is_student_subscribed(conn, s["id"])
             result.append(sd)
         return result
 
@@ -1713,8 +1730,8 @@ def get_attendance_by_date(session_date: str, group_id: Optional[int] = None,
             assert_supervisor_owns_group(conn, session, group_id)
 
         query = """
-            SELECT s.id as student_id, s.full_name, s.attendance_code, a.status, a.notes, a.id as attendance_id,
-                   a.session_number, s.group_id
+            SELECT s.id as student_id, s.full_name, s.attendance_code, s.phone, s.parent_phone,
+                   a.status, a.notes, a.id as attendance_id, a.session_number, s.group_id
             FROM students s
             LEFT JOIN attendance a ON a.student_id = s.id
                 AND a.session_date = ?
@@ -2011,7 +2028,7 @@ def get_payments(group_id: Optional[int] = None, month: Optional[str] = None,
             assert_supervisor_owns_group(conn, session, group_id)
 
         query = """
-            SELECT s.id as student_id, s.full_name, s.group_id, g.name as group_name,
+            SELECT s.id as student_id, s.full_name, s.group_id, g.name as group_name, g.monthly_fee as group_monthly_fee,
                    p.id as payment_id, p.amount, p.is_paid, p.paid_date, p.notes
             FROM students s
             JOIN groups g ON g.id = s.group_id
@@ -2040,6 +2057,11 @@ def set_payment(data: PaymentIn, session=Depends(require_roles("admin", "head_su
         if session["role"] == "supervisor":
             assert_supervisor_owns_group(conn, session, student["group_id"])
 
+        amount = data.amount
+        if amount is None:
+            grp = conn.execute("SELECT monthly_fee FROM groups WHERE id=?", (student["group_id"],)).fetchone()
+            amount = grp["monthly_fee"] if grp else None
+
         paid_date = data.paid_date
         if data.is_paid and not paid_date:
             from datetime import date
@@ -2051,7 +2073,7 @@ def set_payment(data: PaymentIn, session=Depends(require_roles("admin", "head_su
             ON CONFLICT(student_id, month)
             DO UPDATE SET amount=excluded.amount, is_paid=excluded.is_paid,
                           paid_date=excluded.paid_date, notes=excluded.notes
-        """, (data.student_id, data.month, data.amount, int(data.is_paid), paid_date, data.notes))
+        """, (data.student_id, data.month, amount, int(data.is_paid), paid_date, data.notes))
         return {"message": "تم حفظ بيانات الدفع"}
 
 
