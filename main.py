@@ -275,6 +275,20 @@ class StudentRequestStatusIn(BaseModel):
 # نظام تسجيل الدخول والصلاحيات
 # ---------------------------------------------------------------------------
 
+def current_month_str():
+    """الشهر الحالي بصيغة YYYY-MM - نفس الصيغة المستخدمة في جدول المدفوعات"""
+    return datetime.utcnow().strftime("%Y-%m")
+
+
+def is_student_subscribed(conn, student_id: int) -> bool:
+    """هل الطالب سدد اشتراك الشهر الحالي؟ - ده اللي بيتحكم في السماح بمشاهدة المحتوى من عدمه"""
+    row = conn.execute(
+        "SELECT is_paid FROM payments WHERE student_id=? AND month=?",
+        (student_id, current_month_str())
+    ).fetchone()
+    return bool(row and row["is_paid"])
+
+
 def _resolve_session_by_token(token: Optional[str]):
     """المنطق المشترك لقراءة الجلسة من التوكن - مستخدم في get_current_session
     وفي get_session_for_media (اللي بتقبل التوكن من الـ query string كمان)"""
@@ -301,6 +315,10 @@ def _resolve_session_by_token(token: Optional[str]):
             student = conn.execute("SELECT * FROM students WHERE id=?", (sess["user_id"],)).fetchone()
             if not student or not student["is_active"]:
                 raise HTTPException(status_code=401, detail="الحساب غير مفعّل")
+            # لازم يكون سدد اشتراك الشهر الحالي عشان يقدر يستخدم أي جزء من المنصة -
+            # ده تحقق مركزي بيغطي كل الـ endpoints تلقائيًا من غير ما نعدل كل واحدة لوحدها
+            if not is_student_subscribed(conn, student["id"]):
+                raise HTTPException(status_code=402, detail="يجب سداد الاشتراك الشهري لمشاهدة المحتوى")
             return {
                 "type": "student", "id": student["id"], "role": "student",
                 "full_name": student["full_name"], "group_id": student["group_id"]
@@ -496,7 +514,8 @@ def login_with_code(data: CodeLoginIn, request: Request = None):
             return {
                 "token": token, "role": "student", "full_name": student["full_name"],
                 "id": student["id"], "group_id": student["group_id"],
-                "group_name": group["name"] if group else None
+                "group_name": group["name"] if group else None,
+                "subscription_active": is_student_subscribed(conn, student["id"]),
             }
 
         user = conn.execute("SELECT * FROM users WHERE access_code=?", (code,)).fetchone()
