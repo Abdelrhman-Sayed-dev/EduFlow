@@ -12,6 +12,8 @@ backend.py
 import os
 import base64
 import uuid
+import asyncio
+import calendar
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, Header, Depends, Request, UploadFile, File, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -388,6 +390,79 @@ def create_user_notification(conn, user_id: int, title: str, body: str = None):
         )
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------------------
+# تذكير سداد الاشتراك الشهري
+# قبل ما الشهر يخلص بعدد أيام معين، أي طالب لسه مسددش اشتراك الشهر الحالي
+# بيوصله إشعار تذكير (مرة واحدة بس لكل شهر) عشان يسدد قبل ما المحتوى يتحجب عنه
+# ---------------------------------------------------------------------------
+PAYMENT_REMINDER_DAYS_BEFORE = int(os.environ.get("PAYMENT_REMINDER_DAYS_BEFORE", "5"))
+REMINDER_CHECK_INTERVAL_SECONDS = int(os.environ.get("REMINDER_CHECK_INTERVAL_SECONDS", str(6 * 60 * 60)))
+
+
+def days_left_in_month(now: Optional[datetime] = None) -> int:
+    """عدد الأيام المتبقية على نهاية الشهر الحالي (بتوقيت UTC)"""
+    now = now or datetime.utcnow()
+    last_day = calendar.monthrange(now.year, now.month)[1]
+    return last_day - now.day
+
+
+def _payment_reminder_title(month: str) -> str:
+    return f"تذكير: قرّب سداد اشتراك {month}"
+
+
+def send_subscription_payment_reminders(force: bool = False) -> int:
+    """
+    يفحص كل الطلاب النشطين اللي لسه مسددوش اشتراك الشهر الحالي، ولو باقي على نهاية
+    الشهر PAYMENT_REMINDER_DAYS_BEFORE يوم أو أقل، يبعتلهم إشعار تذكير بالسداد.
+    كل طالب بياخد إشعار واحد بس لكل شهر (بيتأكد إن مفيش إشعار بنفس العنوان اتبعتله قبل كده).
+    force=True بتتجاهل شرط عدد الأيام المتبقية (مفيد للتجربة اليدوية من الأدمن).
+    """
+    remaining = days_left_in_month()
+    if not force and remaining > PAYMENT_REMINDER_DAYS_BEFORE:
+        return 0
+
+    month = current_month_str()
+    title = _payment_reminder_title(month)
+    sent = 0
+    with get_connection() as conn:
+        students = conn.execute("SELECT id, full_name FROM students WHERE is_active=1").fetchall()
+        for st in students:
+            if is_student_subscribed(conn, st["id"]):
+                continue
+            already_sent = conn.execute(
+                "SELECT id FROM notifications WHERE user_type='student' AND user_id=? AND title=?",
+                (st["id"], title)
+            ).fetchone()
+            if already_sent:
+                continue
+            create_notification(
+                conn, st["id"], title,
+                f"باقي {remaining} يوم على نهاية الشهر ولسه مسددتش اشتراك شهر {month}. "
+                f"سدد بسرعة عشان محتوى المنصة يفضل متاح ليك من غير أي انقطاع."
+            )
+            sent += 1
+        conn.commit()
+    return sent
+
+
+async def _payment_reminder_background_loop():
+    """Loop خلفي بيشتغل طول ما السيرفر شغال، وبيفحص كل REMINDER_CHECK_INTERVAL_SECONDS
+    لو فيه طلاب محتاجين إشعار تذكير سداد"""
+    while True:
+        try:
+            sent = send_subscription_payment_reminders()
+            if sent:
+                print(f"📩 تم إرسال {sent} إشعار تذكير بسداد الاشتراك")
+        except Exception as e:
+            print(f"⚠️ خطأ أثناء إرسال تذكيرات السداد: {e}")
+        await asyncio.sleep(REMINDER_CHECK_INTERVAL_SECONDS)
+
+
+@app.on_event("startup")
+async def _start_payment_reminder_job():
+    asyncio.create_task(_payment_reminder_background_loop())
 
 
 # ---------------------------------------------------------------------------
@@ -1731,14 +1806,16 @@ def get_attendance_by_date(session_date: str, group_id: Optional[int] = None,
 
         query = """
             SELECT s.id as student_id, s.full_name, s.attendance_code, s.phone, s.parent_phone,
-                   a.status, a.notes, a.id as attendance_id, a.session_number, s.group_id
+                   a.status, a.notes, a.id as attendance_id, a.session_number, s.group_id,
+                   COALESCE(p.is_paid, 0) as subscription_paid
             FROM students s
             LEFT JOIN attendance a ON a.student_id = s.id
                 AND a.session_date = ?
                 AND a.session_number = ?
+            LEFT JOIN payments p ON p.student_id = s.id AND p.month = ?
             WHERE 1=1
         """
-        params = [session_date, session_number]
+        params = [session_date, session_number, current_month_str()]
         if group_id:
             query += " AND s.group_id = ?"
             params.append(group_id)
@@ -1809,7 +1886,11 @@ def set_attendance_by_code(data: AttendanceCodeIn, session=Depends(require_roles
             ON CONFLICT(student_id, session_date, session_number)
             DO UPDATE SET status=excluded.status
         """, (student["id"], data.session_date, data.session_number, data.status))
-        return {"message": "تم تسجيل الحضور", "student_name": student["full_name"], "student_id": student["id"]}
+        subscription_paid = is_student_subscribed(conn, student["id"])
+        return {
+            "message": "تم تسجيل الحضور", "student_name": student["full_name"], "student_id": student["id"],
+            "subscription_paid": subscription_paid
+        }
 
 
 @app.get("/api/students/{student_id}/attendance")
@@ -2075,6 +2156,17 @@ def set_payment(data: PaymentIn, session=Depends(require_roles("admin", "head_su
                           paid_date=excluded.paid_date, notes=excluded.notes
         """, (data.student_id, data.month, amount, int(data.is_paid), paid_date, data.notes))
         return {"message": "تم حفظ بيانات الدفع"}
+
+
+@app.post("/api/payments/send-reminders")
+def trigger_payment_reminders(force: bool = Query(False),
+                               session=Depends(require_roles("admin"))):
+    """
+    تشغيل يدوي لفحص وإرسال تذكيرات سداد الاشتراك (بالإضافة للفحص التلقائي الدوري).
+    force=true بيتجاهل شرط قرب نهاية الشهر ويبعت التذكير لكل غير المسددين فورًا (مفيد للتجربة).
+    """
+    sent = send_subscription_payment_reminders(force=force)
+    return {"message": f"تم إرسال {sent} إشعار تذكير سداد", "sent": sent}
 
 
 # ---------------------------------------------------------------------------
