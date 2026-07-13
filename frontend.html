@@ -2450,8 +2450,9 @@ async function openAddGroupModal(){
     </div>
     <div class="form-row-2">
       <div class="form-group"><label class="form-label">سعر الحصة</label><input class="form-input" id="f_g_price" type="number" placeholder="جنيه"></div>
-      <div class="form-group"><label class="form-label">المشرف المسؤول</label><select class="form-select" id="f_g_sup">${supervisorOptions()}</select></div>
+      <div class="form-group"><label class="form-label">قيمة الاشتراك الشهري</label><input class="form-input" id="f_g_fee" type="number" placeholder="جنيه/شهر"></div>
     </div>
+    <div class="form-group"><label class="form-label">المشرف المسؤول</label><select class="form-select" id="f_g_sup">${supervisorOptions()}</select></div>
     <div class="form-group"><label class="form-label">ملاحظات</label><textarea class="form-textarea" id="f_g_notes"></textarea></div>
     <div class="form-group">
       <label class="form-label">مواعيد المجموعة (الأيام والأوقات)</label>
@@ -2505,6 +2506,7 @@ async function submitAddGroup(){
     stage_id: parseInt(document.getElementById("f_g_stage").value),
     governorate_id: parseInt(governorate_id),
     session_price: parseFloat(document.getElementById("f_g_price").value) || null,
+    monthly_fee: parseFloat(document.getElementById("f_g_fee").value) || null,
     supervisor_id: document.getElementById("f_g_sup").value ? parseInt(document.getElementById("f_g_sup").value) : null,
     notes: document.getElementById("f_g_notes").value.trim() || null,
     schedule_slots: validSlots.length ? validSlots : null,
@@ -2535,8 +2537,9 @@ async function openEditGroupModal(id){
     </div>
     <div class="form-row-2">
       <div class="form-group"><label class="form-label">سعر الحصة</label><input class="form-input" id="f_g_price" type="number" value="${g.session_price||''}"></div>
-      <div class="form-group"><label class="form-label">المشرف المسؤول</label><select class="form-select" id="f_g_sup">${supervisorOptions(g.supervisor_id)}</select></div>
+      <div class="form-group"><label class="form-label">قيمة الاشتراك الشهري</label><input class="form-input" id="f_g_fee" type="number" value="${g.monthly_fee||''}"></div>
     </div>
+    <div class="form-group"><label class="form-label">المشرف المسؤول</label><select class="form-select" id="f_g_sup">${supervisorOptions(g.supervisor_id)}</select></div>
     <div class="form-group"><label class="form-label">ملاحظات</label><textarea class="form-textarea" id="f_g_notes">${escapeHtml(g.notes||'')}</textarea></div>
     <div class="form-group">
       <label class="form-label">مواعيد المجموعة (الأيام والأوقات)</label>
@@ -2562,6 +2565,7 @@ async function submitEditGroup(id){
     stage_id: parseInt(document.getElementById("f_g_stage").value),
     governorate_id: parseInt(governorate_id),
     session_price: parseFloat(document.getElementById("f_g_price").value) || null,
+    monthly_fee: parseFloat(document.getElementById("f_g_fee").value) || null,
     supervisor_id: document.getElementById("f_g_sup").value ? parseInt(document.getElementById("f_g_sup").value) : null,
     notes: document.getElementById("f_g_notes").value.trim() || null,
     schedule_slots: validSlots,
@@ -2708,6 +2712,8 @@ function exportStudentsToCsv(){
    اشتراكات الطلاب - الأدمن بس - تحديد مين سدد اشتراك الشهر عشان يقدر يشوف المحتوى
 ===================================================================== */
 let SUBSCRIPTIONS_CURRENT_MONTH = null;
+let SUBSCRIPTIONS_STATUS_TAB = "all"; // all | paid | unpaid
+let SUBSCRIPTIONS_ROWS_CACHE = [];
 
 async function renderSubscriptionsPage(){
   if (!SUBSCRIPTIONS_CURRENT_MONTH) SUBSCRIPTIONS_CURRENT_MONTH = currentMonthStr();
@@ -2721,11 +2727,17 @@ async function renderSubscriptionsPage(){
     <div class="table-card">
       <div class="toolbar" style="gap:10px;flex-wrap:wrap;">
         <input type="month" class="form-input" id="subMonthPicker" style="width:auto;" value="${SUBSCRIPTIONS_CURRENT_MONTH}" onchange="SUBSCRIPTIONS_CURRENT_MONTH=this.value; loadSubscriptionsList();">
-        <select class="form-select" id="subGroupFilter" style="width:auto;min-width:180px;" onchange="loadSubscriptionsList()">
+        <select class="form-select" id="subGroupFilter" style="width:auto;min-width:180px;" onchange="onSubGroupFilterChange()">
           <option value="">كل المجموعات</option>
           ${groups.map(g=>`<option value="${g.id}">${escapeHtml(g.name)}</option>`).join("")}
         </select>
-        <div class="search-wrap" style="width:220px;"><i data-lucide="search" class="search-ic" style="width:14px;height:14px;"></i><input id="subSearchInput" placeholder="بحث بالاسم..." oninput="filterSubscriptionsTable()"></div>
+        <div class="search-wrap" style="width:220px;"><i data-lucide="search" class="search-ic" style="width:14px;height:14px;"></i><input id="subSearchInput" placeholder="بحث بالاسم..." oninput="renderSubscriptionsTable()"></div>
+      </div>
+      <div id="subFeeEditorWrap"></div>
+      <div class="toolbar" style="gap:8px;border-top:none;">
+        <button class="seg-btn ${SUBSCRIPTIONS_STATUS_TAB==='all'?'active':''}" onclick="SUBSCRIPTIONS_STATUS_TAB='all';renderSubscriptionsTable();">الكل</button>
+        <button class="seg-btn ${SUBSCRIPTIONS_STATUS_TAB==='paid'?'active':''}" onclick="SUBSCRIPTIONS_STATUS_TAB='paid';renderSubscriptionsTable();">مسددين</button>
+        <button class="seg-btn active-red ${SUBSCRIPTIONS_STATUS_TAB==='unpaid'?'active':''}" onclick="SUBSCRIPTIONS_STATUS_TAB='unpaid';renderSubscriptionsTable();">غير مسددين</button>
       </div>
       <div id="subscriptionsListWrap"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>
     </div>
@@ -2734,26 +2746,68 @@ async function renderSubscriptionsPage(){
   await loadSubscriptionsList();
 }
 
+function onSubGroupFilterChange(){
+  loadSubscriptionsList();
+}
+
+// لو محدد مجموعة واحدة بس، بيظهر صندوق صغير فوق الجدول يخليك تحدد/تعدل قيمة اشتراك
+// المجموعة دي كلها بضغطة واحدة، بدل ما تكتب المبلغ لكل طالب لوحده
+function renderSubFeeEditor(){
+  const wrap = document.getElementById("subFeeEditorWrap");
+  const groupId = document.getElementById("subGroupFilter").value;
+  if (!groupId){ wrap.innerHTML = ""; return; }
+  const grp = CACHE_ALL_GROUPS.find(g => String(g.id) === String(groupId));
+  wrap.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;background:var(--primary-10);border-radius:var(--radius-md);margin-bottom:10px;flex-wrap:wrap;">
+      <span style="font-size:12.5px;font-weight:700;">قيمة الاشتراك الشهري لمجموعة "${escapeHtml(grp?.name||'')}":</span>
+      <input class="form-input" style="width:120px;" type="number" id="subGroupFeeInput" value="${grp?.monthly_fee || ''}" placeholder="جنيه/شهر">
+      <button class="btn btn-primary btn-sm" onclick="saveGroupMonthlyFee(${groupId})"><i data-lucide="save" style="width:13px;height:13px;"></i> حفظ للمجموعة كلها</button>
+    </div>
+  `;
+}
+
+async function saveGroupMonthlyFee(groupId){
+  const fee = parseFloat(document.getElementById("subGroupFeeInput").value) || 0;
+  await api(`/api/groups/${groupId}/monthly-fee`, {method:"PUT", body: JSON.stringify({monthly_fee: fee})});
+  showToast("تم تحديث قيمة الاشتراك للمجموعة", "success");
+  const grp = CACHE_ALL_GROUPS.find(g => g.id === groupId);
+  if (grp) grp.monthly_fee = fee;
+  SUBSCRIPTIONS_ROWS_CACHE.forEach(r => { if (r.group_id === groupId) r.group_monthly_fee = fee; });
+  renderSubscriptionsTable();
+}
+
 async function loadSubscriptionsList(){
   const wrap = document.getElementById("subscriptionsListWrap");
   if (!wrap) return;
+  renderSubFeeEditor();
   const month = document.getElementById("subMonthPicker").value || SUBSCRIPTIONS_CURRENT_MONTH;
   const groupId = document.getElementById("subGroupFilter").value;
   const qs = [`month=${month}`, groupId ? `group_id=${groupId}` : ""].filter(Boolean).join("&");
-  const rows = await api(`/api/payments?${qs}`);
+  SUBSCRIPTIONS_ROWS_CACHE = await api(`/api/payments?${qs}`);
+  renderSubscriptionsTable();
+}
+
+function renderSubscriptionsTable(){
+  const wrap = document.getElementById("subscriptionsListWrap");
+  if (!wrap) return;
+  const q = (document.getElementById("subSearchInput")?.value || "").trim().toLowerCase();
+  let rows = SUBSCRIPTIONS_ROWS_CACHE.filter(r => !q || r.full_name.toLowerCase().includes(q));
+  if (SUBSCRIPTIONS_STATUS_TAB === "paid") rows = rows.filter(r => r.is_paid);
+  else if (SUBSCRIPTIONS_STATUS_TAB === "unpaid") rows = rows.filter(r => !r.is_paid);
 
   wrap.innerHTML = `
+    <div style="padding:8px 16px;font-size:12px;color:var(--text-3);">${rows.length} طالب</div>
     <div class="table-wrap"><table>
-      <thead><tr><th>الطالب</th><th>المجموعة</th><th>المبلغ</th><th>حالة الاشتراك</th><th></th></tr></thead>
-      <tbody id="subTableBody">
+      <thead><tr><th>الطالب</th><th>المجموعة</th><th>قيمة الاشتراك</th><th>حالة الاشتراك</th><th></th></tr></thead>
+      <tbody>
         ${rows.map(r => `
-          <tr data-search="${escapeHtml(r.full_name.toLowerCase())}">
+          <tr>
             <td class="td-name">${escapeHtml(r.full_name)}</td>
             <td><span class="badge badge-teal">${escapeHtml(r.group_name)}</span></td>
-            <td><input class="form-input" style="width:110px;" type="number" id="sub_amount_${r.student_id}" value="${r.amount ?? ''}" placeholder="المبلغ"></td>
+            <td>${r.group_monthly_fee ? `${r.group_monthly_fee} ج` : `<span style="color:var(--text-3);">غير محدد للمجموعة</span>`}</td>
             <td>
               <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
-                <input type="checkbox" id="sub_paid_${r.student_id}" ${r.is_paid ? "checked" : ""} style="width:16px;height:16px;">
+                <input type="checkbox" id="sub_paid_${r.student_id}" ${r.is_paid ? "checked" : ""} style="width:16px;height:16px;" onchange="quickToggleSubscription(${r.student_id}, this.checked)">
                 <span class="badge ${r.is_paid ? 'badge-green' : 'badge-red'}" id="sub_badge_${r.student_id}">${r.is_paid ? "مسدد" : "مش مسدد"}</span>
               </label>
             </td>
@@ -2764,32 +2818,26 @@ async function loadSubscriptionsList(){
     </table></div>
   `;
   icons();
-  // تحديث لون البادچ فورًا لما تضغط على الـ checkbox من غير ما تحتاج تحفظ الأول
-  rows.forEach(r => {
-    const cb = document.getElementById(`sub_paid_${r.student_id}`);
-    if (cb) cb.addEventListener("change", () => {
-      const badge = document.getElementById(`sub_badge_${r.student_id}`);
-      badge.textContent = cb.checked ? "مسدد" : "مش مسدد";
-      badge.className = `badge ${cb.checked ? "badge-green" : "badge-red"}`;
-    });
-  });
 }
 
-function filterSubscriptionsTable(){
-  const q = document.getElementById("subSearchInput").value.trim().toLowerCase();
-  document.querySelectorAll("#subTableBody tr[data-search]").forEach(row=>{
-    row.style.display = row.dataset.search.includes(q) ? "" : "none";
-  });
+// تحديث لون البادچ فورًا لما تضغط على الـ checkbox من غير ما تحتاج تحفظ الأول
+function quickToggleSubscription(studentId, checked){
+  const badge = document.getElementById(`sub_badge_${studentId}`);
+  if (!badge) return;
+  badge.textContent = checked ? "مسدد" : "مش مسدد";
+  badge.className = `badge ${checked ? "badge-green" : "badge-red"}`;
 }
 
 async function saveSubscription(studentId){
   const month = document.getElementById("subMonthPicker").value;
-  const amount = document.getElementById(`sub_amount_${studentId}`).value;
   const is_paid = document.getElementById(`sub_paid_${studentId}`).checked;
+  // المبلغ بيتحدد من قيمة اشتراك المجموعة تلقائيًا (الباك إند بيحسبها لو مبعتناش قيمة)
   await api("/api/payments", {method:"POST", body: JSON.stringify({
-    student_id: studentId, month, amount: amount ? parseFloat(amount) : null, is_paid,
+    student_id: studentId, month, is_paid,
   })});
   showToast("تم حفظ حالة الاشتراك", "success");
+  const row = SUBSCRIPTIONS_ROWS_CACHE.find(r => r.student_id === studentId);
+  if (row) row.is_paid = is_paid;
 }
 
 /* =====================================================================
@@ -3103,7 +3151,7 @@ function printStudentCard(studentName, groupName, accessCode, attendanceCode){
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
     <style>
       @page { size: A5 landscape; margin: 10mm; }
-      *{box-sizing:border-box;}
+      *{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;color-adjust:exact;}
       body{font-family:'Cairo','Segoe UI',sans-serif;margin:0;padding:0;background:#F0F3FA;}
       .wrap{max-width:640px;margin:16px auto;}
       .card{
@@ -4218,13 +4266,14 @@ function renderAttendanceSessionShell(groupId, groupName, sn, isOpen){
       </div>
       <div class="collapse-body" id="att_session_body_${key}" style="display:${isOpen?'block':'none'};">
         <div style="padding:14px 16px;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;border-bottom:1px solid var(--border);">
-          <div style="flex:1;min-width:200px;">
-            <label class="form-label">كود الطالب <span style="font-weight:400;color:var(--text-3);">(بيدور كمان بالاسم)</span></label>
-            <input class="form-input" id="quick_att_code_${key}" placeholder="اكتب الكود أو اسم الطالب..." style="font-family:monospace;" autocomplete="off"
+          <div style="flex:1;min-width:220px;">
+            <label class="form-label">بحث سريع <span style="font-weight:400;color:var(--text-3);">(بالاسم أو كود الحضور أو رقم الهاتف)</span></label>
+            <input class="form-input" id="quick_att_code_${key}" placeholder="اكتب أي حاجة: الاسم / الكود / رقم الهاتف..." style="font-family:monospace;" autocomplete="off"
               oninput="filterAttendanceRows()"
               onkeydown="if(event.key==='Enter'){event.preventDefault();submitQuickAttendance(${groupId}, ${sn});}">
           </div>
-          <button class="btn btn-primary" onclick="submitQuickAttendance(${groupId}, ${sn})"><i data-lucide="check" style="width:14px;height:14px;"></i> تسجيل حضور</button>
+          <button class="btn btn-primary" onclick="submitQuickAttendance(${groupId}, ${sn})"><i data-lucide="check" style="width:14px;height:14px;"></i> تسجيل حضور بالكود</button>
+          <button class="btn btn-ghost" title="يعلّم كل الطلاب اللي لسه من غير حالة كـ حاضر" onclick="markAllPresent(${groupId}, ${sn})"><i data-lucide="check-check" style="width:14px;height:14px;"></i> تحديد الكل حاضر</button>
         </div>
         <div id="quick_att_result_${key}" style="padding:10px 16px 0;"></div>
         <div class="table-wrap">
@@ -4246,7 +4295,7 @@ async function loadAttendanceTableForSession(groupId, sn){
   const tbody = document.getElementById(`attTableBody_${key}`);
   if (!tbody) return;
   tbody.innerHTML = rows.map(r=>`
-    <tr data-status="${r.status || 'unmarked'}" data-search="${escapeHtml(((r.attendance_code||'') + ' ' + r.full_name).toLowerCase())}">
+    <tr data-status="${r.status || 'unmarked'}" data-search="${escapeHtml(((r.attendance_code||'') + ' ' + r.full_name + ' ' + (r.phone||'') + ' ' + (r.parent_phone||'')).toLowerCase())}">
       <td style="color:var(--text-3);font-family:monospace;font-size:12px;">#${r.student_id}</td>
       <td class="td-name">${escapeHtml(r.full_name)}</td>
       <td>
@@ -4321,6 +4370,23 @@ async function saveAttendanceNote(date, studentId, notes, key){
   await api("/api/attendance", {method:"POST", body: JSON.stringify({student_id: studentId, session_date: date, status, notes, session_number: sessionNum})});
   if (row) row.notes = notes;
   showToast("تم حفظ الملاحظة", "success");
+}
+
+async function markAllPresent(groupId, sn){
+  const key = `${groupId}_${sn}`;
+  const rows = ATT_ROWS_CACHE_BY_SESSION[key] || [];
+  const unmarked = rows.filter(r => !r.status);
+  if (!unmarked.length){ showToast("كل الطلاب متحدد لهم حالة بالفعل", "info"); return; }
+  confirmAction("تحديد الكل حاضر", `هيتم تحديد ${unmarked.length} طالب لسه من غير حالة كـ "حاضر". متأكد؟`, async ()=>{
+    const date = todayStr();
+    for (const r of unmarked){
+      await api("/api/attendance", {method:"POST", body: JSON.stringify({
+        student_id: r.student_id, session_date: date, session_number: sn, status: "present",
+      })});
+    }
+    showToast(`تم تحديد ${unmarked.length} طالب كـ حاضر`, "success");
+    loadAttendanceTableForSession(groupId, sn);
+  });
 }
 
 async function submitQuickAttendance(groupId, sn){
@@ -5410,13 +5476,13 @@ async function renderStudentSearchPage(){
   const c = document.getElementById("pageContainer");
   c.innerHTML = `
     <div class="page-header">
-      <div><h1>بحث عن طالب</h1><p>ادخل اسم الطالب أو الـ ID تظهرلك كل بياناته ودرجاته وحضوره</p></div>
+      <div><h1>بحث عن طالب</h1><p>ادخل اسم الطالب أو الـ ID أو كود الحضور تظهرلك كل بياناته ودرجاته وحضوره وحالة اشتراكه</p></div>
     </div>
     <div class="table-card">
       <div class="toolbar">
         <div class="search-wrap" style="flex:1;max-width:420px;">
           <i data-lucide="search" class="search-ic" style="width:14px;height:14px;"></i>
-          <input id="ss_input" class="form-input" placeholder="اكتب اسم الطالب أو الـ ID..." oninput="debounceStudentSearch()" style="padding-right:38px;">
+          <input id="ss_input" class="form-input" placeholder="اكتب اسم الطالب أو الـ ID أو كود الحضور..." oninput="debounceStudentSearch()" style="padding-right:38px;">
         </div>
       </div>
       <div id="ss_results" style="padding:20px 16px;color:var(--text-3);font-size:13px;">ابدأ الكتابة لتظهر النتائج...</div>
@@ -5461,6 +5527,10 @@ async function doStudentSearch(){
                 <span class="badge badge-teal">${escapeHtml(s.group_name)}</span>
                 <span class="badge badge-gray" style="margin-right:4px;">${escapeHtml(s.stage_name)}</span>
                 <span class="badge badge-blue" style="margin-right:4px;">${s.governorate_name}</span>
+                <span class="badge ${s.subscription_active ? 'badge-green' : 'badge-red'}" style="margin-right:4px;">
+                  <i data-lucide="${s.subscription_active ? 'check-circle' : 'alert-circle'}" style="width:11px;height:11px;"></i>
+                  ${s.subscription_active ? 'مسدد الاشتراك' : 'مش مسدد الاشتراك'}
+                </span>
               </div>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
@@ -5773,7 +5843,7 @@ function buildMonthlyReportHtmlDoc(d, studentName, opts){
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
       @page { size: A4; margin: 14mm 12mm; }
-      *{box-sizing:border-box;}
+      *{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;color-adjust:exact;}
       :root{
         --ink:#1E2A3A; --muted:#64748B; --line:#E7EAF3;
         --primary:#4457E8; --primary-soft:#EEF1FD;
