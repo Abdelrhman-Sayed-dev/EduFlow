@@ -916,6 +916,12 @@ def search_students(q: str = "", session=Depends(require_roles("admin", "head_su
             sd["attendance_summary"] = att_summary
             # حالة اشتراك الشهر الحالي
             sd["subscription_active"] = is_student_subscribed(conn, s["id"])
+            # سجل الاشتراكات الشهرية (تاريخ السداد لكل شهر)
+            payments_rows = conn.execute(
+                "SELECT month, is_paid, paid_date, amount FROM payments WHERE student_id=? ORDER BY month DESC",
+                (s["id"],)
+            ).fetchall()
+            sd["payments"] = [dict(p) for p in payments_rows]
             result.append(sd)
         return result
 
@@ -1852,11 +1858,20 @@ def set_attendance(att: AttendanceIn, session=Depends(require_roles("admin", "he
 
 @app.get("/api/students/find-by-code")
 def find_student_by_code(code: str, session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
-    """البحث عن طالب بكود الدخول الخاص بيه - يستخدم في تسجيل الحضور السريع"""
+    """
+    البحث عن طالب بكود الدخول الخاص بيه - يستخدم في تسجيل الحضور السريع، وبيرجع
+    بروفايل كامل (الاسم - الأرقام - المجموعة - حالة الاشتراك - تواريخ السداد)
+    عشان يظهر للمشرف/الأدمن وهو بياخد الحضور
+    """
     with get_connection() as conn:
         student = conn.execute(
-            """SELECT s.id, s.full_name, s.group_id, g.name as group_name
-               FROM students s JOIN groups g ON g.id = s.group_id
+            """SELECT s.id, s.full_name, s.phone, s.parent_phone, s.group_id,
+                      s.attendance_code, s.access_code,
+                      g.name as group_name, st.name as stage_name, gov.name as governorate_name
+               FROM students s
+               JOIN groups g ON g.id = s.group_id
+               JOIN stages st ON st.id = g.stage_id
+               JOIN governorates gov ON gov.id = g.governorate_id
                WHERE s.attendance_code = ? OR s.access_code = ?""",
             (code.strip(), code.strip())
         ).fetchone()
@@ -1864,7 +1879,15 @@ def find_student_by_code(code: str, session=Depends(require_roles("admin", "head
             raise HTTPException(status_code=404, detail="مفيش طالب بالكود ده")
         if session["role"] == "supervisor":
             assert_supervisor_owns_group(conn, session, student["group_id"])
-        return dict(student)
+
+        sd = dict(student)
+        sd["subscription_active"] = is_student_subscribed(conn, student["id"])
+        payments_rows = conn.execute(
+            "SELECT month, is_paid, paid_date, amount FROM payments WHERE student_id=? ORDER BY month DESC",
+            (student["id"],)
+        ).fetchall()
+        sd["payments"] = [dict(p) for p in payments_rows]
+        return sd
 
 
 @app.post("/api/attendance/by-code")

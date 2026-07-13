@@ -2798,7 +2798,7 @@ function renderSubscriptionsTable(){
   wrap.innerHTML = `
     <div style="padding:8px 16px;font-size:12px;color:var(--text-3);">${rows.length} طالب</div>
     <div class="table-wrap"><table>
-      <thead><tr><th>الطالب</th><th>المجموعة</th><th>قيمة الاشتراك</th><th>حالة الاشتراك</th><th></th></tr></thead>
+      <thead><tr><th>الطالب</th><th>المجموعة</th><th>قيمة الاشتراك</th><th>حالة الاشتراك</th><th>تاريخ السداد</th><th></th></tr></thead>
       <tbody>
         ${rows.map(r => `
           <tr>
@@ -2811,9 +2811,10 @@ function renderSubscriptionsTable(){
                 <span class="badge ${r.is_paid ? 'badge-green' : 'badge-red'}" id="sub_badge_${r.student_id}">${r.is_paid ? "مسدد" : "مش مسدد"}</span>
               </label>
             </td>
+            <td id="sub_paiddate_${r.student_id}" style="color:var(--text-3);font-size:12.5px;">${r.is_paid ? (r.paid_date || "—") : "—"}</td>
             <td><button class="btn btn-primary btn-sm" onclick="saveSubscription(${r.student_id})"><i data-lucide="save" style="width:13px;height:13px;"></i> حفظ</button></td>
           </tr>
-        `).join("") || `<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:24px;">لا يوجد طلاب</td></tr>`}
+        `).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:24px;">لا يوجد طلاب</td></tr>`}
       </tbody>
     </table></div>
   `;
@@ -2832,12 +2833,23 @@ async function saveSubscription(studentId){
   const month = document.getElementById("subMonthPicker").value;
   const is_paid = document.getElementById(`sub_paid_${studentId}`).checked;
   // المبلغ بيتحدد من قيمة اشتراك المجموعة تلقائيًا (الباك إند بيحسبها لو مبعتناش قيمة)
-  await api("/api/payments", {method:"POST", body: JSON.stringify({
+  const res = await api("/api/payments", {method:"POST", body: JSON.stringify({
     student_id: studentId, month, is_paid,
   })});
   showToast("تم حفظ حالة الاشتراك", "success");
   const row = SUBSCRIPTIONS_ROWS_CACHE.find(r => r.student_id === studentId);
   if (row) row.is_paid = is_paid;
+  // تحديث تاريخ السداد المعروض فورًا (الباك إند بيحط تاريخ اليوم تلقائيًا لو سدد النهاردة)
+  const dateCell = document.getElementById(`sub_paiddate_${studentId}`);
+  if (dateCell){
+    if (is_paid){
+      const today = new Date().toISOString().slice(0,10);
+      if (row) row.paid_date = row.paid_date || today;
+      dateCell.textContent = (row && row.paid_date) || today;
+    } else {
+      dateCell.textContent = "—";
+    }
+  }
 }
 
 /* =====================================================================
@@ -4269,12 +4281,13 @@ function renderAttendanceSessionShell(groupId, groupName, sn, isOpen){
           <div style="flex:1;min-width:220px;">
             <label class="form-label">بحث سريع <span style="font-weight:400;color:var(--text-3);">(بالاسم أو كود الحضور أو رقم الهاتف)</span></label>
             <input class="form-input" id="quick_att_code_${key}" placeholder="اكتب أي حاجة: الاسم / الكود / رقم الهاتف..." style="font-family:monospace;" autocomplete="off"
-              oninput="filterAttendanceRows()"
+              oninput="onQuickAttCodeInput('${key}')"
               onkeydown="if(event.key==='Enter'){event.preventDefault();submitQuickAttendance(${groupId}, ${sn});}">
           </div>
           <button class="btn btn-primary" onclick="submitQuickAttendance(${groupId}, ${sn})"><i data-lucide="check" style="width:14px;height:14px;"></i> تسجيل حضور بالكود</button>
           <button class="btn btn-ghost" title="يعلّم كل الطلاب اللي لسه من غير حالة كـ حاضر" onclick="markAllPresent(${groupId}, ${sn})"><i data-lucide="check-check" style="width:14px;height:14px;"></i> تحديد الكل حاضر</button>
         </div>
+        <div id="quick_att_profile_${key}" style="padding:10px 16px 0;"></div>
         <div id="quick_att_result_${key}" style="padding:10px 16px 0;"></div>
         <div class="table-wrap">
           <table>
@@ -4344,6 +4357,64 @@ function filterAttendanceRows(){
   });
 }
 
+/* =====================================================================
+   بروفايل سريع للطالب - بيظهر تلقائيًا لما تكتب كود الطالب في خانة البحث
+   السريع في شاشة الحضور (بدون ما يعمل تسجيل حضور، مجرد عرض بيانات)
+===================================================================== */
+const QUICK_ATT_PROFILE_TIMERS = {};
+
+function onQuickAttCodeInput(key){
+  filterAttendanceRows();
+  clearTimeout(QUICK_ATT_PROFILE_TIMERS[key]);
+  QUICK_ATT_PROFILE_TIMERS[key] = setTimeout(()=>previewStudentByCode(key), 350);
+}
+
+async function previewStudentByCode(key){
+  const input = document.getElementById(`quick_att_code_${key}`);
+  const profileEl = document.getElementById(`quick_att_profile_${key}`);
+  if (!input || !profileEl) return;
+  const code = input.value.trim();
+  if (!code){ profileEl.innerHTML = ""; return; }
+  try{
+    const s = await api(`/api/students/find-by-code?code=${encodeURIComponent(code)}`);
+    profileEl.innerHTML = renderStudentQuickProfileCard(s);
+    icons();
+  }catch(e){
+    // مفيش طالب بالكود ده (أو لسه بيكتب) - امسح البروفايل القديم من غير ما نظهر خطأ
+    profileEl.innerHTML = "";
+  }
+}
+
+function renderStudentQuickProfileCard(s){
+  const paidHistory = (s.payments || []).filter(p => p.is_paid);
+  return `
+    <div style="border:1px solid var(--border);border-radius:var(--radius-md);padding:12px 14px;margin-bottom:4px;background:var(--surface-2);">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+        <div>
+          <div style="font-weight:700;font-size:14px;">${escapeHtml(s.full_name)} <span style="font-size:11.5px;color:var(--text-3);font-weight:400;font-family:monospace;">#${s.id}</span></div>
+          <div style="font-size:12px;color:var(--text-3);margin-top:2px;">${escapeHtml(s.group_name)} · ${escapeHtml(s.stage_name)} · ${escapeHtml(s.governorate_name)}</div>
+        </div>
+        <span class="badge ${s.subscription_active ? 'badge-green' : 'badge-red'}">
+          <i data-lucide="${s.subscription_active ? 'check-circle' : 'alert-circle'}" style="width:11px;height:11px;"></i>
+          ${s.subscription_active ? 'مسدد الاشتراك' : 'مش مسدد الاشتراك'}
+        </span>
+      </div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--text-2);">
+        ${s.phone ? `<span><i data-lucide="phone" style="width:11px;height:11px;"></i> ${escapeHtml(s.phone)}</span>` : ""}
+        ${s.parent_phone ? `<span><i data-lucide="phone-call" style="width:11px;height:11px;"></i> ولي الأمر: ${escapeHtml(s.parent_phone)}</span>` : ""}
+        <span><i data-lucide="hash" style="width:11px;height:11px;"></i> كود الحضور: ${escapeHtml(s.attendance_code || '—')}</span>
+      </div>
+      ${paidHistory.length ? `
+      <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border);">
+        <div style="font-size:11.5px;color:var(--text-3);margin-bottom:4px;">تواريخ سداد الاشتراك السابقة</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;">
+          ${paidHistory.map(p=>`<span class="badge badge-gray">${p.month}: ${p.paid_date || '—'}</span>`).join("")}
+        </div>
+      </div>` : `<div style="margin-top:8px;font-size:11.5px;color:var(--text-3);">لا يوجد سداد مسجل بعد لأي شهر</div>`}
+    </div>
+  `;
+}
+
 async function saveAttendance(date, studentId, status, btnEl, key){
   if (!status) return;
   if (btnEl){
@@ -4406,6 +4477,8 @@ async function submitQuickAttendance(groupId, sn){
     resultEl.innerHTML = `<span class="badge badge-green"><i data-lucide="check" style="width:12px;height:12px;"></i> "${escapeHtml(res.student_name)}" - ${ATT_LABELS[status]} - الحصة ${sessionLabel}</span>${unpaidWarning}`;
     codeInput.value = "";
     codeInput.focus();
+    const profileEl = document.getElementById(`quick_att_profile_${key}`);
+    if (profileEl) profileEl.innerHTML = "";
     icons();
     loadAttendanceTableForSession(groupId, sn);
   }catch(e){
@@ -4829,11 +4902,12 @@ async function renderMyGroupPage(){
    صفحات الطالب
 ===================================================================== */
 async function renderStudentDashboardPage(){
-  const [scores, attendance, groupInfo, ranking] = await Promise.all([
+  const [scores, attendance, groupInfo, ranking, payments] = await Promise.all([
     api(`/api/students/${SESSION.id}/scores`),
     api(`/api/students/${SESSION.id}/attendance`),
     SESSION.group_id ? api(`/api/groups/${SESSION.group_id}/info`).catch(()=>null) : Promise.resolve(null),
-    api(`/api/students/${SESSION.id}/ranking`).catch(()=>null)
+    api(`/api/students/${SESSION.id}/ranking`).catch(()=>null),
+    api(`/api/students/${SESSION.id}/payments`).catch(()=>[])
   ]);
   const present = attendance.filter(a=>a.status==='present'||a.status==='late').length;
   const avg = scores.length ? (scores.reduce((s,x)=>s+(x.score||0)/x.max_score*100,0)/scores.length).toFixed(0) : "—";
@@ -4942,6 +5016,25 @@ async function renderStudentDashboardPage(){
       <div class="empty-state">
         <div class="empty-icon"><i data-lucide="inbox" style="width:24px;height:24px;"></i></div>
         <div class="empty-title">لا يوجد درجات بعد</div>
+      </div>`}
+    </div>
+
+    <div class="table-card">
+      <div class="toolbar"><b style="font-size:14px;display:flex;align-items:center;gap:6px;"><i data-lucide="credit-card" style="width:15px;height:15px;color:var(--primary);"></i> سجل اشتراكاتي</b></div>
+      ${payments.length ? `
+      <div class="table-wrap"><table>
+        <thead><tr><th>الشهر</th><th>الحالة</th><th>تاريخ السداد</th></tr></thead>
+        <tbody>
+          ${payments.map(p=>`<tr>
+              <td class="td-name">${p.month}</td>
+              <td><span class="badge ${p.is_paid ? 'badge-green' : 'badge-red'}">${p.is_paid ? 'مسدد' : 'مش مسدد'}</span></td>
+              <td>${p.is_paid ? (p.paid_date || '—') : '—'}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table></div>` : `
+      <div class="empty-state">
+        <div class="empty-icon"><i data-lucide="inbox" style="width:24px;height:24px;"></i></div>
+        <div class="empty-title">لا يوجد سجل اشتراكات بعد</div>
       </div>`}
     </div>
   `;
@@ -5570,6 +5663,19 @@ async function doStudentSearch(){
               }).join("")}
             </tbody>
           </table></div>` : `<div style="font-size:12.5px;color:var(--text-3);">لا يوجد درجات مسجلة بعد</div>`}
+          <div style="font-size:12px;font-weight:700;color:var(--text-2);margin:14px 0 6px;">سجل الاشتراكات الشهرية</div>
+          ${s.payments && s.payments.length ? `
+          <div class="table-wrap"><table style="font-size:12.5px;">
+            <thead><tr><th>الشهر</th><th>الحالة</th><th>تاريخ السداد</th><th>المبلغ</th></tr></thead>
+            <tbody>
+              ${s.payments.map(p => `<tr>
+                  <td>${p.month}</td>
+                  <td><span class="badge ${p.is_paid ? 'badge-green' : 'badge-red'}">${p.is_paid ? 'مسدد' : 'مش مسدد'}</span></td>
+                  <td>${p.is_paid ? (p.paid_date || '—') : '—'}</td>
+                  <td>${p.amount ?? '—'}</td>
+                </tr>`).join("")}
+            </tbody>
+          </table></div>` : `<div style="font-size:12.5px;color:var(--text-3);">لا يوجد سجل اشتراكات بعد</div>`}
         </div>
       `;
     }).join("");
