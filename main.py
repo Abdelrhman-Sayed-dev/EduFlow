@@ -25,7 +25,8 @@ from typing import Optional
 from database import (
     get_connection, init_db, hash_password, verify_password, gen_token,
     gen_access_code, gen_numeric_code, gen_temp_password, session_expiry, cleanup_expired_sessions,
-    is_login_blocked, record_failed_login, clear_failed_logins, cleanup_old_login_attempts
+    is_login_blocked, record_failed_login, clear_failed_logins, cleanup_old_login_attempts,
+    get_first_subscription_date
 )
 
 app = FastAPI(title="منصة المدرس - نظام إدارة الطلاب والمجموعات")
@@ -292,6 +293,18 @@ def is_student_subscribed(conn, student_id: int) -> bool:
     return bool(row and row["is_paid"])
 
 
+def student_content_cutoff(session) -> Optional[str]:
+    """
+    فلتر عام (Global Filter): تاريخ أول اشتراك للطالب صاحب الجلسة الحالية.
+    - لو الجلسة طالب: بيرجع تاريخ أول اشتراك (أو None لو مفيش اشتراك مسدد أصلاً).
+    - لو الجلسة مش طالب (أدمن/مشرف/مدرس): بيرجع None يعني من غير أي فلترة تاريخ،
+      لأن الشرط ده خاص بتجربة الطالب نفسه عند دخوله للمنصة.
+    """
+    if session.get("role") == "student":
+        return session.get("subscription_since")
+    return None
+
+
 def _resolve_session_by_token(token: Optional[str]):
     """المنطق المشترك لقراءة الجلسة من التوكن - مستخدم في get_current_session
     وفي get_session_for_media (اللي بتقبل التوكن من الـ query string كمان)"""
@@ -322,9 +335,13 @@ def _resolve_session_by_token(token: Optional[str]):
             # ده تحقق مركزي بيغطي كل الـ endpoints تلقائيًا من غير ما نعدل كل واحدة لوحدها
             if not is_student_subscribed(conn, student["id"]):
                 raise HTTPException(status_code=402, detail="يجب سداد الاشتراك الشهري لمشاهدة المحتوى")
+            # تاريخ أول اشتراك للطالب - نقطة البداية العامة لعرض أي محتوى له في المنصة
+            # (فلتر عام Global Filter بيتطبق في كل الـ endpoints اللي بترجع بيانات مؤرخة)
+            subscription_since = get_first_subscription_date(conn, student["id"])
             return {
                 "type": "student", "id": student["id"], "role": "student",
-                "full_name": student["full_name"], "group_id": student["group_id"]
+                "full_name": student["full_name"], "group_id": student["group_id"],
+                "subscription_since": subscription_since
             }
 
 
@@ -592,6 +609,7 @@ def login_with_code(data: CodeLoginIn, request: Request = None):
                 "id": student["id"], "group_id": student["group_id"],
                 "group_name": group["name"] if group else None,
                 "subscription_active": is_student_subscribed(conn, student["id"]),
+                "subscription_since": get_first_subscription_date(conn, student["id"]),
             }
 
         user = conn.execute("SELECT * FROM users WHERE access_code=?", (code,)).fetchone()
@@ -1340,14 +1358,18 @@ def get_board_images(group_id: int, session=Depends(get_current_session)):
             if session["group_id"] != group_id:
                 raise HTTPException(status_code=403, detail="تقدر تشوف سبورة مجموعتك بس")
 
-        rows = conn.execute(
-            """SELECT bi.*, u.full_name as uploaded_by_name
-               FROM board_images bi
-               LEFT JOIN users u ON u.id = bi.uploaded_by
-               WHERE bi.group_id=?
-               ORDER BY bi.session_number DESC, bi.created_at DESC""",
-            (group_id,)
-        ).fetchall()
+        query = """SELECT bi.*, u.full_name as uploaded_by_name
+                   FROM board_images bi
+                   LEFT JOIN users u ON u.id = bi.uploaded_by
+                   WHERE bi.group_id=?"""
+        params = [group_id]
+        # فلتر عام: إخفاء صور سبورة الحصص اللي تاريخها قبل تاريخ أول اشتراك الطالب
+        cutoff = student_content_cutoff(session)
+        if cutoff:
+            query += " AND (bi.session_date IS NULL OR bi.session_date >= ?)"
+            params.append(cutoff)
+        query += " ORDER BY bi.session_number DESC, bi.created_at DESC"
+        rows = conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
 
 
@@ -1425,14 +1447,21 @@ def assert_can_access_group_media(conn, session, group_id: int):
 def list_group_videos(group_id: int, session=Depends(get_current_session)):
     with get_connection() as conn:
         assert_can_access_group_media(conn, session, group_id)
-        rows = conn.execute("""
+        query = """
             SELECT gv.id, gv.group_id, gv.title, gv.description, gv.file_size, gv.mime_type,
                    gv.created_at, u.full_name as uploaded_by_name
             FROM group_videos gv
             LEFT JOIN users u ON u.id = gv.uploaded_by
             WHERE gv.group_id = ?
-            ORDER BY gv.created_at DESC
-        """, (group_id,)).fetchall()
+        """
+        params = [group_id]
+        # فلتر عام: إخفاء الفيديوهات اللي اترفعت قبل تاريخ أول اشتراك الطالب
+        cutoff = student_content_cutoff(session)
+        if cutoff:
+            query += " AND gv.created_at >= ?"
+            params.append(cutoff)
+        query += " ORDER BY gv.created_at DESC"
+        rows = conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
 
 
@@ -1515,6 +1544,12 @@ def stream_group_video(video_id: int, request: Request, session=Depends(get_sess
         if not vid:
             raise HTTPException(status_code=404, detail="الفيديو غير موجود")
         assert_can_access_group_media(conn, session, vid["group_id"])
+
+        # فلتر عام: منع الطالب من بث فيديو اترفع قبل تاريخ أول اشتراك ليه، حتى لو
+        # حاول يوصله مباشرة بالرابط (مش بس إخفاءه من القايمة)
+        cutoff = student_content_cutoff(session)
+        if cutoff and vid["created_at"] and vid["created_at"] < cutoff:
+            raise HTTPException(status_code=404, detail="الفيديو غير موجود")
 
         file_path = os.path.join(VIDEOS_DIR, vid["file_path"])
         if not os.path.exists(file_path):
@@ -1625,6 +1660,12 @@ def get_quizzes(group_id: Optional[int] = None, stage_id: Optional[int] = None,
             params.append(session.get("group_id"))
             params.append(student_stage)
 
+        # فلتر عام: إخفاء أي كويز تاريخه قبل تاريخ أول اشتراك الطالب
+        cutoff = student_content_cutoff(session)
+        if cutoff:
+            query += " AND (q.quiz_date IS NULL OR q.quiz_date >= ?)"
+            params.append(cutoff)
+
         query += " ORDER BY q.quiz_date DESC, q.id DESC"
         rows = conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
@@ -1686,6 +1727,11 @@ def get_quiz_scores(quiz_id: int, session=Depends(get_current_session)):
     with get_connection() as conn:
         quiz = conn.execute("SELECT * FROM quizzes WHERE id=?", (quiz_id,)).fetchone()
         if not quiz:
+            raise HTTPException(status_code=404, detail="الكويز غير موجود")
+
+        # فلتر عام: الطالب ميقدرش يشوف كويز تاريخه قبل تاريخ أول اشتراك ليه
+        cutoff = student_content_cutoff(session)
+        if cutoff and quiz["quiz_date"] and quiz["quiz_date"] < cutoff:
             raise HTTPException(status_code=404, detail="الكويز غير موجود")
 
         if session["role"] == "supervisor" and quiz["group_id"]:
@@ -1787,13 +1833,20 @@ def get_student_scores(student_id: int, session=Depends(get_current_session)):
             if student:
                 assert_supervisor_owns_group(conn, session, student["group_id"])
 
-        rows = conn.execute("""
+        query = """
             SELECT q.title, q.quiz_date, q.max_score, qs.score
             FROM quiz_scores qs
             JOIN quizzes q ON q.id = qs.quiz_id
             WHERE qs.student_id = ?
-            ORDER BY q.quiz_date DESC
-        """, (student_id,)).fetchall()
+        """
+        params = [student_id]
+        # فلتر عام: إخفاء أي درجة كويز تاريخه قبل تاريخ أول اشتراك الطالب
+        cutoff = student_content_cutoff(session)
+        if cutoff:
+            query += " AND (q.quiz_date IS NULL OR q.quiz_date >= ?)"
+            params.append(cutoff)
+        query += " ORDER BY q.quiz_date DESC"
+        rows = conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
 
 
@@ -1809,6 +1862,11 @@ def get_attendance_by_date(session_date: str, group_id: Optional[int] = None,
     with get_connection() as conn:
         if session["role"] == "supervisor" and group_id:
             assert_supervisor_owns_group(conn, session, group_id)
+
+        # فلتر عام: الطالب ميقدرش يشوف حضور تاريخه قبل تاريخ أول اشتراك ليه
+        cutoff = student_content_cutoff(session)
+        if cutoff and session_date < cutoff:
+            return []
 
         query = """
             SELECT s.id as student_id, s.full_name, s.attendance_code, s.phone, s.parent_phone,
@@ -1926,10 +1984,15 @@ def get_student_attendance(student_id: int, session=Depends(get_current_session)
             if student:
                 assert_supervisor_owns_group(conn, session, student["group_id"])
 
-        rows = conn.execute("""
-            SELECT session_date, status, notes FROM attendance
-            WHERE student_id = ? ORDER BY session_date DESC
-        """, (student_id,)).fetchall()
+        query = "SELECT session_date, status, notes FROM attendance WHERE student_id = ?"
+        params = [student_id]
+        # فلتر عام: إخفاء سجلات الحضور اللي تاريخها قبل تاريخ أول اشتراك الطالب
+        cutoff = student_content_cutoff(session)
+        if cutoff:
+            query += " AND session_date >= ?"
+            params.append(cutoff)
+        query += " ORDER BY session_date DESC"
+        rows = conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
 
 
@@ -2004,9 +2067,15 @@ def get_student_payments(student_id: int, session=Depends(get_current_session)):
         elif session["role"] == "student" and session["id"] != student_id:
             raise HTTPException(status_code=403, detail="تقدر تشوف مدفوعاتك بس")
 
-        rows = conn.execute(
-            "SELECT * FROM payments WHERE student_id=? ORDER BY month DESC", (student_id,)
-        ).fetchall()
+        query = "SELECT * FROM payments WHERE student_id=?"
+        params = [student_id]
+        # فلتر عام: إخفاء أي سجل دفع لشهر قبل شهر أول اشتراك الطالب
+        cutoff = student_content_cutoff(session)
+        if cutoff:
+            query += " AND month >= ?"
+            params.append(cutoff[:7])  # مقارنة بصيغة الشهر YYYY-MM
+        query += " ORDER BY month DESC"
+        rows = conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
 
 
@@ -2288,6 +2357,11 @@ def get_homework(group_id: Optional[int] = None, session=Depends(get_current_ses
         elif session["role"] == "student":
             query += " AND h.group_id = ?"
             params.append(session.get("group_id"))
+        # فلتر عام: إخفاء الواجبات اللي تاريخها قبل تاريخ أول اشتراك الطالب
+        cutoff = student_content_cutoff(session)
+        if cutoff:
+            query += " AND (h.session_date IS NULL OR h.session_date >= ?)"
+            params.append(cutoff)
         query += " ORDER BY h.session_number DESC"
         rows = conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
@@ -2341,12 +2415,16 @@ def delete_homework(hw_id: int, session=Depends(require_roles("admin", "head_sup
 def get_homework_submissions(hw_id: int, session=Depends(require_roles("admin", "head_supervisor", "supervisor", "student"))):
     """جلب حالة تسليم الواجب لكل طلاب المجموعة (الطالب بيشوف حالته هو بس)"""
     with get_connection() as conn:
-        hw = conn.execute("SELECT group_id FROM homework WHERE id=?", (hw_id,)).fetchone()
+        hw = conn.execute("SELECT group_id, session_date FROM homework WHERE id=?", (hw_id,)).fetchone()
         if not hw:
             raise HTTPException(status_code=404, detail="الواجب غير موجود")
         if session["role"] == "supervisor":
             assert_supervisor_owns_group(conn, session, hw["group_id"])
         if session["role"] == "student":
+            # فلتر عام: الطالب ميقدرش يشوف واجب تاريخه قبل تاريخ أول اشتراك ليه
+            cutoff = student_content_cutoff(session)
+            if cutoff and hw["session_date"] and hw["session_date"] < cutoff:
+                raise HTTPException(status_code=404, detail="الواجب غير موجود")
             # الطالب يشوف حالة تسليمه هو بس، ومن مجموعته هو بس
             if session.get("group_id") != hw["group_id"]:
                 raise HTTPException(status_code=403, detail="مش مسموح لك تشوف واجبات مجموعة تانية")
@@ -2410,16 +2488,23 @@ def save_homework_submission(hw_id: int, data: HomeworkSubmissionIn,
 @app.get("/api/notifications")
 def get_notifications(session=Depends(get_current_session)):
     user_type = "student" if session["role"] == "student" else "user"
+    cutoff = student_content_cutoff(session)
     with get_connection() as conn:
-        rows = conn.execute(
-            """SELECT id, title, body, is_read, created_at FROM notifications
-               WHERE user_type=? AND user_id=? ORDER BY created_at DESC LIMIT 50""",
-            (user_type, session["id"])
-        ).fetchall()
-        unread = conn.execute(
-            "SELECT COUNT(*) as c FROM notifications WHERE user_type=? AND user_id=? AND is_read=0",
-            (user_type, session["id"])
-        ).fetchone()["c"]
+        query = """SELECT id, title, body, is_read, created_at FROM notifications
+                   WHERE user_type=? AND user_id=?"""
+        params = [user_type, session["id"]]
+        if cutoff:
+            query += " AND created_at >= ?"
+            params.append(cutoff)
+        query += " ORDER BY created_at DESC LIMIT 50"
+        rows = conn.execute(query, params).fetchall()
+
+        unread_query = "SELECT COUNT(*) as c FROM notifications WHERE user_type=? AND user_id=? AND is_read=0"
+        unread_params = [user_type, session["id"]]
+        if cutoff:
+            unread_query += " AND created_at >= ?"
+            unread_params.append(cutoff)
+        unread = conn.execute(unread_query, unread_params).fetchone()["c"]
         return {"items": [dict(r) for r in rows], "unread_count": unread}
 
 

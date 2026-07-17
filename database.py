@@ -49,6 +49,26 @@ def verify_password(password: str, stored_hash: str) -> tuple[bool, bool]:
     return ok, ok
 
 
+def get_first_subscription_date(conn, student_id: int):
+    """
+    تاريخ أول اشتراك فعلي (أول دفعة مسددة) للطالب - هو نقطة البداية العامة لعرض
+    أي محتوى/بيانات للطالب في المنصة (فلتر عام Global Filter على كل الصفحات).
+    بيرجع التاريخ بصيغة 'YYYY-MM-DD'، أو None لو الطالب لسه معندوش أي اشتراك مسدد
+    (في الحالة دي المفروض ميتعرضلوش أي محتوى قديم أصلاً لحد ما يتسدد أول اشتراك له).
+    """
+    row = conn.execute(
+        """
+        SELECT MIN(COALESCE(paid_date, created_at)) as first_date
+        FROM payments
+        WHERE student_id = ? AND is_paid = 1
+        """,
+        (student_id,),
+    ).fetchone()
+    if row and row["first_date"]:
+        return str(row["first_date"])[:10]
+    return None
+
+
 def gen_token() -> str:
     return secrets.token_hex(24)
 
