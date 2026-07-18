@@ -5349,6 +5349,11 @@ async function renderHeadSupervisorMorePage(){
   c.innerHTML = `
     <div class="page-header"><div><h1>المزيد</h1><p>باقي صفحاتك وإعدادات حسابك</p></div></div>
     <div class="table-card" style="padding:6px 12px;margin-bottom:14px;">
+      <div class="student-more-item" onclick="navigateTo('hs_videos')">
+        <div class="student-more-ic"><i data-lucide="video" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">الفيديوهات</div><div style="font-size:11.5px;color:var(--text-3);">كل الفيديوهات المرفوعة واختيار مجموعاتها</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
       <div class="student-more-item" onclick="navigateTo('teacher_ranking')">
         <div class="student-more-ic"><i data-lucide="trophy" style="width:18px;height:18px;"></i></div>
         <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">الترتيب المتقدم</div><div style="font-size:11.5px;color:var(--text-3);">ترتيب الطلاب والمجموعات</div></div>
