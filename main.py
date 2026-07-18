@@ -2652,6 +2652,78 @@ def set_bulk_payment(data: BulkPaymentIn, session=Depends(require_roles("admin",
         return {"message": f"تم تحديث اشتراك {updated} طالب", "updated": updated}
 
 
+@app.get("/api/reports/subscriptions-summary")
+def get_subscriptions_summary(month: str, session=Depends(require_roles("admin", "head_supervisor"))):
+    """
+    تقرير شهري شامل لاشتراكات الطلاب - لكل مجموعة: عدد الطلاب، عدد المسددين
+    وغير المسددين، قيمة اشتراك كل طالب (ممكن تختلف من مجموعة لمجموعة، وحتى
+    جوه نفس المجموعة لو اتعدّلت يدويًا لطالب معين)، وإجمالي مبلغ المجموعة،
+    والإجمالي الكلي لكل الطلاب في كل المجموعات.
+    """
+    with get_connection() as conn:
+        groups = conn.execute("""
+            SELECT g.id, g.name, g.monthly_fee, st.name as stage_name
+            FROM groups g JOIN stages st ON st.id = g.stage_id
+            ORDER BY st.name, g.name
+        """).fetchall()
+
+        result_groups = []
+        grand_students = 0
+        grand_paid = 0
+        grand_amount = 0.0
+
+        for g in groups:
+            students = conn.execute("""
+                SELECT s.id as student_id, s.full_name, p.is_paid, p.amount, p.paid_date
+                FROM students s
+                LEFT JOIN payments p ON p.student_id = s.id AND p.month = ?
+                WHERE s.group_id = ? AND s.is_active = 1
+                ORDER BY s.full_name
+            """, (month, g["id"])).fetchall()
+
+            students_list = []
+            paid_count = 0
+            group_amount = 0.0
+            for s in students:
+                is_paid = bool(s["is_paid"])
+                if is_paid:
+                    paid_count += 1
+                    group_amount += (s["amount"] or 0)
+                students_list.append({
+                    "student_id": s["student_id"],
+                    "full_name": s["full_name"],
+                    "is_paid": is_paid,
+                    # قيمة الاشتراك الفعلية لو موجودة، وإلا قيمة المجموعة الافتراضية (كمتوقع لسه ملسددش)
+                    "amount": s["amount"] if s["amount"] is not None else g["monthly_fee"],
+                    "paid_date": s["paid_date"],
+                })
+
+            students_count = len(students)
+            result_groups.append({
+                "group_id": g["id"], "group_name": g["name"], "stage_name": g["stage_name"],
+                "monthly_fee": g["monthly_fee"],
+                "students_count": students_count,
+                "paid_count": paid_count,
+                "unpaid_count": students_count - paid_count,
+                "total_amount": group_amount,
+                "students": students_list,
+            })
+            grand_students += students_count
+            grand_paid += paid_count
+            grand_amount += group_amount
+
+        return {
+            "month": month,
+            "groups": result_groups,
+            "totals": {
+                "students_count": grand_students,
+                "paid_count": grand_paid,
+                "unpaid_count": grand_students - grand_paid,
+                "total_amount": grand_amount,
+            },
+        }
+
+
 @app.post("/api/payments/send-reminders")
 def trigger_payment_reminders(force: bool = Query(False),
                                session=Depends(require_roles("admin"))):

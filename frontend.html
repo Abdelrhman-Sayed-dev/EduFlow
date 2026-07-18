@@ -1016,6 +1016,7 @@ const NAV_BY_ROLE = {
     {id:"students", label:"الطلاب", icon:"user"},
     {id:"import_students", label:"استيراد طلاب (CSV)", icon:"upload"},
     {id:"subscriptions", label:"اشتراكات الطلاب", icon:"credit-card"},
+    {id:"subscriptions_report", label:"تقرير الاشتراكات الشهري", icon:"file-bar-chart"},
     {id:"supervisors", label:"المشرفين", icon:"shield-check"},
     {id:"head_supervisors", label:"مشرفي المشرفين", icon:"shield"},
     {id:"teachers", label:"المدرسين", icon:"presentation"},
@@ -1200,6 +1201,7 @@ const PAGE_TITLES = {
   teacher_ranking:"الترتيب المتقدم", teacher_reports:"التقارير", teacher_schedule:"جدولي",
   myrequests:"طلباتي", student_requests:"طلبات الطلاب",
   student_videos:"فيديوهات المجموعة", myvideos:"فيديوهاتي", hs_videos:"كل الفيديوهات",
+  subscriptions_report:"تقرير الاشتراكات الشهري",
 };
 
 async function renderPage(page){
@@ -1246,6 +1248,7 @@ async function renderPage(page){
       student_videos: renderSupervisorVideosPage,
       myvideos: renderMyVideosPage,
       hs_videos: renderHeadSupervisorVideosPage,
+      subscriptions_report: renderSubscriptionsReportPage,
     };
     const fn = renderers[page];
     if (fn) await fn();
@@ -2888,6 +2891,108 @@ async function bulkSetSubscription(isPaid){
       loadSubscriptionsList();
     }
   );
+}
+
+/* =====================================================================
+   تقرير الاشتراكات الشهري - إحصائية شاملة: عدد الطلاب المشتركين، قيمة اشتراك
+   كل طالب (ممكن تختلف من مجموعة لمجموعة)، إجمالي كل مجموعة، والإجمالي الكلي
+===================================================================== */
+let SUBS_REPORT_MONTH = null;
+let SUBS_REPORT_DATA = null;
+let SUBS_REPORT_EXPANDED = new Set(); // أي مجموعات فاتحة حاليًا لعرض تفاصيل الطلاب
+
+function moneyLabel(n){
+  const num = Number(n || 0);
+  return `${num.toLocaleString("ar-EG")} ج`;
+}
+
+async function renderSubscriptionsReportPage(){
+  if (!SUBS_REPORT_MONTH) SUBS_REPORT_MONTH = currentMonthStr();
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>تقرير الاشتراكات الشهري</h1><p>عدد الطلاب المشتركين وقيمة اشتراك كل طالب لكل مجموعة، وإجمالي اشتراكات كل مجموعة والإجمالي الكلي لكل الطلاب</p></div>
+      <div class="header-actions">
+        <input type="month" class="form-input" id="subsReportMonthPicker" style="width:auto;" value="${SUBS_REPORT_MONTH}" onchange="SUBS_REPORT_MONTH=this.value; loadSubscriptionsReport();">
+      </div>
+    </div>
+    <div id="subsReportStats"></div>
+    <div class="table-card">
+      <div id="subsReportGroupsList" style="padding:8px;"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>
+    </div>
+  `;
+  icons();
+  await loadSubscriptionsReport();
+}
+
+async function loadSubscriptionsReport(){
+  const statsWrap = document.getElementById("subsReportStats");
+  const listWrap = document.getElementById("subsReportGroupsList");
+  if (!listWrap) return;
+  SUBS_REPORT_DATA = await api(`/api/reports/subscriptions-summary?month=${SUBS_REPORT_MONTH}`);
+  renderSubscriptionsReportView();
+}
+
+function renderSubscriptionsReportView(){
+  const statsWrap = document.getElementById("subsReportStats");
+  const listWrap = document.getElementById("subsReportGroupsList");
+  if (!listWrap || !SUBS_REPORT_DATA) return;
+  const t = SUBS_REPORT_DATA.totals;
+
+  statsWrap.innerHTML = `
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon blue"><i data-lucide="users" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${t.students_count}</div><div class="stat-label">إجمالي عدد الطلاب</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon green"><i data-lucide="check-check" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${t.paid_count}</div><div class="stat-label">عدد المشتركين (مسددين)</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon amber"><i data-lucide="ban" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${t.unpaid_count}</div><div class="stat-label">عدد غير المسددين</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon teal"><i data-lucide="wallet" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${moneyLabel(t.total_amount)}</div><div class="stat-label">الإجمالي الكلي لكل الطلاب</div></div>
+    </div>
+  `;
+
+  const groups = SUBS_REPORT_DATA.groups;
+  listWrap.innerHTML = groups.length ? groups.map(g => `
+    <div class="table-card" style="margin-bottom:10px;box-shadow:none;border:1px solid var(--border);">
+      <div class="toolbar" style="cursor:pointer;" onclick="toggleSubsReportGroup(${g.group_id})">
+        <div style="display:flex;align-items:center;gap:10px;flex:1;">
+          <i data-lucide="${SUBS_REPORT_EXPANDED.has(g.group_id) ? 'chevron-down' : 'chevron-left'}" style="width:16px;height:16px;color:var(--text-3);"></i>
+          <div>
+            <div style="font-weight:700;font-size:13.5px;">${escapeHtml(g.group_name)}</div>
+            <div style="font-size:11.5px;color:var(--text-3);">${escapeHtml(g.stage_name)} · قيمة الاشتراك الافتراضية: ${g.monthly_fee ? moneyLabel(g.monthly_fee) : "غير محددة"}</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
+          <span class="badge badge-green">${g.paid_count} مسدد</span>
+          <span class="badge badge-red">${g.unpaid_count} مش مسدد</span>
+          <span style="font-weight:700;font-size:13.5px;color:var(--primary);">${moneyLabel(g.total_amount)}</span>
+        </div>
+      </div>
+      ${SUBS_REPORT_EXPANDED.has(g.group_id) ? `
+        <div class="table-wrap"><table>
+          <thead><tr><th>الطالب</th><th>قيمة الاشتراك</th><th>الحالة</th><th>تاريخ السداد</th></tr></thead>
+          <tbody>
+            ${g.students.map(s => `
+              <tr>
+                <td class="td-name">${escapeHtml(s.full_name)}</td>
+                <td>${moneyLabel(s.amount)}</td>
+                <td><span class="badge ${s.is_paid ? 'badge-green' : 'badge-red'}">${s.is_paid ? "مسدد" : "مش مسدد"}</span></td>
+                <td style="color:var(--text-3);font-size:12.5px;">${s.paid_date || "—"}</td>
+              </tr>
+            `).join("") || `<tr><td colspan="4" style="text-align:center;color:var(--text-3);padding:16px;">مفيش طلاب في المجموعة دي</td></tr>`}
+          </tbody>
+        </table></div>
+      ` : ""}
+    </div>
+  `).join("") : `<div class="empty-state" style="padding:30px;"><div class="empty-title">لا يوجد مجموعات</div></div>`;
+  icons();
+}
+
+function toggleSubsReportGroup(groupId){
+  if (SUBS_REPORT_EXPANDED.has(groupId)) SUBS_REPORT_EXPANDED.delete(groupId);
+  else SUBS_REPORT_EXPANDED.add(groupId);
+  renderSubscriptionsReportView();
 }
 
 /* =====================================================================
