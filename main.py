@@ -113,7 +113,7 @@ app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 VIDEOS_DIR = os.environ.get("VIDEOS_DIR", os.path.join(os.environ.get("DATA_DIR", "."), "private_videos"))
 os.makedirs(VIDEOS_DIR, exist_ok=True)
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v"}
-MAX_VIDEO_SIZE_BYTES = 500 * 1024 * 1024  # 500 ميجا حد أقصى للفيديو الواحد
+MAX_VIDEO_SIZE_BYTES = 2 * 1024 * 1024 * 1024  # 2 جيجا حد أقصى للفيديو الواحد
 
 
 # ---------------------------------------------------------------------------
