@@ -1053,6 +1053,7 @@ const NAV_BY_ROLE = {
   ],
   student: [
     {id:"mydashboard", label:"لوحتي", icon:"layout-dashboard"},
+    {id:"mycontent", label:"محتوى مجموعتي بالشهور", icon:"calendar-range"},
     {id:"myhomework", label:"واجباتي", icon:"clipboard-list"},
     {id:"myscores", label:"درجاتي", icon:"file-check-2"},
     {id:"myattendance", label:"حضوري", icon:"calendar-check"},
@@ -1067,7 +1068,7 @@ const ROLE_LABELS = {admin:"الأدمن العام", teacher:"المدرس", su
 // عناصر الناف بار السفلي الخاص بواجهة الطالب (موبايل)
 const STUDENT_BOTTOM_NAV = [
   {id:"mydashboard", label:"الرئيسية", icon:"home"},
-  {id:"myboard", label:"سبورة المجموعة", icon:"presentation"},
+  {id:"mycontent", label:"محتوى الشهور", icon:"calendar-range"},
   {id:"myhomework", label:"واجباتي", icon:"clipboard-list"},
   {id:"myattendance", label:"حضوري", icon:"calendar-check"},
   {id:"myscores", label:"درجاتي", icon:"book-open"},
@@ -1191,6 +1192,7 @@ const PAGE_TITLES = {
   homework:"الواجبات", monthly_reports:"التقرير الشهري",
   mygroup:"مجموعتي", mydashboard:"لوحتي", myscores:"درجاتي", myhomework:"واجباتي",
   myattendance:"حضوري", myboard:"سبورة مجموعتي", student_more:"المزيد",
+  mycontent:"محتوى مجموعتي بالشهور",
   student_search:"بحث عن طالب", supervisor_more:"المزيد", teacher_more:"المزيد",
   head_supervisor_more:"المزيد", hs_quizzes:"إدارة الكويزات والامتحانات",
   teacher_analytics:"التحليلات", teacher_compare:"مقارنة المجموعات",
@@ -1223,6 +1225,7 @@ async function renderPage(page){
       monthly_reports: renderMonthlyReportsPage,
       mygroup: renderMyGroupPage,
       mydashboard: renderStudentDashboardPage,
+      mycontent: renderMyMonthlyContentPage,
       myscores: renderMyScoresPage,
       myattendance: renderMyAttendancePage,
       myhomework: renderMyHomeworkPage,
@@ -4836,6 +4839,150 @@ function openVideoPlayerModal(videoId, title){
   { width: "760px" });
 }
 
+/* =====================================================================
+   محتوى مجموعتي بالشهور - عرض موحّد (سبورة + فيديوهات + واجبات + كويزات + حضور)
+   مقسّم بالشهر (أكورديون)، وجوه كل شهر بالحصة - الطالب بيشوف بس الشهور اللي
+   دفع اشتراكها فعليًا (فلترة من السيرفر، مش بس إخفاء بالواجهة)
+===================================================================== */
+async function renderMyMonthlyContentPage(){
+  const c = document.getElementById("pageContainer");
+  const groupId = SESSION.group_id;
+  if (!groupId){
+    c.innerHTML = `<div class="empty-state"><div class="empty-icon"><i data-lucide="calendar-range" style="width:26px;height:26px;"></i></div><div class="empty-title">معندك مجموعة لسه</div><div class="empty-desc">كلم الأدمن عشان يعينك على مجموعة.</div></div>`;
+    return;
+  }
+  c.innerHTML = `
+    <div class="page-header"><div><h1>محتوى مجموعتي بالشهور</h1><p>سبورة الحصص، الفيديوهات، الواجبات، الكويزات، والحضور - كل شهر لوحده وكل حصة جوه شهرها</p></div></div>
+    <div id="myMonthlyContentWrap"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>
+  `;
+  icons();
+
+  let data;
+  try{
+    data = await api(`/api/groups/${groupId}/content-by-month`);
+  }catch(e){
+    document.getElementById("myMonthlyContentWrap").innerHTML = `<div class="empty-state"><div class="empty-title">حصلت مشكلة في تحميل المحتوى</div></div>`;
+    return;
+  }
+
+  const wrap = document.getElementById("myMonthlyContentWrap");
+  const months = data.months || [];
+
+  if (!months.length){
+    const noSubscription = data.paid_months && data.paid_months.length === 0;
+    wrap.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon"><i data-lucide="calendar-x" style="width:26px;height:26px;"></i></div>
+        <div class="empty-title">لا يوجد محتوى متاح لسه</div>
+        <div class="empty-desc">${noSubscription ? "لسه معندكش اشتراك مسدد - سدد اشتراك الشهر عشان يظهرلك محتواه." : "لسه مفيش محتوى مضاف للشهور اللي مشترك فيها."}</div>
+      </div>`;
+    icons();
+    return;
+  }
+
+  wrap.innerHTML = months.map((m, idx)=>{
+    const bodyId = `mc_month_body_${idx}`;
+    const isOpen = isCollapseOpenByDefault(bodyId, idx === 0); // أول شهر مفتوح افتراضيًا
+    const sessionsCount = m.sessions.length;
+    const videosCount = m.videos.length;
+    const noSessionQuizzes = m.quizzes_no_session || [];
+    const isEmpty = !sessionsCount && !videosCount && !noSessionQuizzes.length;
+    return `
+    <div class="collapse-card" id="mc_month_card_${idx}">
+      <div class="collapse-header" onclick="toggleCollapse('${bodyId}', this)">
+        <div style="display:flex;align-items:center;gap:10px;flex:1;flex-wrap:wrap;">
+          <i data-lucide="calendar-range" style="width:16px;height:16px;color:var(--primary);flex-shrink:0;"></i>
+          <span style="font-weight:800;font-size:15px;">${escapeHtml(m.label)}</span>
+          <div style="display:flex;gap:6px;margin-right:auto;flex-wrap:wrap;">
+            ${sessionsCount ? `<span class="badge badge-teal">${sessionsCount} حصة</span>` : ""}
+            ${videosCount ? `<span class="badge badge-blue">${videosCount} فيديو</span>` : ""}
+          </div>
+        </div>
+        <i data-lucide="${isOpen?'chevron-up':'chevron-down'}" class="collapse-icon" style="width:16px;height:16px;color:var(--text-3);transition:transform .2s;"></i>
+      </div>
+      <div class="collapse-body" id="${bodyId}" style="display:${isOpen?'block':'none'};padding:14px 16px;">
+        ${sessionsCount ? m.sessions.map(s=>renderMonthlySessionBlock(s)).join("") : ""}
+        ${noSessionQuizzes.length ? `
+          <div style="margin-top:${sessionsCount?'6px':'0'};margin-bottom:${videosCount?'10px':'0'};">
+            <div style="font-size:12px;font-weight:700;color:var(--text-3);margin-bottom:6px;">كويزات أخرى في ${escapeHtml(m.label)}</div>
+            ${noSessionQuizzes.map(q=>renderMonthlyQuizRow(q)).join("")}
+          </div>` : ""}
+        ${videosCount ? `
+          <div style="margin-top:${(sessionsCount||noSessionQuizzes.length)?'12px':'0'};">
+            <div style="font-size:12px;font-weight:700;color:var(--text-3);margin-bottom:8px;">فيديوهات ${escapeHtml(m.label)}</div>
+            ${m.videos.map(v=>`
+              <div class="video-row">
+                <div class="video-row-ic"><i data-lucide="video" style="width:18px;height:18px;"></i></div>
+                <div style="flex:1;min-width:0;">
+                  <div style="font-weight:700;font-size:13.5px;">${escapeHtml(v.title)}</div>
+                  <div style="font-size:11.5px;color:var(--text-3);">${escapeHtml(v.description||"")}${v.description?" · ":""}${videoFileSizeLabel(v.file_size)} · ${(v.created_at||"").slice(0,10)}</div>
+                </div>
+                <button class="btn btn-primary btn-sm" onclick="openVideoPlayerModal(${v.id}, '${jsAttr(v.title)}')"><i data-lucide="play" style="width:13px;height:13px;"></i> تشغيل</button>
+              </div>
+            `).join("")}
+          </div>` : ""}
+        ${isEmpty ? `<div style="font-size:12.5px;color:var(--text-3);padding:6px 0;">لا يوجد محتوى مضاف للشهر ده لسه</div>` : ""}
+      </div>
+    </div>`;
+  }).join("");
+  icons();
+}
+
+function renderMonthlySessionBlock(s){
+  const label = ATT_SESSION_NAMES?.[s.session_number] || ("#" + s.session_number);
+  const hw = s.homework;
+  const hwDone = hw && hw.submission ? hw.submission.done : null;
+  const att = s.attendance;
+  const hasImgsOrQuizzes = (s.board_images.length || s.quizzes.length);
+  return `
+    <div style="border:1px solid var(--border);border-radius:var(--radius-md);padding:12px 14px;margin-bottom:12px;">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+        <i data-lucide="presentation" style="width:14px;height:14px;color:var(--primary);"></i>
+        <b style="font-size:13.5px;">الحصة ${label}</b>
+        <div style="display:flex;gap:6px;margin-right:auto;flex-wrap:wrap;">
+          ${att ? `<span class="badge ${ATT_BADGE[att.status]}">${ATT_LABELS[att.status]}</span>` : ""}
+          ${hw ? `<span class="badge ${hwDone?'badge-green':'badge-red'}">${hwDone?'تم تسليم الواجب ✅':'لم يتم تسليم الواجب ❌'}</span>` : ""}
+        </div>
+      </div>
+      ${hw ? `
+        <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:10px 12px;margin-bottom:${hasImgsOrQuizzes?'10px':'0'};border-right:3px solid var(--primary);">
+          <div style="font-size:11px;font-weight:700;color:var(--text-3);margin-bottom:3px;">الواجب</div>
+          <div style="font-size:13px;color:var(--text);">${escapeHtml(hw.description||'واجب الحصة')}</div>
+          ${hw.submission && hw.submission.notes ? `<div style="font-size:11.5px;color:var(--text-3);margin-top:6px;">ملاحظة مشرفك: ${escapeHtml(hw.submission.notes)}</div>` : ""}
+        </div>` : ""}
+      ${s.board_images.length ? `
+        <div class="cards-grid" style="margin-bottom:${s.quizzes.length?'10px':'0'};">
+          ${s.board_images.map((im,i)=>`
+            <div class="session-card">
+              <img class="thumb" src="${im.image_data}" onclick="showImageLightbox('${im.image_data}', 'حصة-${s.session_number}-صورة-${i+1}.jpg')">
+              <div class="info">
+                <b>${im.session_date||''}</b>
+                <button class="action-btn" title="تحميل" onclick="downloadImageDirect('${im.image_data}','حصة-${s.session_number}-صورة-${i+1}.jpg')"><i data-lucide="download" style="width:14px;height:14px;"></i></button>
+              </div>
+            </div>
+          `).join("")}
+        </div>` : ""}
+      ${s.quizzes.length ? s.quizzes.map(q=>renderMonthlyQuizRow(q)).join("") : ""}
+      ${!att && !hw && !s.board_images.length && !s.quizzes.length ? `<div style="font-size:12px;color:var(--text-3);">لا يوجد محتوى للحصة دي لسه</div>` : ""}
+    </div>
+  `;
+}
+
+function renderMonthlyQuizRow(q){
+  const my = q.my_score;
+  const pct = (my && my.score!=null) ? Math.round((my.score/q.max_score)*100) : null;
+  return `
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px dashed var(--border);flex-wrap:wrap;">
+      <i data-lucide="file-check-2" style="width:14px;height:14px;color:var(--primary);flex-shrink:0;"></i>
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:700;font-size:13px;">${escapeHtml(q.title)}</div>
+        <div style="font-size:11px;color:var(--text-3);">${q.quiz_date||''}</div>
+      </div>
+      ${my ? `<span class="badge ${pct>=50?'badge-green':'badge-red'}">${my.score}/${q.max_score}${pct!=null?` (${pct}%)`:''}</span>` : `<span class="badge badge-gray">لسه معندكش درجة</span>`}
+    </div>
+  `;
+}
+
 async function renderMyVideosPage(){
   const c = document.getElementById("pageContainer");
   const groupId = SESSION.group_id;
@@ -5159,6 +5306,11 @@ async function renderStudentMorePage(){
   c.innerHTML = `
     <div class="page-header"><div><h1>المزيد</h1><p>باقي صفحاتك وإعدادات حسابك</p></div></div>
     <div class="table-card" style="padding:6px 12px;margin-bottom:14px;">
+      <div class="student-more-item" onclick="navigateTo('mycontent')">
+        <div class="student-more-ic"><i data-lucide="calendar-range" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">محتوى مجموعتي بالشهور</div><div style="font-size:11.5px;color:var(--text-3);">كل حاجة (سبورة، فيديوهات، واجبات، كويزات، حضور) مقسّمة شهر بشهر</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
       <div class="student-more-item" onclick="navigateTo('myrequests')">
         <div class="student-more-ic"><i data-lucide="send" style="width:18px;height:18px;"></i></div>
         <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">طلباتي</div><div style="font-size:11.5px;color:var(--text-3);">قدّم طلب لمشرف مجموعتك وتابع الردود</div></div>

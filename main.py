@@ -26,7 +26,7 @@ from database import (
     get_connection, init_db, hash_password, verify_password, gen_token,
     gen_access_code, gen_numeric_code, gen_temp_password, session_expiry, cleanup_expired_sessions,
     is_login_blocked, record_failed_login, clear_failed_logins, cleanup_old_login_attempts,
-    get_first_subscription_date
+    get_first_subscription_date, get_paid_months
 )
 
 app = FastAPI(title="منصة المدرس - نظام إدارة الطلاب والمجموعات")
@@ -1463,6 +1463,196 @@ def list_group_videos(group_id: int, session=Depends(get_current_session)):
         query += " ORDER BY gv.created_at DESC"
         rows = conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# المحتوى مقسّم بالشهور والحصص (سبورة + فيديوهات + واجبات + كويزات + حضور)
+# - الطالب بيشوف بس الشهور اللي دفعها فعليًا (لو فيه فجوة سداد، الشهر ده
+#   بيتخفي حتى لو فيه شهور مدفوعة بعده)
+# - الأدمن/المشرف/المدرس بيشوفوا كل الشهور من غير فلترة، إلا لو حددوا
+#   student_id عشان يعاينوا اللي هيبان فعلاً لطالب معين
+# ---------------------------------------------------------------------------
+
+ARABIC_MONTHS = {
+    "01": "يناير", "02": "فبراير", "03": "مارس", "04": "أبريل",
+    "05": "مايو", "06": "يونيو", "07": "يوليو", "08": "أغسطس",
+    "09": "سبتمبر", "10": "أكتوبر", "11": "نوفمبر", "12": "ديسمبر",
+}
+
+NO_DATE_KEY = "بدون_تاريخ"
+
+
+def _month_label(month_key: str) -> str:
+    """بيحول 'YYYY-MM' لاسم شهر عربي، مثال: '2026-10' -> 'أكتوبر 2026'"""
+    try:
+        year, mo = month_key.split("-")
+        return f"{ARABIC_MONTHS.get(mo, mo)} {year}"
+    except Exception:
+        return month_key
+
+
+@app.get("/api/groups/{group_id}/content-by-month")
+def get_group_content_by_month(
+    group_id: int,
+    student_id: Optional[int] = None,
+    session=Depends(get_current_session),
+):
+    """
+    بيرجع محتوى المجموعة كله مقسّم بالشهر ثم بالحصة جوه كل شهر (شكل أكورديون
+    جاهز للواجهة): { months: [ { month, label, sessions: [...], videos: [...] } ] }
+    """
+    with get_connection() as conn:
+        # تحديد صلاحية الوصول + تحديد الطالب اللي هنفلتر شهوره حسب سداده
+        if session["role"] == "student":
+            if session.get("group_id") != group_id:
+                raise HTTPException(status_code=403, detail="مش مسموح لك تشوف محتوى مجموعة تانية")
+            effective_student_id = session["id"]
+            paid_months = set(get_paid_months(conn, effective_student_id))
+        elif session["role"] == "supervisor":
+            assert_supervisor_owns_group(conn, session, group_id)
+            effective_student_id = student_id
+            paid_months = set(get_paid_months(conn, effective_student_id)) if effective_student_id else None
+        elif session["role"] in ("admin", "head_supervisor", "teacher"):
+            effective_student_id = student_id
+            paid_months = set(get_paid_months(conn, effective_student_id)) if effective_student_id else None
+        else:
+            raise HTTPException(status_code=403, detail="مفيش صلاحية للوصول لده")
+
+        group = conn.execute("SELECT * FROM groups WHERE id=?", (group_id,)).fetchone()
+        if not group:
+            raise HTTPException(status_code=404, detail="المجموعة غير موجودة")
+        stage_id = group["stage_id"]
+
+        months: dict = {}
+
+        def bucket(month_key: Optional[str]):
+            key = month_key or NO_DATE_KEY
+            if key not in months:
+                months[key] = {
+                    "month": month_key,
+                    "label": _month_label(month_key) if month_key else "عناصر بدون تاريخ محدد",
+                    "sessions": {},
+                    "videos": [],
+                    "quizzes_no_session": [],
+                }
+            return months[key]
+
+        def session_bucket(month_dict, session_number: int):
+            key = str(session_number)
+            if key not in month_dict["sessions"]:
+                month_dict["sessions"][key] = {
+                    "session_number": session_number,
+                    "board_images": [],
+                    "homework": None,
+                    "quizzes": [],
+                    "attendance": None,
+                }
+            return month_dict["sessions"][key]
+
+        # ---------------- سبورة الحصص ----------------
+        rows = conn.execute(
+            """SELECT bi.*, u.full_name as uploaded_by_name
+               FROM board_images bi LEFT JOIN users u ON u.id = bi.uploaded_by
+               WHERE bi.group_id=? ORDER BY bi.session_number, bi.created_at""",
+            (group_id,)
+        ).fetchall()
+        for r in rows:
+            m = bucket(r["session_date"][:7] if r["session_date"] else None)
+            s = session_bucket(m, r["session_number"])
+            s["board_images"].append(dict(r))
+
+        # ---------------- الفيديوهات (مالهاش رقم حصة، بتتبوّب بالشهر بس) ----------------
+        rows = conn.execute(
+            """SELECT gv.id, gv.group_id, gv.title, gv.description, gv.file_size,
+                      gv.mime_type, gv.created_at, u.full_name as uploaded_by_name
+               FROM group_videos gv LEFT JOIN users u ON u.id = gv.uploaded_by
+               WHERE gv.group_id=? ORDER BY gv.created_at""",
+            (group_id,)
+        ).fetchall()
+        for r in rows:
+            m = bucket(r["created_at"][:7] if r["created_at"] else None)
+            m["videos"].append(dict(r))
+
+        # ---------------- الواجبات ----------------
+        rows = conn.execute(
+            "SELECT * FROM homework WHERE group_id=? ORDER BY session_number", (group_id,)
+        ).fetchall()
+        submissions_by_hw = {}
+        if effective_student_id:
+            sub_rows = conn.execute(
+                "SELECT * FROM homework_submissions WHERE student_id=?", (effective_student_id,)
+            ).fetchall()
+            submissions_by_hw = {r["homework_id"]: dict(r) for r in sub_rows}
+        for r in rows:
+            m = bucket(r["session_date"][:7] if r["session_date"] else None)
+            s = session_bucket(m, r["session_number"])
+            hw = dict(r)
+            if effective_student_id:
+                hw["submission"] = submissions_by_hw.get(r["id"])
+            s["homework"] = hw
+
+        # ---------------- الكويزات (خاصة بالمجموعة أو المرحلة أو عامة) ----------------
+        rows = conn.execute(
+            """SELECT q.* FROM quizzes q
+               WHERE (q.group_id IS NULL AND q.stage_id IS NULL)
+                  OR q.group_id = ? OR q.stage_id = ?
+               ORDER BY q.session_number, q.quiz_date""",
+            (group_id, stage_id)
+        ).fetchall()
+        scores_by_quiz = {}
+        if effective_student_id:
+            sc_rows = conn.execute(
+                "SELECT * FROM quiz_scores WHERE student_id=?", (effective_student_id,)
+            ).fetchall()
+            scores_by_quiz = {r["quiz_id"]: dict(r) for r in sc_rows}
+        for r in rows:
+            m = bucket(r["quiz_date"][:7] if r["quiz_date"] else None)
+            q = dict(r)
+            if effective_student_id:
+                q["my_score"] = scores_by_quiz.get(r["id"])
+            if r["session_number"] is not None:
+                s = session_bucket(m, r["session_number"])
+                s["quizzes"].append(q)
+            else:
+                m["quizzes_no_session"].append(q)
+
+        # ---------------- الحضور (لو محدد طالب) ----------------
+        if effective_student_id:
+            rows = conn.execute(
+                "SELECT * FROM attendance WHERE student_id=? ORDER BY session_date, session_number",
+                (effective_student_id,)
+            ).fetchall()
+            for r in rows:
+                m = bucket(r["session_date"][:7] if r["session_date"] else None)
+                s = session_bucket(m, r["session_number"])
+                s["attendance"] = dict(r)
+
+        # ---------------- فلترة الشهور: يظهر بس الشهر اللي اتسدد فعليًا ----------------
+        # (لو فيه فجوة سداد، الشهر ده بيتخفي حتى لو فيه شهور مدفوعة بعده)
+        # عناصر "بدون تاريخ" بتفضل ظاهرة دايمًا لأننا مش نقدر نحكم عليها بشهر معين
+        if paid_months is not None:
+            filtered = {k: v for k, v in months.items() if k in paid_months}
+            if NO_DATE_KEY in months:
+                filtered[NO_DATE_KEY] = months[NO_DATE_KEY]
+            months = filtered
+
+        dated_keys = sorted(k for k in months.keys() if k != NO_DATE_KEY)
+        ordered_keys = dated_keys + ([NO_DATE_KEY] if NO_DATE_KEY in months else [])
+
+        result_months = []
+        for k in ordered_keys:
+            md = months[k]
+            md["sessions"] = [
+                md["sessions"][sk] for sk in sorted(md["sessions"].keys(), key=lambda x: int(x))
+            ]
+            result_months.append(md)
+
+        return {
+            "group_id": group_id,
+            "group_name": group["name"],
+            "paid_months": sorted(paid_months) if paid_months is not None else None,
+            "months": result_months,
+        }
 
 
 @app.post("/api/groups/{group_id}/videos")

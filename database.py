@@ -69,6 +69,19 @@ def get_first_subscription_date(conn, student_id: int):
     return None
 
 
+def get_paid_months(conn, student_id: int):
+    """
+    بيرجع قايمة الشهور (YYYY-MM) اللي الطالب سددها فعليًا بس - بتُستخدم عشان
+    نعرضله بس محتوى الشهور دي (لو فيه فجوة سداد، الشهر ده بيتخفي حتى لو فيه
+    شهور مدفوعة بعده).
+    """
+    rows = conn.execute(
+        "SELECT month FROM payments WHERE student_id=? AND is_paid=1 ORDER BY month",
+        (student_id,),
+    ).fetchall()
+    return [r["month"] for r in rows]
+
+
 def gen_token() -> str:
     return secrets.token_hex(24)
 
