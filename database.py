@@ -6,9 +6,7 @@ import bcrypt
 from datetime import datetime, timedelta
 from contextlib import contextmanager
 
-# لازم قاعدة البيانات تتخزن في نفس الـ DATA_DIR اللي بيتحدد من متغير البيئة
-# (بالظبط زي UPLOADS_DIR و VIDEOS_DIR في main.py) عشان تبقى على الـ Persistent Disk
-# مش على الـ filesystem المؤقت اللي بيتمسح مع كل ديبلوي على Render.
+
 DATA_DIR = os.environ.get("DATA_DIR", ".")
 os.makedirs(DATA_DIR, exist_ok=True)
 DB_NAME = os.path.join(DATA_DIR, "teacher_system.db")
