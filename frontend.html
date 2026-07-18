@@ -4690,9 +4690,10 @@ function deleteBoardImage(id){
    يقدروا يتفرجوا عليه بس من غير ما يقدروا ينزّلوه (رابط البث محمي بصلاحيات)
 ===================================================================== */
 let CURRENT_VIDEOS_GROUP_ID = null;
+let CURRENT_VIDEOS_GROUPS_LIST = []; // كل المجموعات المتاحة للمستخدم الحالي، بيستخدمها مودال رفع الفيديو لعرض اختيار متعدد
 
 async function renderSupervisorVideosPage(){
-  const groups = SESSION.role === "supervisor" ? await loadGroups() : [];
+  const groups = await loadGroups(); // السيرفر بيفلتر تلقائي: المشرف يشوف مجموعاته بس، والأدمن يشوف كل المجموعات
   if (!groups.length){
     const c = document.getElementById("pageContainer");
     c.innerHTML = `<div class="empty-state"><div class="empty-icon"><i data-lucide="users" style="width:26px;height:26px;"></i></div><div class="empty-title">معندكش مجموعة لسه</div><div class="empty-desc">كلم الأدمن عشان يعينك على مجموعة.</div></div>`;
@@ -4702,6 +4703,7 @@ async function renderSupervisorVideosPage(){
     CURRENT_VIDEOS_GROUP_ID = groups[0].id;
   }
   const groupId = CURRENT_VIDEOS_GROUP_ID;
+  CURRENT_VIDEOS_GROUPS_LIST = groups;
 
   const c = document.getElementById("pageContainer");
   const groupSwitcher = groups.length > 1 ? `
@@ -4752,10 +4754,22 @@ async function loadGroupVideosList(groupId){
   icons();
 }
 
-function openUploadVideoModal(groupId){
-  openModal("رفع فيديو للمجموعة", `
+function openUploadVideoModal(defaultGroupId){
+  const groupsCheckboxes = CURRENT_VIDEOS_GROUPS_LIST.map(g => `
+    <label style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--border);font-size:13px;cursor:pointer;">
+      <input type="checkbox" class="f_vid_group_cb" value="${g.id}" ${g.id===defaultGroupId?"checked":""}>
+      ${escapeHtml(g.name)}
+    </label>`).join("");
+  openModal("رفع فيديو", `
     <div class="form-group"><label class="form-label">عنوان الفيديو <span class="req">*</span></label><input class="form-input" id="f_vid_title" placeholder="مثال: شرح حصة اليوم"></div>
-    <div class="form-group"><label class="form-label">رقم الحصة (اختياري)</label><input class="form-input" id="f_vid_session" type="number" min="1" placeholder="مثال: 1"><div class="form-hint">لو حددته، الفيديو هيظهر جوه الحصة دي في صفحة "محتوى الشهور"</div></div>
+    <div class="form-group">
+      <label class="form-label">المجموعات اللي هيترفع لها الفيديو <span class="req">*</span></label>
+      <div style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-md);padding:4px 10px;">
+        ${groupsCheckboxes || `<div style="font-size:12px;color:var(--text-3);padding:8px 0;">مفيش مجموعات متاحة</div>`}
+      </div>
+      <div class="form-hint">تقدر تختار أكتر من مجموعة - الفيديو هيترفع مرة واحدة بس ويترفعله لكل المجموعات المحددة</div>
+    </div>
+    <div class="form-group"><label class="form-label">رقم الحصة (اختياري)</label><input class="form-input" id="f_vid_session" type="number" min="1" placeholder="مثال: 1"><div class="form-hint">لو حددته، الفيديو هيظهر جوه الحصة دي في صفحة "محتوى الشهور" لكل المجموعات المختارة</div></div>
     <div class="form-group"><label class="form-label">وصف (اختياري)</label><textarea class="form-textarea" id="f_vid_desc"></textarea></div>
     <div class="form-group"><label class="form-label">ملف الفيديو <span class="req">*</span></label><input class="form-input" id="f_vid_file" type="file" accept="video/*"></div>
     <div id="vidUploadProgressWrap" style="display:none;margin-top:10px;">
@@ -4764,21 +4778,24 @@ function openUploadVideoModal(groupId){
     </div>
   `, `
     <button class="btn btn-ghost" id="vidUploadCancelBtn" onclick="closeOverlay('genericModal')">إلغاء</button>
-    <button class="btn btn-primary" id="vidUploadSubmitBtn" onclick="submitUploadVideo(${groupId})"><i data-lucide="upload" style="width:14px;height:14px;"></i> رفع</button>
+    <button class="btn btn-primary" id="vidUploadSubmitBtn" onclick="submitUploadVideo()"><i data-lucide="upload" style="width:14px;height:14px;"></i> رفع</button>
   `);
 }
 
-function submitUploadVideo(groupId){
+function submitUploadVideo(){
   const title = document.getElementById("f_vid_title").value.trim();
   const description = document.getElementById("f_vid_desc").value.trim();
   const sessionNum = document.getElementById("f_vid_session").value;
   const fileInput = document.getElementById("f_vid_file");
   const file = fileInput.files[0];
+  const selectedGroupIds = Array.from(document.querySelectorAll(".f_vid_group_cb:checked")).map(cb => cb.value);
   if (!title || !file){ showToast("لازم تكتب عنوان وتختار ملف فيديو", "error"); return; }
+  if (!selectedGroupIds.length){ showToast("لازم تختار مجموعة واحدة على الأقل", "error"); return; }
 
   const form = new FormData();
   form.append("title", title);
   form.append("description", description);
+  form.append("group_ids", selectedGroupIds.join(","));
   if (sessionNum) form.append("session_number", sessionNum);
   form.append("file", file);
 
@@ -4792,7 +4809,7 @@ function submitUploadVideo(groupId){
   cancelBtn.disabled = true; cancelBtn.style.opacity = "0.6";
 
   const xhr = new XMLHttpRequest();
-  xhr.open("POST", API + `/api/groups/${groupId}/videos`);
+  xhr.open("POST", API + `/api/videos`);
   if (TOKEN) xhr.setRequestHeader("Authorization", "Bearer " + TOKEN);
 
   xhr.upload.onprogress = (e) => {
@@ -4806,7 +4823,7 @@ function submitUploadVideo(groupId){
     if (xhr.status >= 200 && xhr.status < 300) {
       showToast("تم رفع الفيديو بنجاح", "success");
       closeOverlay("genericModal");
-      loadGroupVideosList(groupId);
+      if (CURRENT_VIDEOS_GROUP_ID) loadGroupVideosList(CURRENT_VIDEOS_GROUP_ID);
     } else {
       let msg = "حصلت مشكلة أثناء رفع الفيديو";
       try { msg = JSON.parse(xhr.responseText).detail || msg; } catch(e){}
@@ -4824,9 +4841,9 @@ function submitUploadVideo(groupId){
 }
 
 function deleteGroupVideo(videoId, groupId){
-  confirmAction("حذف الفيديو", "متأكد إنك عايز تحذف الفيديو ده نهائيًا؟", async ()=>{
-    await api(`/api/videos/${videoId}`, {method:"DELETE"});
-    showToast("تم حذف الفيديو", "success");
+  confirmAction("حذف الفيديو", "متأكد إنك عايز تحذف الفيديو ده من المجموعة دي؟ (لو مرفوع لمجموعات تانية، هيفضل متاح ليها)", async ()=>{
+    await api(`/api/groups/${groupId}/videos/${videoId}`, {method:"DELETE"});
+    showToast("تم الحذف", "success");
     loadGroupVideosList(groupId);
   });
 }

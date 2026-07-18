@@ -582,6 +582,29 @@ def init_db():
         _safe_alter(cur, "ALTER TABLE group_videos ADD COLUMN session_number INTEGER")
 
         # ---------------------------------------------------------------
+        # ربط فيديو واحد بأكتر من مجموعة - بدل ما الفيديو يترفع لمجموعة واحدة
+        # بس، ده بيسمح إن نفس ملف الفيديو (اترفع مرة واحدة) يتحدد له كذا مجموعة،
+        # ولكل مجموعة رقم حصة مستقل (ممكن يكون مختلف حسب تقدم كل مجموعة)
+        # ---------------------------------------------------------------
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS video_group_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            video_id INTEGER NOT NULL,
+            group_id INTEGER NOT NULL,
+            session_number INTEGER,
+            FOREIGN KEY (video_id) REFERENCES group_videos(id) ON DELETE CASCADE,
+            FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+            UNIQUE(video_id, group_id)
+        )
+        """)
+        # ترحيل الفيديوهات القديمة (اللي كانت مربوطة بعمود group_id مباشرة) لجدول
+        # الربط الجديد، عشان تفضل شغالة زي ما هي من غير ما نخسر أي بيانات
+        cur.execute("""
+            INSERT OR IGNORE INTO video_group_links (video_id, group_id, session_number)
+            SELECT id, group_id, session_number FROM group_videos WHERE group_id IS NOT NULL
+        """)
+
+        # ---------------------------------------------------------------
         # الإشعارات - كل عملية يعملها المشرف بتوصل للطالب (درجة/واجب/سبورة...)
         # ---------------------------------------------------------------
         cur.execute("""

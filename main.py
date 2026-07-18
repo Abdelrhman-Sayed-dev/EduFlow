@@ -1468,16 +1468,35 @@ def assert_can_access_group_media(conn, session, group_id: int):
     raise HTTPException(status_code=403, detail="مفيش صلاحية للوصول لده")
 
 
+def assert_can_access_video(conn, session, video_id: int):
+    """فيديو ممكن يكون مربوط بأكتر من مجموعة (video_group_links) - نسمح بالوصول
+    لو الجلسة عندها صلاحية على أي مجموعة من المجموعات المربوط بيها الفيديو."""
+    group_ids = [r["group_id"] for r in conn.execute(
+        "SELECT group_id FROM video_group_links WHERE video_id=?", (video_id,)
+    ).fetchall()]
+    if not group_ids:
+        raise HTTPException(status_code=404, detail="الفيديو غير موجود")
+    last_error = None
+    for gid in group_ids:
+        try:
+            assert_can_access_group_media(conn, session, gid)
+            return
+        except HTTPException as e:
+            last_error = e
+    raise last_error
+
+
 @app.get("/api/groups/{group_id}/videos")
 def list_group_videos(group_id: int, session=Depends(get_current_session)):
     with get_connection() as conn:
         assert_can_access_group_media(conn, session, group_id)
         query = """
-            SELECT gv.id, gv.group_id, gv.title, gv.description, gv.file_size, gv.mime_type,
-                   gv.session_number, gv.created_at, u.full_name as uploaded_by_name
-            FROM group_videos gv
+            SELECT gv.id, gv.title, gv.description, gv.file_size, gv.mime_type,
+                   vgl.session_number, gv.created_at, u.full_name as uploaded_by_name
+            FROM video_group_links vgl
+            JOIN group_videos gv ON gv.id = vgl.video_id
             LEFT JOIN users u ON u.id = gv.uploaded_by
-            WHERE gv.group_id = ?
+            WHERE vgl.group_id = ?
         """
         params = [group_id]
         # فلتر عام: إخفاء الفيديوهات اللي اترفعت قبل تاريخ أول اشتراك الطالب
@@ -1588,12 +1607,16 @@ def get_group_content_by_month(
             s["board_images"].append(dict(r))
 
         # ---------------- الفيديوهات (لو ليها رقم حصة بتترتب جوه حصتها، زي
-        # الصور بالظبط - ولو فيديو قديم ملوش رقم حصة بيتبوّب بالشهر بس) ----------------
+        # الصور بالظبط - ولو فيديو قديم ملوش رقم حصة بيتبوّب بالشهر بس).
+        # الفيديو ممكن يكون مربوط بأكتر من مجموعة، فبنجيب بس اللي مربوط
+        # بالمجموعة الحالية من جدول الربط ورقم الحصة الخاص بيها هي ----------------
         rows = conn.execute(
-            """SELECT gv.id, gv.group_id, gv.title, gv.description, gv.file_size,
-                      gv.mime_type, gv.session_number, gv.created_at, u.full_name as uploaded_by_name
-               FROM group_videos gv LEFT JOIN users u ON u.id = gv.uploaded_by
-               WHERE gv.group_id=? ORDER BY gv.created_at""",
+            """SELECT gv.id, vgl.group_id, gv.title, gv.description, gv.file_size,
+                      gv.mime_type, vgl.session_number, gv.created_at, u.full_name as uploaded_by_name
+               FROM video_group_links vgl
+               JOIN group_videos gv ON gv.id = vgl.video_id
+               LEFT JOIN users u ON u.id = gv.uploaded_by
+               WHERE vgl.group_id=? ORDER BY gv.created_at""",
             (group_id,)
         ).fetchall()
         for r in rows:
@@ -1686,17 +1709,26 @@ def get_group_content_by_month(
         }
 
 
-@app.post("/api/groups/{group_id}/videos")
+@app.post("/api/videos")
 async def upload_group_video(
-    group_id: int,
+    group_ids: str = Form(...),  # أرقام مجموعات مفصولة بفاصلة، مثلاً "3,7,9"
     title: str = Form(...),
     description: Optional[str] = Form(None),
     session_number: Optional[int] = Form(None),
     file: UploadFile = File(...),
     session=Depends(require_roles("admin", "head_supervisor", "supervisor", "teacher")),
 ):
+    try:
+        group_id_list = sorted(set(int(g.strip()) for g in group_ids.split(",") if g.strip()))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="أرقام المجموعات غير صحيحة")
+    if not group_id_list:
+        raise HTTPException(status_code=400, detail="لازم تحدد مجموعة واحدة على الأقل")
+
     with get_connection() as conn:
-        assert_can_access_group_media(conn, session, group_id)
+        # لازم يكون عنده صلاحية على كل مجموعة من المجموعات المحددة
+        for gid in group_id_list:
+            assert_can_access_group_media(conn, session, gid)
 
         ext = os.path.splitext(file.filename or "")[1].lower()
         if ext not in ALLOWED_VIDEO_EXTENSIONS:
@@ -1725,35 +1757,56 @@ async def upload_group_video(
                 os.remove(dest_path)
             raise HTTPException(status_code=500, detail="حصلت مشكلة أثناء رفع الفيديو")
 
+        # الملف بيترفع مرة واحدة بس، وبعدين بيتربط بكل المجموعات المحددة
         cur = conn.execute("""
             INSERT INTO group_videos (group_id, title, description, file_path, file_size, mime_type, session_number, uploaded_by)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (group_id, title.strip(), (description or "").strip() or None, stored_name, size,
+        """, (group_id_list[0], title.strip(), (description or "").strip() or None, stored_name, size,
               file.content_type or "video/mp4", session_number, session["id"]))
+        video_id = cur.lastrowid
 
-        # إشعار كل طلاب المجموعة إن فيه فيديو جديد
-        student_ids = [r["id"] for r in conn.execute("SELECT id FROM students WHERE group_id=? AND is_active=1", (group_id,)).fetchall()]
-        for sid in student_ids:
-            create_notification(conn, sid, "فيديو جديد", f"المشرف رفع فيديو جديد: {title.strip()}")
+        for gid in group_id_list:
+            conn.execute(
+                "INSERT OR IGNORE INTO video_group_links (video_id, group_id, session_number) VALUES (?, ?, ?)",
+                (video_id, gid, session_number)
+            )
+            # إشعار كل طلاب كل مجموعة إن فيه فيديو جديد
+            student_ids = [r["id"] for r in conn.execute("SELECT id FROM students WHERE group_id=? AND is_active=1", (gid,)).fetchall()]
+            for sid in student_ids:
+                create_notification(conn, sid, "فيديو جديد", f"المشرف رفع فيديو جديد: {title.strip()}")
 
-        return {"id": cur.lastrowid, "message": "تم رفع الفيديو بنجاح"}
+        return {"id": video_id, "linked_groups": group_id_list, "message": "تم رفع الفيديو بنجاح"}
 
 
-@app.delete("/api/videos/{video_id}")
-def delete_group_video(video_id: int, session=Depends(require_roles("admin", "head_supervisor", "supervisor", "teacher"))):
+@app.delete("/api/groups/{group_id}/videos/{video_id}")
+def delete_group_video(video_id: int, group_id: int, session=Depends(require_roles("admin", "head_supervisor", "supervisor", "teacher"))):
     with get_connection() as conn:
-        vid = conn.execute("SELECT * FROM group_videos WHERE id=?", (video_id,)).fetchone()
-        if not vid:
-            raise HTTPException(status_code=404, detail="الفيديو غير موجود")
-        assert_can_access_group_media(conn, session, vid["group_id"])
-        conn.execute("DELETE FROM group_videos WHERE id=?", (video_id,))
-        file_path = os.path.join(VIDEOS_DIR, vid["file_path"])
-        try:
-            if os.path.exists(file_path):
-                os.remove(file_path)
-        except Exception:
-            pass
-        return {"message": "تم حذف الفيديو"}
+        assert_can_access_group_media(conn, session, group_id)
+        link = conn.execute(
+            "SELECT * FROM video_group_links WHERE video_id=? AND group_id=?", (video_id, group_id)
+        ).fetchone()
+        if not link:
+            raise HTTPException(status_code=404, detail="الفيديو غير موجود في المجموعة دي")
+
+        conn.execute("DELETE FROM video_group_links WHERE video_id=? AND group_id=?", (video_id, group_id))
+
+        remaining = conn.execute(
+            "SELECT COUNT(*) as c FROM video_group_links WHERE video_id=?", (video_id,)
+        ).fetchone()["c"]
+        if remaining == 0:
+            # مفيش أي مجموعة تانية مربوطة بالفيديو ده - نمسح الملف والصف نفسه
+            vid = conn.execute("SELECT * FROM group_videos WHERE id=?", (video_id,)).fetchone()
+            conn.execute("DELETE FROM group_videos WHERE id=?", (video_id,))
+            if vid:
+                file_path = os.path.join(VIDEOS_DIR, vid["file_path"])
+                try:
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                except Exception:
+                    pass
+            return {"message": "تم حذف الفيديو نهائيًا (كان آخر مجموعة مربوطة بيه)"}
+
+        return {"message": "تم حذف الفيديو من المجموعة دي (لسه متاح للمجموعات التانية)"}
 
 
 @app.get("/api/videos/{video_id}/stream")
@@ -1765,7 +1818,7 @@ def stream_group_video(video_id: int, request: Request, session=Depends(get_sess
         vid = conn.execute("SELECT * FROM group_videos WHERE id=?", (video_id,)).fetchone()
         if not vid:
             raise HTTPException(status_code=404, detail="الفيديو غير موجود")
-        assert_can_access_group_media(conn, session, vid["group_id"])
+        assert_can_access_video(conn, session, video_id)
 
         # فلتر عام: منع الطالب من بث فيديو اترفع قبل تاريخ أول اشتراك ليه، حتى لو
         # حاول يوصله مباشرة بالرابط (مش بس إخفاءه من القايمة)
