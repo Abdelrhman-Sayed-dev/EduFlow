@@ -6,7 +6,9 @@ import bcrypt
 from datetime import datetime, timedelta
 from contextlib import contextmanager
 
-
+# لازم قاعدة البيانات تتخزن في نفس الـ DATA_DIR اللي بيتحدد من متغير البيئة
+# (بالظبط زي UPLOADS_DIR و VIDEOS_DIR في main.py) عشان تبقى على الـ Persistent Disk
+# مش على الـ filesystem المؤقت اللي بيتمسح مع كل ديبلوي على Render.
 DATA_DIR = os.environ.get("DATA_DIR", ".")
 os.makedirs(DATA_DIR, exist_ok=True)
 DB_NAME = os.path.join(DATA_DIR, "teacher_system.db")
@@ -570,12 +572,14 @@ def init_db():
             file_path TEXT NOT NULL,
             file_size INTEGER,
             mime_type TEXT,
+            session_number INTEGER,
             uploaded_by INTEGER,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
             FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL
         )
         """)
+        _safe_alter(cur, "ALTER TABLE group_videos ADD COLUMN session_number INTEGER")
 
         # ---------------------------------------------------------------
         # الإشعارات - كل عملية يعملها المشرف بتوصل للطالب (درجة/واجب/سبورة...)

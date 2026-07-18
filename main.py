@@ -1,3 +1,14 @@
+"""
+backend.py
+الباك اند الرئيسي للسيستم - مبني على FastAPI
+يوفر API كامل لإدارة:
+  المراحل - المحافظات - المجموعات - الطلاب - الكويزات - الدرجات - الحضور
+  + نظام تسجيل دخول بـ 3 أدوار (أدمن - مدرس - مشرف) + دخول الطالب بكود خاص
+  + المشرفين (تعيين كل مشرف على مجموعة/مجموعات معينة بس)
+  + جدول مواعيد المدرس
+  + سبورة الحصة (صور شرح كل حصة، خاصة بكل مجموعة)
+"""
+
 import os
 import base64
 import uuid
@@ -1463,7 +1474,7 @@ def list_group_videos(group_id: int, session=Depends(get_current_session)):
         assert_can_access_group_media(conn, session, group_id)
         query = """
             SELECT gv.id, gv.group_id, gv.title, gv.description, gv.file_size, gv.mime_type,
-                   gv.created_at, u.full_name as uploaded_by_name
+                   gv.session_number, gv.created_at, u.full_name as uploaded_by_name
             FROM group_videos gv
             LEFT JOIN users u ON u.id = gv.uploaded_by
             WHERE gv.group_id = ?
@@ -1557,6 +1568,7 @@ def get_group_content_by_month(
                 month_dict["sessions"][key] = {
                     "session_number": session_number,
                     "board_images": [],
+                    "videos": [],
                     "homework": None,
                     "quizzes": [],
                     "attendance": None,
@@ -1575,17 +1587,22 @@ def get_group_content_by_month(
             s = session_bucket(m, r["session_number"])
             s["board_images"].append(dict(r))
 
-        # ---------------- الفيديوهات (مالهاش رقم حصة، بتتبوّب بالشهر بس) ----------------
+        # ---------------- الفيديوهات (لو ليها رقم حصة بتترتب جوه حصتها، زي
+        # الصور بالظبط - ولو فيديو قديم ملوش رقم حصة بيتبوّب بالشهر بس) ----------------
         rows = conn.execute(
             """SELECT gv.id, gv.group_id, gv.title, gv.description, gv.file_size,
-                      gv.mime_type, gv.created_at, u.full_name as uploaded_by_name
+                      gv.mime_type, gv.session_number, gv.created_at, u.full_name as uploaded_by_name
                FROM group_videos gv LEFT JOIN users u ON u.id = gv.uploaded_by
                WHERE gv.group_id=? ORDER BY gv.created_at""",
             (group_id,)
         ).fetchall()
         for r in rows:
             m = bucket(r["created_at"][:7] if r["created_at"] else None)
-            m["videos"].append(dict(r))
+            if r["session_number"] is not None:
+                s = session_bucket(m, r["session_number"])
+                s["videos"].append(dict(r))
+            else:
+                m["videos"].append(dict(r))
 
         # ---------------- الواجبات ----------------
         rows = conn.execute(
@@ -1674,6 +1691,7 @@ async def upload_group_video(
     group_id: int,
     title: str = Form(...),
     description: Optional[str] = Form(None),
+    session_number: Optional[int] = Form(None),
     file: UploadFile = File(...),
     session=Depends(require_roles("admin", "head_supervisor", "supervisor", "teacher")),
 ):
@@ -1698,7 +1716,7 @@ async def upload_group_video(
                     if size > MAX_VIDEO_SIZE_BYTES:
                         out.close()
                         os.remove(dest_path)
-                        raise HTTPException(status_code=413, detail="حجم الفيديو أكبر من الحد المسموح (500 ميجا)")
+                        raise HTTPException(status_code=413, detail="حجم الفيديو أكبر من الحد المسموح (2 جيجا)")
                     out.write(chunk)
         except HTTPException:
             raise
@@ -1708,10 +1726,10 @@ async def upload_group_video(
             raise HTTPException(status_code=500, detail="حصلت مشكلة أثناء رفع الفيديو")
 
         cur = conn.execute("""
-            INSERT INTO group_videos (group_id, title, description, file_path, file_size, mime_type, uploaded_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO group_videos (group_id, title, description, file_path, file_size, mime_type, session_number, uploaded_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (group_id, title.strip(), (description or "").strip() or None, stored_name, size,
-              file.content_type or "video/mp4", session["id"]))
+              file.content_type or "video/mp4", session_number, session["id"]))
 
         # إشعار كل طلاب المجموعة إن فيه فيديو جديد
         student_ids = [r["id"] for r in conn.execute("SELECT id FROM students WHERE group_id=? AND is_active=1", (group_id,)).fetchall()]

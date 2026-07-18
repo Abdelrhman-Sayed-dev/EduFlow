@@ -4739,7 +4739,10 @@ async function loadGroupVideosList(groupId){
     <div class="video-row">
       <div class="video-row-ic"><i data-lucide="video" style="width:18px;height:18px;"></i></div>
       <div style="flex:1;min-width:0;">
-        <div style="font-weight:700;font-size:13.5px;">${escapeHtml(v.title)}</div>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <div style="font-weight:700;font-size:13.5px;">${escapeHtml(v.title)}</div>
+          ${v.session_number!=null ? `<span class="badge badge-teal">حصة ${v.session_number}</span>` : ""}
+        </div>
         <div style="font-size:11.5px;color:var(--text-3);">${escapeHtml(v.description||"")}${v.description?" · ":""}${videoFileSizeLabel(v.file_size)} · ${(v.created_at||"").slice(0,10)}</div>
       </div>
       <button class="btn btn-primary btn-sm" onclick="openVideoPlayerModal(${v.id}, '${jsAttr(v.title)}')"><i data-lucide="play" style="width:13px;height:13px;"></i> تشغيل</button>
@@ -4752,6 +4755,7 @@ async function loadGroupVideosList(groupId){
 function openUploadVideoModal(groupId){
   openModal("رفع فيديو للمجموعة", `
     <div class="form-group"><label class="form-label">عنوان الفيديو <span class="req">*</span></label><input class="form-input" id="f_vid_title" placeholder="مثال: شرح حصة اليوم"></div>
+    <div class="form-group"><label class="form-label">رقم الحصة (اختياري)</label><input class="form-input" id="f_vid_session" type="number" min="1" placeholder="مثال: 1"><div class="form-hint">لو حددته، الفيديو هيظهر جوه الحصة دي في صفحة "محتوى الشهور"</div></div>
     <div class="form-group"><label class="form-label">وصف (اختياري)</label><textarea class="form-textarea" id="f_vid_desc"></textarea></div>
     <div class="form-group"><label class="form-label">ملف الفيديو <span class="req">*</span></label><input class="form-input" id="f_vid_file" type="file" accept="video/*"></div>
     <div id="vidUploadProgressWrap" style="display:none;margin-top:10px;">
@@ -4767,6 +4771,7 @@ function openUploadVideoModal(groupId){
 function submitUploadVideo(groupId){
   const title = document.getElementById("f_vid_title").value.trim();
   const description = document.getElementById("f_vid_desc").value.trim();
+  const sessionNum = document.getElementById("f_vid_session").value;
   const fileInput = document.getElementById("f_vid_file");
   const file = fileInput.files[0];
   if (!title || !file){ showToast("لازم تكتب عنوان وتختار ملف فيديو", "error"); return; }
@@ -4774,6 +4779,7 @@ function submitUploadVideo(groupId){
   const form = new FormData();
   form.append("title", title);
   form.append("description", description);
+  if (sessionNum) form.append("session_number", sessionNum);
   form.append("file", file);
 
   const progressWrap = document.getElementById("vidUploadProgressWrap");
@@ -4884,7 +4890,9 @@ async function renderMyMonthlyContentPage(){
     const bodyId = `mc_month_body_${idx}`;
     const isOpen = isCollapseOpenByDefault(bodyId, idx === 0); // أول شهر مفتوح افتراضيًا
     const sessionsCount = m.sessions.length;
-    const videosCount = m.videos.length;
+    const sessionVideosCount = m.sessions.reduce((sum, s) => sum + (s.videos ? s.videos.length : 0), 0);
+    const looseVideosCount = m.videos.length;
+    const videosCount = sessionVideosCount + looseVideosCount;
     const noSessionQuizzes = m.quizzes_no_session || [];
     const isEmpty = !sessionsCount && !videosCount && !noSessionQuizzes.length;
     return `
@@ -4901,15 +4909,15 @@ async function renderMyMonthlyContentPage(){
         <i data-lucide="${isOpen?'chevron-up':'chevron-down'}" class="collapse-icon" style="width:16px;height:16px;color:var(--text-3);transition:transform .2s;"></i>
       </div>
       <div class="collapse-body" id="${bodyId}" style="display:${isOpen?'block':'none'};padding:14px 16px;">
-        ${sessionsCount ? m.sessions.map(s=>renderMonthlySessionBlock(s)).join("") : ""}
+        ${sessionsCount ? m.sessions.map(s=>renderMonthlySessionBlock(s, idx)).join("") : ""}
         ${noSessionQuizzes.length ? `
-          <div style="margin-top:${sessionsCount?'6px':'0'};margin-bottom:${videosCount?'10px':'0'};">
+          <div style="margin-top:${sessionsCount?'6px':'0'};margin-bottom:${looseVideosCount?'10px':'0'};">
             <div style="font-size:12px;font-weight:700;color:var(--text-3);margin-bottom:6px;">كويزات أخرى في ${escapeHtml(m.label)}</div>
             ${noSessionQuizzes.map(q=>renderMonthlyQuizRow(q)).join("")}
           </div>` : ""}
-        ${videosCount ? `
+        ${looseVideosCount ? `
           <div style="margin-top:${(sessionsCount||noSessionQuizzes.length)?'12px':'0'};">
-            <div style="font-size:12px;font-weight:700;color:var(--text-3);margin-bottom:8px;">فيديوهات ${escapeHtml(m.label)}</div>
+            <div style="font-size:12px;font-weight:700;color:var(--text-3);margin-bottom:8px;">فيديوهات ${escapeHtml(m.label)} (بدون حصة محددة)</div>
             ${m.videos.map(v=>`
               <div class="video-row">
                 <div class="video-row-ic"><i data-lucide="video" style="width:18px;height:18px;"></i></div>
@@ -4928,42 +4936,75 @@ async function renderMyMonthlyContentPage(){
   icons();
 }
 
-function renderMonthlySessionBlock(s){
+function renderMonthlySessionBlock(s, monthIdx){
   const label = ATT_SESSION_NAMES?.[s.session_number] || ("#" + s.session_number);
   const hw = s.homework;
   const hwDone = hw && hw.submission ? hw.submission.done : null;
   const att = s.attendance;
-  const hasImgsOrQuizzes = (s.board_images.length || s.quizzes.length);
+  const videos = s.videos || [];
+  const bodyId = `mc_session_body_${monthIdx}_${s.session_number}`;
+  const isOpen = isCollapseOpenByDefault(bodyId, true); // الحصص مفتوحة افتراضيًا زي الشهور
+  const isEmpty = !att && !hw && !s.board_images.length && !videos.length && !s.quizzes.length;
   return `
-    <div style="border:1px solid var(--border);border-radius:var(--radius-md);padding:12px 14px;margin-bottom:12px;">
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-        <i data-lucide="presentation" style="width:14px;height:14px;color:var(--primary);"></i>
-        <b style="font-size:13.5px;">الحصة ${label}</b>
-        <div style="display:flex;gap:6px;margin-right:auto;flex-wrap:wrap;">
-          ${att ? `<span class="badge ${ATT_BADGE[att.status]}">${ATT_LABELS[att.status]}</span>` : ""}
-          ${hw ? `<span class="badge ${hwDone?'badge-green':'badge-red'}">${hwDone?'تم تسليم الواجب ✅':'لم يتم تسليم الواجب ❌'}</span>` : ""}
+    <div class="collapse-card" id="mc_session_card_${monthIdx}_${s.session_number}" style="margin-bottom:12px;">
+      <div class="collapse-header" onclick="toggleCollapse('${bodyId}', this)" style="padding:10px 14px;">
+        <div style="display:flex;align-items:center;gap:8px;flex:1;flex-wrap:wrap;">
+          <i data-lucide="presentation" style="width:14px;height:14px;color:var(--primary);flex-shrink:0;"></i>
+          <b style="font-size:13.5px;">الحصة ${label}</b>
+          <div style="display:flex;gap:6px;margin-right:auto;flex-wrap:wrap;">
+            ${att ? `<span class="badge ${ATT_BADGE[att.status]}">${ATT_LABELS[att.status]}</span>` : ""}
+            ${hw ? `<span class="badge ${hwDone?'badge-green':'badge-red'}">${hwDone?'تم تسليم الواجب ✅':'لم يتم تسليم الواجب ❌'}</span>` : ""}
+            ${s.board_images.length ? `<span class="badge badge-teal">${s.board_images.length} سبورة</span>` : ""}
+            ${videos.length ? `<span class="badge badge-blue">${videos.length} فيديو</span>` : ""}
+          </div>
         </div>
+        <i data-lucide="${isOpen?'chevron-up':'chevron-down'}" class="collapse-icon" style="width:16px;height:16px;color:var(--text-3);transition:transform .2s;"></i>
       </div>
-      ${hw ? `
-        <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:10px 12px;margin-bottom:${hasImgsOrQuizzes?'10px':'0'};border-right:3px solid var(--primary);">
-          <div style="font-size:11px;font-weight:700;color:var(--text-3);margin-bottom:3px;">الواجب</div>
-          <div style="font-size:13px;color:var(--text);">${escapeHtml(hw.description||'واجب الحصة')}</div>
-          ${hw.submission && hw.submission.notes ? `<div style="font-size:11.5px;color:var(--text-3);margin-top:6px;">ملاحظة مشرفك: ${escapeHtml(hw.submission.notes)}</div>` : ""}
-        </div>` : ""}
-      ${s.board_images.length ? `
-        <div class="cards-grid" style="margin-bottom:${s.quizzes.length?'10px':'0'};">
-          ${s.board_images.map((im,i)=>`
-            <div class="session-card">
-              <img class="thumb" src="${im.image_data}" onclick="showImageLightbox('${im.image_data}', 'حصة-${s.session_number}-صورة-${i+1}.jpg')">
-              <div class="info">
-                <b>${im.session_date||''}</b>
-                <button class="action-btn" title="تحميل" onclick="downloadImageDirect('${im.image_data}','حصة-${s.session_number}-صورة-${i+1}.jpg')"><i data-lucide="download" style="width:14px;height:14px;"></i></button>
+      <div class="collapse-body" id="${bodyId}" style="display:${isOpen?'block':'none'};padding:12px 14px;">
+        ${hw ? `
+          <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:10px 12px;margin-bottom:12px;border-right:3px solid var(--primary);">
+            <div style="font-size:11px;font-weight:700;color:var(--text-3);margin-bottom:3px;">الواجب</div>
+            <div style="font-size:13px;color:var(--text);">${escapeHtml(hw.description||'واجب الحصة')}</div>
+            ${hw.submission && hw.submission.notes ? `<div style="font-size:11.5px;color:var(--text-3);margin-top:6px;">ملاحظة مشرفك: ${escapeHtml(hw.submission.notes)}</div>` : ""}
+          </div>` : ""}
+
+        <div style="border-top:1px dashed var(--border);padding-top:10px;margin-bottom:${videos.length||s.quizzes.length?'12px':'0'};">
+          <div style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--text-3);margin-bottom:8px;">
+            <i data-lucide="presentation" style="width:13px;height:13px;"></i> سبورات الحصة
+          </div>
+          ${s.board_images.length ? `
+            <div class="cards-grid">
+              ${s.board_images.map((im,i)=>`
+                <div class="session-card">
+                  <img class="thumb" src="${im.image_data}" onclick="showImageLightbox('${im.image_data}', 'حصة-${s.session_number}-صورة-${i+1}.jpg')">
+                  <div class="info">
+                    <b>${im.session_date||''}</b>
+                    <button class="action-btn" title="تحميل" onclick="downloadImageDirect('${im.image_data}','حصة-${s.session_number}-صورة-${i+1}.jpg')"><i data-lucide="download" style="width:14px;height:14px;"></i></button>
+                  </div>
+                </div>
+              `).join("")}
+            </div>` : `<div style="font-size:12px;color:var(--text-3);">لا يوجد صور سبورة للحصة دي لسه</div>`}
+        </div>
+
+        <div style="border-top:1px dashed var(--border);padding-top:10px;margin-bottom:${s.quizzes.length?'12px':'0'};">
+          <div style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--text-3);margin-bottom:8px;">
+            <i data-lucide="video" style="width:13px;height:13px;"></i> فيديوهات شرح الحصة
+          </div>
+          ${videos.length ? videos.map(v=>`
+            <div class="video-row">
+              <div class="video-row-ic"><i data-lucide="video" style="width:18px;height:18px;"></i></div>
+              <div style="flex:1;min-width:0;">
+                <div style="font-weight:700;font-size:13.5px;">${escapeHtml(v.title)}</div>
+                <div style="font-size:11.5px;color:var(--text-3);">${escapeHtml(v.description||"")}${v.description?" · ":""}${videoFileSizeLabel(v.file_size)} · ${(v.created_at||"").slice(0,10)}</div>
               </div>
+              <button class="btn btn-primary btn-sm" onclick="openVideoPlayerModal(${v.id}, '${jsAttr(v.title)}')"><i data-lucide="play" style="width:13px;height:13px;"></i> تشغيل</button>
             </div>
-          `).join("")}
-        </div>` : ""}
-      ${s.quizzes.length ? s.quizzes.map(q=>renderMonthlyQuizRow(q)).join("") : ""}
-      ${!att && !hw && !s.board_images.length && !s.quizzes.length ? `<div style="font-size:12px;color:var(--text-3);">لا يوجد محتوى للحصة دي لسه</div>` : ""}
+          `).join("") : `<div style="font-size:12px;color:var(--text-3);">لا يوجد فيديوهات شرح للحصة دي لسه</div>`}
+        </div>
+
+        ${s.quizzes.length ? s.quizzes.map(q=>renderMonthlyQuizRow(q)).join("") : ""}
+        ${isEmpty ? `<div style="font-size:12.5px;color:var(--text-3);padding:6px 0;">لا يوجد محتوى للحصة دي لسه</div>` : ""}
+      </div>
     </div>
   `;
 }
