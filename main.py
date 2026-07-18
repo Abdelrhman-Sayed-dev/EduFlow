@@ -76,6 +76,31 @@ def _print_startup_security_warnings():
 
 _print_startup_security_warnings()
 
+# ---------------------------------------------------------------------------
+# نسخ احتياطي دوري تلقائي (بديل Cron Job، لأن Render مش بيسمح لخدمات الـ Cron
+# بالوصول للـ Persistent Disk - فالحل إننا نشغّل الباك أب كـ background task
+# جوه نفس السيرفيس اللي شغال عليه السيرفر، عشان يقدر يوصل لنفس الديسك)
+# تقدر تتحكم في عدد الساعات بين كل نسخة عن طريق متغير البيئة BACKUP_INTERVAL_HOURS
+# ---------------------------------------------------------------------------
+from backup import run_backup
+
+BACKUP_INTERVAL_HOURS = float(os.environ.get("BACKUP_INTERVAL_HOURS", "24"))
+
+
+async def _periodic_backup_task():
+    while True:
+        await asyncio.sleep(BACKUP_INTERVAL_HOURS * 3600)
+        try:
+            run_backup()
+        except Exception as e:
+            print(f"⚠️ فشل النسخ الاحتياطي الدوري: {e}")
+
+
+@app.on_event("startup")
+async def _start_periodic_backup():
+    asyncio.create_task(_periodic_backup_task())
+    print(f"✅ تم تفعيل النسخ الاحتياطي التلقائي كل {BACKUP_INTERVAL_HOURS} ساعة")
+
 # مجلد رفع الصور (سبورة الحصص) - بيتم تخزين الصور كملفات على الـ disk
 # مش base64 جوه قاعدة البيانات، عشان الداتابيز ما تكبرش وتبقى بطيئة
 UPLOADS_DIR = os.environ.get("UPLOADS_DIR", os.path.join(os.environ.get("DATA_DIR", "."), "uploads"))
