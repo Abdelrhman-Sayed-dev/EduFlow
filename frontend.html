@@ -2727,7 +2727,7 @@ async function renderSubscriptionsPage(){
   const c = document.getElementById("pageContainer");
   c.innerHTML = `
     <div class="page-header">
-      <div><h1>اشتراكات الطلاب</h1><p>حدد مين سدد اشتراك الشهر - الطالب اللي مسددش مش هيقدر يشوف أي محتوى في المنصة</p></div>
+      <div><h1>اشتراكات الطلاب</h1><p>حدد مين سدد اشتراك الشهر - الطالب اللي مسددش مش هيقدر يشوف أي محتوى في المنصة. زرارات "اشترك الكل" و"وقف الاشتراك للكل" بتطبق على الطلاب الظاهرين حاليًا في الجدول بس (حسب فلتر المجموعة/البحث/التاب المحدد)</p></div>
     </div>
     <div class="table-card">
       <div class="toolbar" style="gap:10px;flex-wrap:wrap;">
@@ -2739,10 +2739,13 @@ async function renderSubscriptionsPage(){
         <div class="search-wrap" style="width:220px;"><i data-lucide="search" class="search-ic" style="width:14px;height:14px;"></i><input id="subSearchInput" placeholder="بحث بالاسم..." oninput="renderSubscriptionsTable()"></div>
       </div>
       <div id="subFeeEditorWrap"></div>
-      <div class="toolbar" style="gap:8px;border-top:none;">
+      <div class="toolbar" style="gap:8px;border-top:none;flex-wrap:wrap;">
         <button class="seg-btn ${SUBSCRIPTIONS_STATUS_TAB==='all'?'active':''}" onclick="SUBSCRIPTIONS_STATUS_TAB='all';renderSubscriptionsTable();">الكل</button>
         <button class="seg-btn ${SUBSCRIPTIONS_STATUS_TAB==='paid'?'active':''}" onclick="SUBSCRIPTIONS_STATUS_TAB='paid';renderSubscriptionsTable();">مسددين</button>
         <button class="seg-btn active-red ${SUBSCRIPTIONS_STATUS_TAB==='unpaid'?'active':''}" onclick="SUBSCRIPTIONS_STATUS_TAB='unpaid';renderSubscriptionsTable();">غير مسددين</button>
+        <span style="flex:1;"></span>
+        <button class="btn btn-primary btn-sm" onclick="bulkSetSubscription(true)"><i data-lucide="check-check" style="width:13px;height:13px;"></i> اشترك الكل</button>
+        <button class="btn btn-ghost btn-sm" style="color:var(--danger);" onclick="bulkSetSubscription(false)"><i data-lucide="ban" style="width:13px;height:13px;color:var(--danger);"></i> وقف الاشتراك للكل</button>
       </div>
       <div id="subscriptionsListWrap"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>
     </div>
@@ -2792,13 +2795,18 @@ async function loadSubscriptionsList(){
   renderSubscriptionsTable();
 }
 
-function renderSubscriptionsTable(){
-  const wrap = document.getElementById("subscriptionsListWrap");
-  if (!wrap) return;
+function getFilteredSubscriptionRows(){
   const q = (document.getElementById("subSearchInput")?.value || "").trim().toLowerCase();
   let rows = SUBSCRIPTIONS_ROWS_CACHE.filter(r => !q || r.full_name.toLowerCase().includes(q));
   if (SUBSCRIPTIONS_STATUS_TAB === "paid") rows = rows.filter(r => r.is_paid);
   else if (SUBSCRIPTIONS_STATUS_TAB === "unpaid") rows = rows.filter(r => !r.is_paid);
+  return rows;
+}
+
+function renderSubscriptionsTable(){
+  const wrap = document.getElementById("subscriptionsListWrap");
+  if (!wrap) return;
+  const rows = getFilteredSubscriptionRows();
 
   wrap.innerHTML = `
     <div style="padding:8px 16px;font-size:12px;color:var(--text-3);">${rows.length} طالب</div>
@@ -2855,6 +2863,31 @@ async function saveSubscription(studentId){
       dateCell.textContent = "—";
     }
   }
+}
+
+// اشترك الكل / وقف الاشتراك للكل - بيطبق على الطلاب الظاهرين حاليًا بس (حسب
+// فلتر المجموعة والبحث والتاب المحدد "الكل/مسددين/غير مسددين")، مش على كل
+// طلاب المنصة، عشان تقدر مثلاً تحدد مجموعة معينة أو تاب "غير مسددين" بس
+// وتسددهملهم كلهم بضغطة واحدة
+async function bulkSetSubscription(isPaid){
+  const rows = getFilteredSubscriptionRows();
+  if (!rows.length){
+    showToast("مفيش طلاب ظاهرين حاليًا عشان تطبق عليهم العملية دي", "error");
+    return;
+  }
+  const month = document.getElementById("subMonthPicker").value;
+  const actionLabel = isPaid ? "تسديد اشتراك" : "إلغاء اشتراك";
+  confirmAction(
+    isPaid ? "اشترك الكل" : "وقف الاشتراك للكل",
+    `متأكد إنك عايز تعمل "${actionLabel}" لعدد ${rows.length} طالب (الظاهرين حاليًا في الجدول) عن شهر ${month}؟`,
+    async ()=>{
+      const res = await api("/api/payments/bulk", {method:"POST", body: JSON.stringify({
+        student_ids: rows.map(r => r.student_id), month, is_paid: isPaid,
+      })});
+      showToast(res.message || "تم التحديث بنجاح", "success");
+      loadSubscriptionsList();
+    }
+  );
 }
 
 /* =====================================================================
@@ -4844,7 +4877,7 @@ function submitUploadVideo(){
 }
 
 function deleteGroupVideo(videoId, groupId){
-  confirmAction("حذف الفيديو", "متأكد إنك عايز تحذف الفيديو ده من المجموعة دي؟ (لو مرفوع لمجموعات تانية، هيفضل متاح ليها)", async ()=>{
+  confirmAction("شيل الفيديو من المجموعة", "متأكد إنك عايز تشيل الفيديو ده من المجموعة دي؟ الفيديو نفسه هيفضل محفوظ على المنصة (تقدر تربطه بمجموعة تانية بعدين)، وهيختفي بس من قايمة المجموعة دي.", async ()=>{
     await api(`/api/groups/${groupId}/videos/${videoId}`, {method:"DELETE"});
     showToast("تم الحذف", "success");
     loadGroupVideosList(groupId);
@@ -4894,6 +4927,7 @@ async function loadAllVideosList(){
       <div style="display:flex;flex-direction:column;gap:6px;align-items:stretch;">
         <button class="btn btn-primary btn-sm" onclick="openVideoPlayerModal(${v.id}, '${jsAttr(v.title)}')"><i data-lucide="play" style="width:13px;height:13px;"></i> تشغيل</button>
         <button class="btn btn-ghost btn-sm" onclick="openManageVideoGroupsModal(${v.id}, '${jsAttr(v.title)}')"><i data-lucide="settings-2" style="width:13px;height:13px;"></i> المجموعات</button>
+        <button class="btn btn-ghost btn-sm" style="color:var(--danger);" onclick="deleteVideoPermanently(${v.id}, '${jsAttr(v.title)}')"><i data-lucide="trash-2" style="width:13px;height:13px;color:var(--danger);"></i> حذف نهائي</button>
       </div>
     </div>
   `).join("") : `<div class="empty-state" style="padding:30px;"><div class="empty-title">لا يوجد فيديوهات لسه</div></div>`;
@@ -4944,6 +4978,18 @@ async function saveVideoGroupsChanges(videoId, previouslyLinkedIds){
   }catch(e){
     if (btn){ btn.disabled = false; btn.style.opacity = "1"; }
   }
+}
+
+async function deleteVideoPermanently(videoId, title){
+  confirmAction(
+    "حذف نهائي للفيديو",
+    `متأكد إنك عايز تحذف "${title}" نهائيًا من المنصة؟ الفيديو هيتشال من كل المجموعات المربوط بيها ومش هيرجع تاني - العملية دي لا يمكن التراجع عنها.`,
+    async ()=>{
+      await api(`/api/videos/${videoId}`, {method:"DELETE"});
+      showToast("تم حذف الفيديو نهائيًا", "success");
+      loadAllVideosList();
+    }
+  );
 }
 
 // مشغل الفيديو - بيتبث من endpoint محمي بصلاحيات (مش رابط عام)، وبنعطّل زرار

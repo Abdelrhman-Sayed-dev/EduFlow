@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List
 
 from database import (
     get_connection, init_db, hash_password, verify_password, gen_token,
@@ -294,6 +294,14 @@ class PaymentIn(BaseModel):
     is_paid: bool = False
     paid_date: Optional[str] = None
     notes: Optional[str] = Field(None, max_length=2000)
+
+
+class BulkPaymentIn(BaseModel):
+    """تحديث حالة اشتراك أكتر من طالب مرة واحدة (زرار اشترك للكل / وقف الاشتراك للكل)"""
+    student_ids: List[int]
+    month: str
+    is_paid: bool
+    amount: Optional[float] = None
 
 
 class StudentRequestIn(BaseModel):
@@ -1846,6 +1854,9 @@ async def upload_group_video(
 
 @app.delete("/api/groups/{group_id}/videos/{video_id}")
 def delete_group_video(video_id: int, group_id: int, session=Depends(require_roles("admin", "head_supervisor", "supervisor", "teacher"))):
+    """بيشيل ربط الفيديو بالمجموعة دي بس - الفيديو نفسه (الملف والصف في قاعدة
+    البيانات) بيفضل موجود في المنصة حتى لو بقى مش مربوط بأي مجموعة خالص، عشان
+    يفضل ظاهر في تابة "كل الفيديوهات" لحد ما حد يحذفه نهائيًا بنفسه لو حابب."""
     with get_connection() as conn:
         assert_can_access_group_media(conn, session, group_id)
         link = conn.execute(
@@ -1856,23 +1867,28 @@ def delete_group_video(video_id: int, group_id: int, session=Depends(require_rol
 
         conn.execute("DELETE FROM video_group_links WHERE video_id=? AND group_id=?", (video_id, group_id))
 
-        remaining = conn.execute(
-            "SELECT COUNT(*) as c FROM video_group_links WHERE video_id=?", (video_id,)
-        ).fetchone()["c"]
-        if remaining == 0:
-            # مفيش أي مجموعة تانية مربوطة بالفيديو ده - نمسح الملف والصف نفسه
-            vid = conn.execute("SELECT * FROM group_videos WHERE id=?", (video_id,)).fetchone()
-            conn.execute("DELETE FROM group_videos WHERE id=?", (video_id,))
-            if vid:
-                file_path = os.path.join(VIDEOS_DIR, vid["file_path"])
-                try:
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
-                except Exception:
-                    pass
-            return {"message": "تم حذف الفيديو نهائيًا (كان آخر مجموعة مربوطة بيه)"}
+        return {"message": "تم شيل الفيديو من المجموعة دي (الفيديو نفسه لسه موجود على المنصة، تقدر تربطه بمجموعة تانية في أي وقت)"}
 
-        return {"message": "تم حذف الفيديو من المجموعة دي (لسه متاح للمجموعات التانية)"}
+
+@app.delete("/api/videos/{video_id}")
+def delete_video_permanently(video_id: int, session=Depends(require_roles("admin", "head_supervisor"))):
+    """حذف نهائي للفيديو (الملف + الصف + كل روابط المجموعات) - متاح بس للأدمن
+    ومشرف المشرفين، وده الاستخدام الوحيد اللي فعلاً بيمسح الفيديو من المنصة."""
+    with get_connection() as conn:
+        vid = conn.execute("SELECT * FROM group_videos WHERE id=?", (video_id,)).fetchone()
+        if not vid:
+            raise HTTPException(status_code=404, detail="الفيديو غير موجود")
+
+        conn.execute("DELETE FROM group_videos WHERE id=?", (video_id,))  # video_group_links بتتشال تلقائي بالـ CASCADE
+
+        file_path = os.path.join(VIDEOS_DIR, vid["file_path"])
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except Exception:
+            pass
+
+        return {"message": "تم حذف الفيديو نهائيًا من المنصة"}
 
 
 @app.get("/api/videos/{video_id}/stream")
@@ -2589,6 +2605,51 @@ def set_payment(data: PaymentIn, session=Depends(require_roles("admin", "head_su
                           paid_date=excluded.paid_date, notes=excluded.notes
         """, (data.student_id, data.month, amount, int(data.is_paid), paid_date, data.notes))
         return {"message": "تم حفظ بيانات الدفع"}
+
+
+@app.post("/api/payments/bulk")
+def set_bulk_payment(data: BulkPaymentIn, session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
+    """
+    تحديث حالة الاشتراك (مسدد / غير مسدد) لأكتر من طالب مرة واحدة - بيستخدمها
+    زرار "اشترك الكل" و"وقف الاشتراك للكل" في صفحة اشتراكات الطلاب، عشان
+    الأدمن/المشرف ميكررش نفس العملية لكل طالب لوحده.
+    لو المشرف حاول يحدث طالب مش تابع لمجموعة من مجموعاته، بيتجاهل الطالب ده
+    من غير ما يفشل الطلب كله.
+    """
+    if not data.student_ids:
+        raise HTTPException(status_code=400, detail="لازم تحدد طالب واحد على الأقل")
+
+    with get_connection() as conn:
+        paid_date = None
+        if data.is_paid:
+            from datetime import date
+            paid_date = date.today().isoformat()
+
+        updated = 0
+        for sid in data.student_ids:
+            student = conn.execute("SELECT group_id FROM students WHERE id=?", (sid,)).fetchone()
+            if not student:
+                continue
+            if session["role"] == "supervisor":
+                try:
+                    assert_supervisor_owns_group(conn, session, student["group_id"])
+                except HTTPException:
+                    continue
+
+            amount = data.amount
+            if amount is None:
+                grp = conn.execute("SELECT monthly_fee FROM groups WHERE id=?", (student["group_id"],)).fetchone()
+                amount = grp["monthly_fee"] if grp else None
+
+            conn.execute("""
+                INSERT INTO payments (student_id, month, amount, is_paid, paid_date, notes)
+                VALUES (?, ?, ?, ?, ?, NULL)
+                ON CONFLICT(student_id, month)
+                DO UPDATE SET amount=excluded.amount, is_paid=excluded.is_paid, paid_date=excluded.paid_date
+            """, (sid, data.month, amount, int(data.is_paid), paid_date))
+            updated += 1
+
+        return {"message": f"تم تحديث اشتراك {updated} طالب", "updated": updated}
 
 
 @app.post("/api/payments/send-reminders")
