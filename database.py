@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import hashlib
 import secrets
@@ -5,7 +6,12 @@ import bcrypt
 from datetime import datetime, timedelta
 from contextlib import contextmanager
 
-DB_NAME = "teacher_system.db"
+# لازم قاعدة البيانات تتخزن في نفس الـ DATA_DIR اللي بيتحدد من متغير البيئة
+# (بالظبط زي UPLOADS_DIR و VIDEOS_DIR في main.py) عشان تبقى على الـ Persistent Disk
+# مش على الـ filesystem المؤقت اللي بيتمسح مع كل ديبلوي على Render.
+DATA_DIR = os.environ.get("DATA_DIR", ".")
+os.makedirs(DATA_DIR, exist_ok=True)
+DB_NAME = os.path.join(DATA_DIR, "teacher_system.db")
 
 # المراحل الدراسية الثابتة في النظام (المرحلة الثانوية فقط بصفوفها الثلاثة)
 STAGES = ["الصف الأول الثانوي", "الصف الثاني الثانوي", "الصف الثالث الثانوي"]

@@ -13,9 +13,10 @@ import shutil
 import os
 from datetime import datetime
 
-DB_NAME = "teacher_system.db"
-UPLOADS_DIR = "uploads"
-BACKUPS_DIR = "backups"
+DATA_DIR = os.environ.get("DATA_DIR", ".")
+DB_NAME = os.path.join(DATA_DIR, "teacher_system.db")
+UPLOADS_DIR = os.environ.get("UPLOADS_DIR", os.path.join(DATA_DIR, "uploads"))
+BACKUPS_DIR = os.path.join(DATA_DIR, "backups")
 
 
 def run_backup():
