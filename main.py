@@ -217,6 +217,12 @@ class AttendanceCodeIn(BaseModel):
     session_number: int = 1
 
 
+class VideoGroupLinkIn(BaseModel):
+    """ربط فيديو موجود بالفعل بمجموعة إضافية (من غير إعادة رفع الملف تاني)"""
+    group_id: int
+    session_number: Optional[int] = None
+
+
 class LoginIn(BaseModel):
     username: str = Field(..., max_length=100)
     password: str = Field(..., max_length=200)
@@ -1707,6 +1713,66 @@ def get_group_content_by_month(
             "paid_months": sorted(paid_months) if paid_months is not None else None,
             "months": result_months,
         }
+
+
+@app.get("/api/videos")
+def list_all_videos(session=Depends(require_roles("admin", "head_supervisor", "teacher"))):
+    """
+    كل الفيديوهات المرفوعة في النظام (بغض النظر عن المجموعة) مع كل المجموعات
+    المربوط بيها كل فيديو - مخصصة لمشرف المشرفين (وبقية الأدوار الإدارية) عشان
+    يشوفوا كل الفيديوهات في تابة واحدة، ويقدروا يضيفوا/يشيلوا مجموعات لفيديو
+    موجود بالفعل من غير ما يعيدوا رفعه تاني. الفيديوهات القديمة اللي كانت
+    مرفوعة قبل كده بتظهر هنا برضه لأنها اترحّلت لجدول الربط video_group_links
+    وقت أول تشغيل للسيرفر بعد التحديث.
+    """
+    with get_connection() as conn:
+        videos = conn.execute("""
+            SELECT gv.id, gv.title, gv.description, gv.file_size, gv.mime_type,
+                   gv.created_at, u.full_name as uploaded_by_name
+            FROM group_videos gv
+            LEFT JOIN users u ON u.id = gv.uploaded_by
+            ORDER BY gv.created_at DESC
+        """).fetchall()
+        result = []
+        for v in videos:
+            links = conn.execute("""
+                SELECT vgl.group_id, vgl.session_number, g.name as group_name
+                FROM video_group_links vgl
+                JOIN groups g ON g.id = vgl.group_id
+                WHERE vgl.video_id = ?
+                ORDER BY g.name
+            """, (v["id"],)).fetchall()
+            d = dict(v)
+            d["groups"] = [dict(l) for l in links]
+            result.append(d)
+        return result
+
+
+@app.post("/api/videos/{video_id}/groups")
+def add_video_group_link(
+    video_id: int,
+    payload: VideoGroupLinkIn,
+    session=Depends(require_roles("admin", "head_supervisor", "supervisor", "teacher")),
+):
+    """ربط فيديو مرفوع بالفعل بمجموعة إضافية - من غير إعادة رفع الملف، عشان
+    مشرف المشرفين يقدر يختار المجموعات اللي عايز الفيديو يظهرلها بعد الرفع."""
+    with get_connection() as conn:
+        vid = conn.execute("SELECT * FROM group_videos WHERE id=?", (video_id,)).fetchone()
+        if not vid:
+            raise HTTPException(status_code=404, detail="الفيديو غير موجود")
+        assert_can_access_group_media(conn, session, payload.group_id)
+
+        conn.execute(
+            "INSERT OR IGNORE INTO video_group_links (video_id, group_id, session_number) VALUES (?, ?, ?)",
+            (video_id, payload.group_id, payload.session_number)
+        )
+        student_ids = [r["id"] for r in conn.execute(
+            "SELECT id FROM students WHERE group_id=? AND is_active=1", (payload.group_id,)
+        ).fetchall()]
+        for sid in student_ids:
+            create_notification(conn, sid, "فيديو جديد", f"المشرف رفع فيديو جديد: {vid['title']}")
+
+        return {"message": "تم ربط الفيديو بالمجموعة بنجاح"}
 
 
 @app.post("/api/videos")

@@ -1034,6 +1034,7 @@ const NAV_BY_ROLE = {
   ],
   head_supervisor: [
     {id:"dashboard", label:"الرئيسية", icon:"layout-dashboard"},
+    {id:"hs_videos", label:"الفيديوهات", icon:"video"},
     {id:"hs_quizzes", label:"إدارة الكويزات والامتحانات", icon:"file-check-2"},
     {id:"teacher_analytics", label:"التحليلات", icon:"bar-chart-3"},
     {id:"teacher_compare", label:"مقارنة المجموعات", icon:"git-compare"},
@@ -1198,7 +1199,7 @@ const PAGE_TITLES = {
   teacher_analytics:"التحليلات", teacher_compare:"مقارنة المجموعات",
   teacher_ranking:"الترتيب المتقدم", teacher_reports:"التقارير", teacher_schedule:"جدولي",
   myrequests:"طلباتي", student_requests:"طلبات الطلاب",
-  student_videos:"فيديوهات المجموعة", myvideos:"فيديوهاتي",
+  student_videos:"فيديوهات المجموعة", myvideos:"فيديوهاتي", hs_videos:"كل الفيديوهات",
 };
 
 async function renderPage(page){
@@ -1244,6 +1245,7 @@ async function renderPage(page){
       student_requests: renderStudentRequestsPage,
       student_videos: renderSupervisorVideosPage,
       myvideos: renderMyVideosPage,
+      hs_videos: renderHeadSupervisorVideosPage,
     };
     const fn = renderers[page];
     if (fn) await fn();
@@ -4823,7 +4825,8 @@ function submitUploadVideo(){
     if (xhr.status >= 200 && xhr.status < 300) {
       showToast("تم رفع الفيديو بنجاح", "success");
       closeOverlay("genericModal");
-      if (CURRENT_VIDEOS_GROUP_ID) loadGroupVideosList(CURRENT_VIDEOS_GROUP_ID);
+      if (CURRENT_PAGE === "hs_videos") loadAllVideosList();
+      else if (CURRENT_VIDEOS_GROUP_ID) loadGroupVideosList(CURRENT_VIDEOS_GROUP_ID);
     } else {
       let msg = "حصلت مشكلة أثناء رفع الفيديو";
       try { msg = JSON.parse(xhr.responseText).detail || msg; } catch(e){}
@@ -4846,6 +4849,101 @@ function deleteGroupVideo(videoId, groupId){
     showToast("تم الحذف", "success");
     loadGroupVideosList(groupId);
   });
+}
+
+/* =====================================================================
+   تابة "كل الفيديوهات" الموحدة (لمشرف المشرفين) - كل الفيديوهات المرفوعة في
+   النظام (بما فيها القديمة) في مكان واحد، مع عرض المجموعات المربوطة بجانب كل
+   فيديو، وإمكانية رفع فيديو واحد لأكتر من مجموعة مرة واحدة، أو تعديل مجموعات
+   فيديو موجود بالفعل من غير إعادة رفعه
+===================================================================== */
+async function renderHeadSupervisorVideosPage(){
+  const groups = await loadGroups(); // مشرف المشرفين بيشوف كل مجموعات النظام
+  CURRENT_VIDEOS_GROUPS_LIST = groups;
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header"><div><h1>كل الفيديوهات</h1><p>كل الفيديوهات المرفوعة في النظام في تابة واحدة - ارفع الفيديو مرة واحدة واختار كل المجموعات اللي عايزها تتفرج عليه بدل ما ترفعه لكل مجموعة لوحدها</p></div>
+      <div class="header-actions">
+        <button class="btn btn-primary btn-sm" onclick="openUploadVideoModal(null)"><i data-lucide="upload" style="width:14px;height:14px;"></i> رفع فيديو جديد</button>
+      </div>
+    </div>
+    <div class="table-card">
+      <div id="allVideosList" style="padding:8px;"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>
+    </div>
+  `;
+  icons();
+  await loadAllVideosList();
+}
+
+async function loadAllVideosList(){
+  const wrap = document.getElementById("allVideosList");
+  if (!wrap) return;
+  const videos = await api(`/api/videos`);
+  wrap.innerHTML = videos.length ? videos.map(v=>`
+    <div class="video-row" style="align-items:flex-start;">
+      <div class="video-row-ic"><i data-lucide="video" style="width:18px;height:18px;"></i></div>
+      <div style="flex:1;min-width:0;">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <div style="font-weight:700;font-size:13.5px;">${escapeHtml(v.title)}</div>
+        </div>
+        <div style="font-size:11.5px;color:var(--text-3);">${escapeHtml(v.description||"")}${v.description?" · ":""}${videoFileSizeLabel(v.file_size)} · ${(v.created_at||"").slice(0,10)}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;">
+          ${(v.groups||[]).map(g=>`<span class="badge badge-teal">${escapeHtml(g.group_name)}${g.session_number!=null?` · حصة ${g.session_number}`:""}</span>`).join("") || `<span style="font-size:11px;color:var(--text-3);">مش مربوط بأي مجموعة حاليًا</span>`}
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;align-items:stretch;">
+        <button class="btn btn-primary btn-sm" onclick="openVideoPlayerModal(${v.id}, '${jsAttr(v.title)}')"><i data-lucide="play" style="width:13px;height:13px;"></i> تشغيل</button>
+        <button class="btn btn-ghost btn-sm" onclick="openManageVideoGroupsModal(${v.id}, '${jsAttr(v.title)}')"><i data-lucide="settings-2" style="width:13px;height:13px;"></i> المجموعات</button>
+      </div>
+    </div>
+  `).join("") : `<div class="empty-state" style="padding:30px;"><div class="empty-title">لا يوجد فيديوهات لسه</div></div>`;
+  icons();
+}
+
+async function openManageVideoGroupsModal(videoId, title){
+  const videos = await api(`/api/videos`);
+  const v = videos.find(x=>x.id===videoId);
+  const linkedIds = new Set((v ? v.groups : []).map(g=>g.group_id));
+  const checkboxes = CURRENT_VIDEOS_GROUPS_LIST.map(g => `
+    <label style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--border);font-size:13px;cursor:pointer;">
+      <input type="checkbox" class="f_manage_vid_group_cb" value="${g.id}" ${linkedIds.has(g.id)?"checked":""}>
+      ${escapeHtml(g.name)}
+    </label>`).join("");
+  openModal(`مجموعات الفيديو: ${escapeHtml(title)}`, `
+    <div class="form-group">
+      <label class="form-label">المجموعات اللي يظهرلها الفيديو</label>
+      <div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-md);padding:4px 10px;">
+        ${checkboxes || `<div style="font-size:12px;color:var(--text-3);padding:8px 0;">مفيش مجموعات متاحة</div>`}
+      </div>
+      <div class="form-hint">علّم المجموعة عشان يظهرلها الفيديو، أو شيل العلامة عشان تشيله منها - من غير ما تحتاج تعيد رفع الملف تاني</div>
+    </div>
+  `, `
+    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+    <button class="btn btn-primary" id="saveVidGroupsBtn" onclick="saveVideoGroupsChanges(${videoId}, ${JSON.stringify([...linkedIds])})">حفظ</button>
+  `);
+}
+
+async function saveVideoGroupsChanges(videoId, previouslyLinkedIds){
+  const selectedIds = Array.from(document.querySelectorAll(".f_manage_vid_group_cb:checked")).map(cb=>parseInt(cb.value));
+  const selectedSet = new Set(selectedIds);
+  const currentSet = new Set(previouslyLinkedIds);
+  const toAdd = selectedIds.filter(id=>!currentSet.has(id));
+  const toRemove = previouslyLinkedIds.filter(id=>!selectedSet.has(id));
+  const btn = document.getElementById("saveVidGroupsBtn");
+  if (btn){ btn.disabled = true; btn.style.opacity = "0.6"; }
+  try{
+    for (const gid of toAdd){
+      await api(`/api/videos/${videoId}/groups`, {method:"POST", body: JSON.stringify({group_id: gid})});
+    }
+    for (const gid of toRemove){
+      await api(`/api/groups/${gid}/videos/${videoId}`, {method:"DELETE"});
+    }
+    showToast("تم تحديث مجموعات الفيديو بنجاح", "success");
+    closeOverlay("genericModal");
+    loadAllVideosList();
+  }catch(e){
+    if (btn){ btn.disabled = false; btn.style.opacity = "1"; }
+  }
 }
 
 // مشغل الفيديو - بيتبث من endpoint محمي بصلاحيات (مش رابط عام)، وبنعطّل زرار
