@@ -1069,9 +1069,6 @@ const ROLE_LABELS = {admin:"الأدمن العام", teacher:"المدرس", su
 const STUDENT_BOTTOM_NAV = [
   {id:"mydashboard", label:"الرئيسية", icon:"home"},
   {id:"mycontent", label:"محتوى الشهور", icon:"calendar-range"},
-  {id:"myhomework", label:"واجباتي", icon:"clipboard-list"},
-  {id:"myattendance", label:"حضوري", icon:"calendar-check"},
-  {id:"myscores", label:"درجاتي", icon:"book-open"},
   {id:"myrequests", label:"طلباتي", icon:"send"},
   {id:"student_more", label:"المزيد", icon:"layout-grid"},
 ];
@@ -5746,6 +5743,21 @@ async function renderStudentMorePage(){
       <div class="student-more-item" onclick="navigateTo('myrequests')">
         <div class="student-more-ic"><i data-lucide="send" style="width:18px;height:18px;"></i></div>
         <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">طلباتي</div><div style="font-size:11.5px;color:var(--text-3);">قدّم طلب لمشرف مجموعتك وتابع الردود</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
+      <div class="student-more-item" onclick="navigateTo('myhomework')">
+        <div class="student-more-ic"><i data-lucide="clipboard-list" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">واجباتي</div><div style="font-size:11.5px;color:var(--text-3);">الواجبات المطلوبة منك وتسليمك ليها</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
+      <div class="student-more-item" onclick="navigateTo('myattendance')">
+        <div class="student-more-ic"><i data-lucide="calendar-check" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">حضوري</div><div style="font-size:11.5px;color:var(--text-3);">سجل حضورك وغيابك في الحصص</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
+      <div class="student-more-item" onclick="navigateTo('myscores')">
+        <div class="student-more-ic"><i data-lucide="file-check-2" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">درجاتي</div><div style="font-size:11.5px;color:var(--text-3);">درجاتك في الكويزات والامتحانات</div></div>
         <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
       </div>
     </div>
