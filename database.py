@@ -580,6 +580,12 @@ def init_db():
         )
         """)
         _safe_alter(cur, "ALTER TABLE group_videos ADD COLUMN session_number INTEGER")
+        # نوع الفيديو: upload (ملف اترفع فعليًا وموجود على الديسك) أو link (رابط
+        # خارجي زي يوتيوب/جوجل درايف وغيره). لو link، عمود file_path بيتخزن فيه
+        # سترينج فاضي (عشان نحافظ على NOT NULL من غير ما نغيّر بنية الجدول)
+        # وعمود external_url هو اللي فيه الرابط الفعلي.
+        _safe_alter(cur, "ALTER TABLE group_videos ADD COLUMN video_type TEXT DEFAULT 'upload'")
+        _safe_alter(cur, "ALTER TABLE group_videos ADD COLUMN external_url TEXT")
 
         # ---------------------------------------------------------------
         # ربط فيديو واحد بأكتر من مجموعة - بدل ما الفيديو يترفع لمجموعة واحدة

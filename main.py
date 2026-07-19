@@ -223,6 +223,15 @@ class VideoGroupLinkIn(BaseModel):
     session_number: Optional[int] = None
 
 
+class VideoLinkIn(BaseModel):
+    """إضافة فيديو برابط خارجي (يوتيوب/جوجل درايف/أي رابط تاني) بدل رفع ملف"""
+    group_ids: List[int]
+    title: str
+    description: Optional[str] = None
+    session_number: Optional[int] = None
+    video_url: str
+
+
 class LoginIn(BaseModel):
     username: str = Field(..., max_length=100)
     password: str = Field(..., max_length=200)
@@ -1506,6 +1515,7 @@ def list_group_videos(group_id: int, session=Depends(get_current_session)):
         assert_can_access_group_media(conn, session, group_id)
         query = """
             SELECT gv.id, gv.title, gv.description, gv.file_size, gv.mime_type,
+                   gv.video_type, gv.external_url,
                    vgl.session_number, gv.created_at, u.full_name as uploaded_by_name
             FROM video_group_links vgl
             JOIN group_videos gv ON gv.id = vgl.video_id
@@ -1626,7 +1636,8 @@ def get_group_content_by_month(
         # بالمجموعة الحالية من جدول الربط ورقم الحصة الخاص بيها هي ----------------
         rows = conn.execute(
             """SELECT gv.id, vgl.group_id, gv.title, gv.description, gv.file_size,
-                      gv.mime_type, vgl.session_number, gv.created_at, u.full_name as uploaded_by_name
+                      gv.mime_type, gv.video_type, gv.external_url,
+                      vgl.session_number, gv.created_at, u.full_name as uploaded_by_name
                FROM video_group_links vgl
                JOIN group_videos gv ON gv.id = vgl.video_id
                LEFT JOIN users u ON u.id = gv.uploaded_by
@@ -1736,6 +1747,7 @@ def list_all_videos(session=Depends(require_roles("admin", "head_supervisor", "t
     with get_connection() as conn:
         videos = conn.execute("""
             SELECT gv.id, gv.title, gv.description, gv.file_size, gv.mime_type,
+                   gv.video_type, gv.external_url,
                    gv.created_at, u.full_name as uploaded_by_name
             FROM group_videos gv
             LEFT JOIN users u ON u.id = gv.uploaded_by
@@ -1852,6 +1864,54 @@ async def upload_group_video(
         return {"id": video_id, "linked_groups": group_id_list, "message": "تم رفع الفيديو بنجاح"}
 
 
+@app.post("/api/videos/link")
+def add_group_video_link(
+    payload: VideoLinkIn,
+    session=Depends(require_roles("admin", "head_supervisor", "supervisor", "teacher")),
+):
+    """إضافة فيديو برابط خارجي (يوتيوب / جوجل درايف / أي رابط تاني) بدل رفع ملف.
+    نفس فكرة /api/videos بالظبط (فيديو واحد يترفعله لأكتر من مجموعة مرة واحدة)
+    لكن من غير ما نخزن أي ملف على الديسك - بس بنخزن الرابط ونعرضه للطلاب."""
+    group_id_list = sorted(set(payload.group_ids))
+    if not group_id_list:
+        raise HTTPException(status_code=400, detail="لازم تحدد مجموعة واحدة على الأقل")
+
+    title = payload.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="لازم تكتب عنوان للفيديو")
+
+    video_url = payload.video_url.strip()
+    if not video_url:
+        raise HTTPException(status_code=400, detail="لازم تكتب رابط الفيديو")
+    if not (video_url.startswith("http://") or video_url.startswith("https://")):
+        raise HTTPException(status_code=400, detail="رابط الفيديو غير صحيح - لازم يبدأ بـ http:// أو https://")
+
+    with get_connection() as conn:
+        # لازم يكون عنده صلاحية على كل مجموعة من المجموعات المحددة
+        for gid in group_id_list:
+            assert_can_access_group_media(conn, session, gid)
+
+        cur = conn.execute("""
+            INSERT INTO group_videos (group_id, title, description, file_path, file_size, mime_type,
+                                       session_number, uploaded_by, video_type, external_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'link', ?)
+        """, (group_id_list[0], title, (payload.description or "").strip() or None, "", None, None,
+              payload.session_number, session["id"], video_url))
+        video_id = cur.lastrowid
+
+        for gid in group_id_list:
+            conn.execute(
+                "INSERT OR IGNORE INTO video_group_links (video_id, group_id, session_number) VALUES (?, ?, ?)",
+                (video_id, gid, payload.session_number)
+            )
+            # إشعار كل طلاب كل مجموعة إن فيه فيديو جديد
+            student_ids = [r["id"] for r in conn.execute("SELECT id FROM students WHERE group_id=? AND is_active=1", (gid,)).fetchall()]
+            for sid in student_ids:
+                create_notification(conn, sid, "فيديو جديد", f"المشرف رفع فيديو جديد: {title}")
+
+        return {"id": video_id, "linked_groups": group_id_list, "message": "تم إضافة رابط الفيديو بنجاح"}
+
+
 @app.delete("/api/groups/{group_id}/videos/{video_id}")
 def delete_group_video(video_id: int, group_id: int, session=Depends(require_roles("admin", "head_supervisor", "supervisor", "teacher"))):
     """بيشيل ربط الفيديو بالمجموعة دي بس - الفيديو نفسه (الملف والصف في قاعدة
@@ -1881,12 +1941,14 @@ def delete_video_permanently(video_id: int, session=Depends(require_roles("admin
 
         conn.execute("DELETE FROM group_videos WHERE id=?", (video_id,))  # video_group_links بتتشال تلقائي بالـ CASCADE
 
-        file_path = os.path.join(VIDEOS_DIR, vid["file_path"])
-        try:
-            if os.path.exists(file_path):
-                os.remove(file_path)
-        except Exception:
-            pass
+        # لو الفيديو رابط خارجي (video_type='link') مفيش ملف نحذفه من الديسك أصلاً
+        if vid["video_type"] != "link" and vid["file_path"]:
+            file_path = os.path.join(VIDEOS_DIR, vid["file_path"])
+            try:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+            except Exception:
+                pass
 
         return {"message": "تم حذف الفيديو نهائيًا من المنصة"}
 
@@ -1900,6 +1962,8 @@ def stream_group_video(video_id: int, request: Request, session=Depends(get_sess
         vid = conn.execute("SELECT * FROM group_videos WHERE id=?", (video_id,)).fetchone()
         if not vid:
             raise HTTPException(status_code=404, detail="الفيديو غير موجود")
+        if vid["video_type"] == "link":
+            raise HTTPException(status_code=400, detail="الفيديو ده رابط خارجي مش ملف مرفوع على المنصة")
         assert_can_access_video(conn, session, video_id)
 
         # فلتر عام: منع الطالب من بث فيديو اترفع قبل تاريخ أول اشتراك ليه، حتى لو

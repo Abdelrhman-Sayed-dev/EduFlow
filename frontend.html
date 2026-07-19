@@ -4866,7 +4866,8 @@ async function renderSupervisorVideosPage(){
   await loadGroupVideosList(groupId);
 }
 
-function videoFileSizeLabel(bytes){
+function videoFileSizeLabel(bytes, videoType){
+  if (videoType === "link") return "رابط خارجي";
   if (!bytes) return "—";
   const mb = bytes / (1024*1024);
   return mb >= 1024 ? `${(mb/1024).toFixed(1)} جيجا` : `${mb.toFixed(1)} ميجا`;
@@ -4879,15 +4880,15 @@ async function loadGroupVideosList(groupId){
   const videos = await api(`/api/groups/${groupId}/videos`);
   wrap.innerHTML = videos.length ? videos.map(v=>`
     <div class="video-row">
-      <div class="video-row-ic"><i data-lucide="video" style="width:18px;height:18px;"></i></div>
+      <div class="video-row-ic"><i data-lucide="${v.video_type==='link'?'link':'video'}" style="width:18px;height:18px;"></i></div>
       <div style="flex:1;min-width:0;">
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
           <div style="font-weight:700;font-size:13.5px;">${escapeHtml(v.title)}</div>
           ${v.session_number!=null ? `<span class="badge badge-teal">حصة ${v.session_number}</span>` : ""}
         </div>
-        <div style="font-size:11.5px;color:var(--text-3);">${escapeHtml(v.description||"")}${v.description?" · ":""}${videoFileSizeLabel(v.file_size)} · ${(v.created_at||"").slice(0,10)}</div>
+        <div style="font-size:11.5px;color:var(--text-3);">${escapeHtml(v.description||"")}${v.description?" · ":""}${videoFileSizeLabel(v.file_size, v.video_type)} · ${(v.created_at||"").slice(0,10)}</div>
       </div>
-      <button class="btn btn-primary btn-sm" onclick="openVideoPlayerModal(${v.id}, '${jsAttr(v.title)}')"><i data-lucide="play" style="width:13px;height:13px;"></i> تشغيل</button>
+      <button class="btn btn-primary btn-sm" onclick="openVideoPlayerModal(${v.id}, '${jsAttr(v.title)}', '${v.video_type||'upload'}', '${jsAttr(v.external_url||'')}')"><i data-lucide="play" style="width:13px;height:13px;"></i> تشغيل</button>
       ${canManage ? `<button class="action-btn" title="حذف الفيديو" onclick="deleteGroupVideo(${v.id}, ${groupId})"><i data-lucide="trash-2" style="width:15px;height:15px;color:var(--danger);"></i></button>` : ""}
     </div>
   `).join("") : `<div class="empty-state" style="padding:30px;"><div class="empty-title">لا يوجد فيديوهات لسه</div></div>`;
@@ -4911,7 +4912,25 @@ function openUploadVideoModal(defaultGroupId){
     </div>
     <div class="form-group"><label class="form-label">رقم الحصة (اختياري)</label><input class="form-input" id="f_vid_session" type="number" min="1" placeholder="مثال: 1"><div class="form-hint">لو حددته، الفيديو هيظهر جوه الحصة دي في صفحة "محتوى الشهور" لكل المجموعات المختارة</div></div>
     <div class="form-group"><label class="form-label">وصف (اختياري)</label><textarea class="form-textarea" id="f_vid_desc"></textarea></div>
-    <div class="form-group"><label class="form-label">ملف الفيديو <span class="req">*</span></label><input class="form-input" id="f_vid_file" type="file" accept="video/*"></div>
+
+    <div class="form-group">
+      <label class="form-label">طريقة إضافة الفيديو <span class="req">*</span></label>
+      <div style="display:flex;gap:8px;">
+        <button type="button" class="btn btn-sm" id="vidModeBtnUpload" onclick="setVideoAddMode('upload')" style="flex:1;"><i data-lucide="upload" style="width:13px;height:13px;"></i> رفع ملف</button>
+        <button type="button" class="btn btn-sm" id="vidModeBtnLink" onclick="setVideoAddMode('link')" style="flex:1;"><i data-lucide="link" style="width:13px;height:13px;"></i> رابط فيديو</button>
+      </div>
+    </div>
+
+    <div id="vidModeUploadWrap" class="form-group">
+      <label class="form-label">ملف الفيديو <span class="req">*</span></label>
+      <input class="form-input" id="f_vid_file" type="file" accept="video/*">
+    </div>
+    <div id="vidModeLinkWrap" class="form-group" style="display:none;">
+      <label class="form-label">رابط الفيديو <span class="req">*</span></label>
+      <input class="form-input" id="f_vid_url" type="url" placeholder="مثال: https://youtube.com/watch?v=...">
+      <div class="form-hint">تقدر تحط رابط يوتيوب أو جوجل درايف أو أي رابط تاني بيشغل الفيديو</div>
+    </div>
+
     <div id="vidUploadProgressWrap" style="display:none;margin-top:10px;">
       <div style="height:8px;background:var(--surface-3);border-radius:99px;overflow:hidden;"><div id="vidUploadProgressBar" style="height:100%;width:0%;background:var(--primary);transition:width .15s;"></div></div>
       <div id="vidUploadProgressLabel" style="font-size:11.5px;color:var(--text-3);margin-top:5px;">بيترفع... 0%</div>
@@ -4920,9 +4939,33 @@ function openUploadVideoModal(defaultGroupId){
     <button class="btn btn-ghost" id="vidUploadCancelBtn" onclick="closeOverlay('genericModal')">إلغاء</button>
     <button class="btn btn-primary" id="vidUploadSubmitBtn" onclick="submitUploadVideo()"><i data-lucide="upload" style="width:14px;height:14px;"></i> رفع</button>
   `);
+  setVideoAddMode("upload");
+}
+
+let VIDEO_ADD_MODE = "upload";
+function setVideoAddMode(mode){
+  VIDEO_ADD_MODE = mode;
+  const uploadWrap = document.getElementById("vidModeUploadWrap");
+  const linkWrap = document.getElementById("vidModeLinkWrap");
+  const btnUpload = document.getElementById("vidModeBtnUpload");
+  const btnLink = document.getElementById("vidModeBtnLink");
+  const submitBtn = document.getElementById("vidUploadSubmitBtn");
+  if (!uploadWrap || !linkWrap) return;
+  const isUpload = mode === "upload";
+  uploadWrap.style.display = isUpload ? "" : "none";
+  linkWrap.style.display = isUpload ? "none" : "";
+  btnUpload.className = "btn btn-sm " + (isUpload ? "btn-primary" : "btn-ghost");
+  btnLink.className = "btn btn-sm " + (isUpload ? "btn-ghost" : "btn-primary");
+  if (submitBtn){
+    submitBtn.innerHTML = isUpload
+      ? `<i data-lucide="upload" style="width:14px;height:14px;"></i> رفع`
+      : `<i data-lucide="link" style="width:14px;height:14px;"></i> إضافة الرابط`;
+    icons();
+  }
 }
 
 function submitUploadVideo(){
+  if (VIDEO_ADD_MODE === "link"){ submitVideoLink(); return; }
   const title = document.getElementById("f_vid_title").value.trim();
   const description = document.getElementById("f_vid_desc").value.trim();
   const sessionNum = document.getElementById("f_vid_session").value;
@@ -4981,6 +5024,37 @@ function submitUploadVideo(){
   xhr.send(form);
 }
 
+async function submitVideoLink(){
+  const title = document.getElementById("f_vid_title").value.trim();
+  const description = document.getElementById("f_vid_desc").value.trim();
+  const sessionNum = document.getElementById("f_vid_session").value;
+  const videoUrl = document.getElementById("f_vid_url").value.trim();
+  const selectedGroupIds = Array.from(document.querySelectorAll(".f_vid_group_cb:checked")).map(cb => parseInt(cb.value));
+  if (!title || !videoUrl){ showToast("لازم تكتب عنوان وتحط رابط الفيديو", "error"); return; }
+  if (!/^https?:\/\//i.test(videoUrl)){ showToast("رابط الفيديو غير صحيح - لازم يبدأ بـ http:// أو https://", "error"); return; }
+  if (!selectedGroupIds.length){ showToast("لازم تختار مجموعة واحدة على الأقل", "error"); return; }
+
+  const submitBtn = document.getElementById("vidUploadSubmitBtn");
+  const cancelBtn = document.getElementById("vidUploadCancelBtn");
+  submitBtn.disabled = true; submitBtn.style.opacity = "0.6";
+  cancelBtn.disabled = true; cancelBtn.style.opacity = "0.6";
+
+  try{
+    await api(`/api/videos/link`, {method:"POST", body: JSON.stringify({
+      title, description, video_url: videoUrl,
+      group_ids: selectedGroupIds,
+      session_number: sessionNum ? parseInt(sessionNum) : null,
+    })});
+    showToast("تم إضافة رابط الفيديو بنجاح", "success");
+    closeOverlay("genericModal");
+    if (CURRENT_PAGE === "hs_videos") loadAllVideosList();
+    else if (CURRENT_VIDEOS_GROUP_ID) loadGroupVideosList(CURRENT_VIDEOS_GROUP_ID);
+  } catch(e){
+    submitBtn.disabled = false; submitBtn.style.opacity = "1";
+    cancelBtn.disabled = false; cancelBtn.style.opacity = "1";
+  }
+}
+
 function deleteGroupVideo(videoId, groupId){
   confirmAction("شيل الفيديو من المجموعة", "متأكد إنك عايز تشيل الفيديو ده من المجموعة دي؟ الفيديو نفسه هيفضل محفوظ على المنصة (تقدر تربطه بمجموعة تانية بعدين)، وهيختفي بس من قايمة المجموعة دي.", async ()=>{
     await api(`/api/groups/${groupId}/videos/${videoId}`, {method:"DELETE"});
@@ -5019,18 +5093,18 @@ async function loadAllVideosList(){
   const videos = await api(`/api/videos`);
   wrap.innerHTML = videos.length ? videos.map(v=>`
     <div class="video-row" style="align-items:flex-start;">
-      <div class="video-row-ic"><i data-lucide="video" style="width:18px;height:18px;"></i></div>
+      <div class="video-row-ic"><i data-lucide="${v.video_type==='link'?'link':'video'}" style="width:18px;height:18px;"></i></div>
       <div style="flex:1;min-width:0;">
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
           <div style="font-weight:700;font-size:13.5px;">${escapeHtml(v.title)}</div>
         </div>
-        <div style="font-size:11.5px;color:var(--text-3);">${escapeHtml(v.description||"")}${v.description?" · ":""}${videoFileSizeLabel(v.file_size)} · ${(v.created_at||"").slice(0,10)}</div>
+        <div style="font-size:11.5px;color:var(--text-3);">${escapeHtml(v.description||"")}${v.description?" · ":""}${videoFileSizeLabel(v.file_size, v.video_type)} · ${(v.created_at||"").slice(0,10)}</div>
         <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;">
           ${(v.groups||[]).map(g=>`<span class="badge badge-teal">${escapeHtml(g.group_name)}${g.session_number!=null?` · حصة ${g.session_number}`:""}</span>`).join("") || `<span style="font-size:11px;color:var(--text-3);">مش مربوط بأي مجموعة حاليًا</span>`}
         </div>
       </div>
       <div style="display:flex;flex-direction:column;gap:6px;align-items:stretch;">
-        <button class="btn btn-primary btn-sm" onclick="openVideoPlayerModal(${v.id}, '${jsAttr(v.title)}')"><i data-lucide="play" style="width:13px;height:13px;"></i> تشغيل</button>
+        <button class="btn btn-primary btn-sm" onclick="openVideoPlayerModal(${v.id}, '${jsAttr(v.title)}', '${v.video_type||'upload'}', '${jsAttr(v.external_url||'')}')"><i data-lucide="play" style="width:13px;height:13px;"></i> تشغيل</button>
         <button class="btn btn-ghost btn-sm" onclick="openManageVideoGroupsModal(${v.id}, '${jsAttr(v.title)}')"><i data-lucide="settings-2" style="width:13px;height:13px;"></i> المجموعات</button>
         <button class="btn btn-ghost btn-sm" style="color:var(--danger);" onclick="deleteVideoPermanently(${v.id}, '${jsAttr(v.title)}')"><i data-lucide="trash-2" style="width:13px;height:13px;color:var(--danger);"></i> حذف نهائي</button>
       </div>
@@ -5097,10 +5171,58 @@ async function deleteVideoPermanently(videoId, title){
   );
 }
 
-// مشغل الفيديو - بيتبث من endpoint محمي بصلاحيات (مش رابط عام)، وبنعطّل زرار
-// التنزيل من عناصر تحكم المتصفح ونمنع الكليك يمين، كأقصى حد ممكن تقنيًا من غير
-// نظام DRM حقيقي (اللي مش متاح في مشغل الفيديو العادي بالمتصفح)
-function openVideoPlayerModal(videoId, title){
+// مشغل الفيديو - الفيديوهات المرفوعة كملف بتتبث من endpoint محمي بصلاحيات (مش
+// رابط عام)، وبنعطّل زرار التنزيل من عناصر تحكم المتصفح ونمنع الكليك يمين،
+// كأقصى حد ممكن تقنيًا من غير نظام DRM حقيقي. أما الفيديوهات اللي هي رابط
+// خارجي (يوتيوب/جوجل درايف/غيره) فبنعرضها بمشغل مدمج (iframe) لو الرابط معروف،
+// وإلا بنديله زرار يفتح الرابط في تاب جديد.
+function videoLinkEmbedUrl(url){
+  try{
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, "");
+    if (host === "youtube.com" || host === "m.youtube.com"){
+      const id = u.searchParams.get("v");
+      if (id) return `https://www.youtube.com/embed/${id}`;
+      const shortsMatch = u.pathname.match(/\/shorts\/([^/?]+)/);
+      if (shortsMatch) return `https://www.youtube.com/embed/${shortsMatch[1]}`;
+    }
+    if (host === "youtu.be"){
+      const id = u.pathname.replace("/", "");
+      if (id) return `https://www.youtube.com/embed/${id}`;
+    }
+    if (host === "drive.google.com"){
+      const m = u.pathname.match(/\/file\/d\/([^/]+)/);
+      if (m) return `https://drive.google.com/file/d/${m[1]}/preview`;
+    }
+    if (host === "vimeo.com"){
+      const m = u.pathname.match(/\/(\d+)/);
+      if (m) return `https://player.vimeo.com/video/${m[1]}`;
+    }
+  }catch(e){ /* رابط غير صالح كـ URL - هيتعامل معاه كرابط عادي برا */ }
+  return null;
+}
+
+function openVideoPlayerModal(videoId, title, videoType, externalUrl){
+  if (videoType === "link"){
+    const embedUrl = videoLinkEmbedUrl(externalUrl);
+    openModal(escapeHtml(title), `
+      <div style="background:#000;border-radius:12px;overflow:hidden;">
+        ${embedUrl
+          ? `<iframe src="${embedUrl}" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen style="width:100%;aspect-ratio:16/9;border:0;display:block;"></iframe>`
+          : `<div style="padding:40px 20px;text-align:center;color:var(--text-2);">
+               <i data-lucide="link" style="width:28px;height:28px;margin-bottom:10px;"></i>
+               <div style="font-size:13px;">مش هينفتح جوه المنصة - افتح الرابط في تاب جديد</div>
+             </div>`}
+      </div>
+      <div style="margin-top:12px;text-align:center;">
+        <a href="${escapeHtml(externalUrl)}" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm"><i data-lucide="external-link" style="width:13px;height:13px;"></i> فتح الرابط في تاب جديد</a>
+      </div>
+    `, `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`,
+    { width: "760px" });
+    icons();
+    return;
+  }
+
   const streamUrl = `${API}/api/videos/${videoId}/stream?token=${encodeURIComponent(TOKEN||"")}`;
   openModal(escapeHtml(title), `
     <div style="background:#000;border-radius:12px;overflow:hidden;">
@@ -5186,12 +5308,12 @@ async function renderMyMonthlyContentPage(){
             <div style="font-size:12px;font-weight:700;color:var(--text-3);margin-bottom:8px;">فيديوهات ${escapeHtml(m.label)} (بدون حصة محددة)</div>
             ${m.videos.map(v=>`
               <div class="video-row">
-                <div class="video-row-ic"><i data-lucide="video" style="width:18px;height:18px;"></i></div>
+                <div class="video-row-ic"><i data-lucide="${v.video_type==='link'?'link':'video'}" style="width:18px;height:18px;"></i></div>
                 <div style="flex:1;min-width:0;">
                   <div style="font-weight:700;font-size:13.5px;">${escapeHtml(v.title)}</div>
-                  <div style="font-size:11.5px;color:var(--text-3);">${escapeHtml(v.description||"")}${v.description?" · ":""}${videoFileSizeLabel(v.file_size)} · ${(v.created_at||"").slice(0,10)}</div>
+                  <div style="font-size:11.5px;color:var(--text-3);">${escapeHtml(v.description||"")}${v.description?" · ":""}${videoFileSizeLabel(v.file_size, v.video_type)} · ${(v.created_at||"").slice(0,10)}</div>
                 </div>
-                <button class="btn btn-primary btn-sm" onclick="openVideoPlayerModal(${v.id}, '${jsAttr(v.title)}')"><i data-lucide="play" style="width:13px;height:13px;"></i> تشغيل</button>
+                <button class="btn btn-primary btn-sm" onclick="openVideoPlayerModal(${v.id}, '${jsAttr(v.title)}', '${v.video_type||'upload'}', '${jsAttr(v.external_url||'')}')"><i data-lucide="play" style="width:13px;height:13px;"></i> تشغيل</button>
               </div>
             `).join("")}
           </div>` : ""}
@@ -5258,12 +5380,12 @@ function renderMonthlySessionBlock(s, monthIdx){
           </div>
           ${videos.length ? videos.map(v=>`
             <div class="video-row">
-              <div class="video-row-ic"><i data-lucide="video" style="width:18px;height:18px;"></i></div>
+              <div class="video-row-ic"><i data-lucide="${v.video_type==='link'?'link':'video'}" style="width:18px;height:18px;"></i></div>
               <div style="flex:1;min-width:0;">
                 <div style="font-weight:700;font-size:13.5px;">${escapeHtml(v.title)}</div>
-                <div style="font-size:11.5px;color:var(--text-3);">${escapeHtml(v.description||"")}${v.description?" · ":""}${videoFileSizeLabel(v.file_size)} · ${(v.created_at||"").slice(0,10)}</div>
+                <div style="font-size:11.5px;color:var(--text-3);">${escapeHtml(v.description||"")}${v.description?" · ":""}${videoFileSizeLabel(v.file_size, v.video_type)} · ${(v.created_at||"").slice(0,10)}</div>
               </div>
-              <button class="btn btn-primary btn-sm" onclick="openVideoPlayerModal(${v.id}, '${jsAttr(v.title)}')"><i data-lucide="play" style="width:13px;height:13px;"></i> تشغيل</button>
+              <button class="btn btn-primary btn-sm" onclick="openVideoPlayerModal(${v.id}, '${jsAttr(v.title)}', '${v.video_type||'upload'}', '${jsAttr(v.external_url||'')}')"><i data-lucide="play" style="width:13px;height:13px;"></i> تشغيل</button>
             </div>
           `).join("") : `<div style="font-size:12px;color:var(--text-3);">لا يوجد فيديوهات شرح للحصة دي لسه</div>`}
         </div>
