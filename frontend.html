@@ -1059,8 +1059,6 @@ const NAV_BY_ROLE = {
     {id:"myhomework", label:"واجباتي", icon:"clipboard-list"},
     {id:"myscores", label:"درجاتي", icon:"file-check-2"},
     {id:"myattendance", label:"حضوري", icon:"calendar-check"},
-    {id:"myboard", label:"سبورة مجموعتي", icon:"presentation"},
-    {id:"myvideos", label:"فيديوهاتي", icon:"video"},
     {id:"myrequests", label:"طلباتي", icon:"send"},
   ],
 };
@@ -5748,11 +5746,6 @@ async function renderStudentMorePage(){
       <div class="student-more-item" onclick="navigateTo('myrequests')">
         <div class="student-more-ic"><i data-lucide="send" style="width:18px;height:18px;"></i></div>
         <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">طلباتي</div><div style="font-size:11.5px;color:var(--text-3);">قدّم طلب لمشرف مجموعتك وتابع الردود</div></div>
-        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
-      </div>
-      <div class="student-more-item" onclick="navigateTo('myvideos')">
-        <div class="student-more-ic"><i data-lucide="video" style="width:18px;height:18px;"></i></div>
-        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">فيديوهاتي</div><div style="font-size:11.5px;color:var(--text-3);">فيديوهات رفعها المشرف لمجموعتك، للمشاهدة فقط</div></div>
         <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
       </div>
     </div>
