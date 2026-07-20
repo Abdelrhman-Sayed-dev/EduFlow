@@ -1336,8 +1336,8 @@ function renderTodayScheduleCard(todayName, items){
       ${items.map((it,idx)=>`
         <div style="display:flex;align-items:center;gap:12px;padding:12px 20px;${idx<items.length-1?'border-bottom:1px solid var(--border);':''}">
           <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:8px 12px;text-align:center;min-width:70px;">
-            <div style="font-size:13px;font-weight:700;color:var(--primary);">${it.start_time}</div>
-            ${it.end_time?`<div style="font-size:10.5px;color:var(--text-3);">${it.end_time}</div>`:""}
+            <div style="font-size:13px;font-weight:700;color:var(--primary);">${formatTime12h(it.start_time)}</div>
+            ${it.end_time?`<div style="font-size:10.5px;color:var(--text-3);">${formatTime12h(it.end_time)}</div>`:""}
           </div>
           <div style="flex:1;">
             <div style="font-weight:700;font-size:13.5px;">${escapeHtml(it.title || "حصة")}</div>
@@ -2319,7 +2319,7 @@ async function renderTeacherSchedulePage(){
         <div class="day-col-title" style="${isToday?'color:var(--primary);':''}"><i data-lucide="calendar" style="width:14px;height:14px;"></i> ${day} ${isToday?'<span class="badge badge-green" style="margin-right:6px;">النهارده</span>':''}</div>
         ${dayItems.map(it=>`
           <div class="schedule-item">
-            <div class="schedule-time">${it.start_time}${it.end_time?` - ${it.end_time}`:""}</div>
+            <div class="schedule-time">${formatTime12h(it.start_time)}${it.end_time?` - ${formatTime12h(it.end_time)}`:""}</div>
             <div class="schedule-body">
               <b>${escapeHtml(it.title || "حصة")}</b>
               <div class="sub">${it.group_name ? `مجموعة: ${escapeHtml(it.group_name)}${it.stage_name?` (${escapeHtml(it.stage_name)})`:''}` : "موعد عام"} ${it.notes?(' • '+escapeHtml(it.notes)):''}</div>
@@ -3660,7 +3660,7 @@ async function renderSchedulePage(){
         <div class="day-col-title"><i data-lucide="calendar" style="width:14px;height:14px;"></i> ${day}</div>
         ${dayItems.map(it=>`
           <div class="schedule-item">
-            <div class="schedule-time">${it.start_time}${it.end_time?` - ${it.end_time}`:""}</div>
+            <div class="schedule-time">${formatTime12h(it.start_time)}${it.end_time?` - ${formatTime12h(it.end_time)}`:""}</div>
             <div class="schedule-body">
               <b>${escapeHtml(it.title || "حصة")}</b>
               <div class="sub">${it.group_name ? `مجموعة: ${escapeHtml(it.group_name)}` : "موعد عام"} ${it.notes?(' • '+escapeHtml(it.notes)):''}</div>
@@ -3679,6 +3679,21 @@ async function renderSchedulePage(){
 
 function dayOptions(selected){
   return DAYS_ORDER.map(d=>`<option value="${d}" ${d===selected?"selected":""}>${d}</option>`).join("");
+}
+
+// بنخزّن ونشتغل بالوقت بنظام 24 ساعة (HH:MM) زي ما بيرجعه input type=time بالظبط،
+// لكن بنعرضه للمستخدم بنظام 12 ساعة (ص/م) لأنه أسهل في القراءة. الدالة دي
+// بترجع نص للعرض بس - مش بتغيّر القيمة المخزّنة في قاعدة البيانات.
+function formatTime12h(t){
+  if (!t) return "";
+  const parts = String(t).split(":");
+  let h = parseInt(parts[0], 10);
+  const m = (parts[1] || "00").padStart(2, "0");
+  if (isNaN(h)) return t;
+  const period = h >= 12 ? "م" : "ص";
+  h = h % 12;
+  if (h === 0) h = 12;
+  return `${h}:${m} ${period}`;
 }
 
 function openAddScheduleModal(){
@@ -5598,7 +5613,7 @@ async function renderStudentDashboardPage(){
             <span class="student-group-badge">${groupInfo.governorate_name}</span>
           </div>
           <div class="student-group-meta">
-            ${scheduleRows.length ? scheduleRows.map(s=>`${s.day_of_week} ${s.start_time}${s.end_time?' - '+s.end_time:''}`).join(" · ") : "لا يوجد مواعيد مضافة بعد"}
+            ${scheduleRows.length ? scheduleRows.map(s=>`${s.day_of_week} ${formatTime12h(s.start_time)}${s.end_time?' - '+formatTime12h(s.end_time):''}`).join(" · ") : "لا يوجد مواعيد مضافة بعد"}
           </div>
         </div>
       </div>
