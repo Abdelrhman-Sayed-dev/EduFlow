@@ -2514,7 +2514,7 @@ function renderGroupScheduleSlots(){
   wrap.innerHTML = GROUP_SCHEDULE_SLOTS.map((slot, idx)=>`
     <div class="group-slot-row" style="display:flex;gap:8px;margin-bottom:8px;align-items:center;">
       <select class="form-select gs-day" style="flex:1.2;" onchange="updateGroupScheduleSlot(${idx}, 'day_of_week', this.value)">${dayOptions(slot.day_of_week)}</select>
-      <input class="form-input gs-time" type="time" style="flex:1;" value="${slot.start_time}" placeholder="وقت البداية" onchange="updateGroupScheduleSlot(${idx}, 'start_time', this.value)">
+      <input class="form-input gs-time" type="time" lang="ar-EG" style="flex:1;" value="${slot.start_time}" placeholder="وقت البداية" onchange="updateGroupScheduleSlot(${idx}, 'start_time', this.value)">
       <button type="button" class="action-btn del" onclick="removeGroupScheduleSlotRow(${idx})"><i data-lucide="x" style="width:14px;height:14px;"></i></button>
     </div>
   `).join("");
@@ -2527,18 +2527,28 @@ function renderGroupScheduleSlots(){
 // المستخدم يدوس على زرار الحفظ مباشرة (خصوصًا مع أسهم/بيكر الوقت بتاع
 // المتصفح)، فكانت القيمة بتتبعت قديمة أو فاضية للسيرفر رغم إن الشاشة
 // شكلها محدّث. القراءة المباشرة من input.value مضمونة دايمًا.
+//
+// ملحوظة مهمة: حقل <input type="time"> في بعض المتصفحات/أنظمة التشغيل بيعرض
+// نظام 12 ساعة (AM/PM) - لو المستخدم كتب الساعة والدقيقة بس ماحددش "ص/م"،
+// المتصفح بيعتبر القيمة "غير مكتملة" وبيرجّع value = "" فاضي تمامًا حتى لو
+// شكلها ظاهر مليان على الشاشة، وده كان بيخلي الميعاد يتمسح بالكامل من غير
+// أي تنبيه. validity.badInput بتكشف بالظبط الحالة دي.
 function collectGroupScheduleSlotsFromDom(){
   const rows = document.querySelectorAll("#groupSlotsWrap .group-slot-row");
   const slots = [];
+  let hasIncompleteTime = false;
   rows.forEach(row=>{
     const dayEl = row.querySelector(".gs-day");
     const timeEl = row.querySelector(".gs-time");
+    if (timeEl && timeEl.validity && timeEl.validity.badInput){
+      hasIncompleteTime = true;
+    }
     const start_time = timeEl ? timeEl.value : "";
     if (start_time){
       slots.push({day_of_week: dayEl ? dayEl.value : DAYS_ORDER[0], start_time, end_time: null});
     }
   });
-  return slots;
+  return { slots, hasIncompleteTime };
 }
 
 async function submitAddGroup(){
@@ -2546,7 +2556,8 @@ async function submitAddGroup(){
   const governorate_id = document.getElementById("f_g_gov_value").value;
   if (!name){ showToast("لازم تكتب اسم المجموعة", "error"); return; }
   if (!governorate_id){ showToast("لازم تختار المحافظة من القائمة", "error"); return; }
-  const validSlots = collectGroupScheduleSlotsFromDom();
+  const { slots: validSlots, hasIncompleteTime } = collectGroupScheduleSlotsFromDom();
+  if (hasIncompleteTime){ showToast("في ميعاد وقته لسه مش مكتمل - لازم تحدد ص/م (AM/PM) أو تمسح الميعاد ده قبل الحفظ", "error"); return; }
   const body = {
     name,
     stage_id: parseInt(document.getElementById("f_g_stage").value),
@@ -2605,7 +2616,8 @@ async function openEditGroupModal(id){
 async function submitEditGroup(id){
   const governorate_id = document.getElementById("f_g_gov_value").value;
   if (!governorate_id){ showToast("لازم تختار المحافظة من القائمة", "error"); return; }
-  const validSlots = collectGroupScheduleSlotsFromDom();
+  const { slots: validSlots, hasIncompleteTime } = collectGroupScheduleSlotsFromDom();
+  if (hasIncompleteTime){ showToast("في ميعاد وقته لسه مش مكتمل - لازم تحدد ص/م (AM/PM) أو تمسح الميعاد ده قبل الحفظ", "error"); return; }
   const body = {
     name: document.getElementById("f_g_name").value.trim(),
     stage_id: parseInt(document.getElementById("f_g_stage").value),
@@ -3676,8 +3688,8 @@ function openAddScheduleModal(){
       <div class="form-group"><label class="form-label">المجموعة (اختياري)</label><select class="form-select" id="f_sc_group"><option value="">موعد عام</option>${groupOptionsAll()}</select></div>
     </div>
     <div class="form-row-2">
-      <div class="form-group"><label class="form-label">من الساعة</label><input class="form-input" id="f_sc_start" type="time"></div>
-      <div class="form-group"><label class="form-label">إلى الساعة</label><input class="form-input" id="f_sc_end" type="time"></div>
+      <div class="form-group"><label class="form-label">من الساعة</label><input class="form-input" id="f_sc_start" type="time" lang="ar-EG"></div>
+      <div class="form-group"><label class="form-label">إلى الساعة</label><input class="form-input" id="f_sc_end" type="time" lang="ar-EG"></div>
     </div>
     <div class="form-group"><label class="form-label">عنوان الحصة</label><input class="form-input" id="f_sc_title" placeholder="مثال: حصة كيمياء - ثانوي"></div>
     <div class="form-group"><label class="form-label">ملاحظات</label><textarea class="form-textarea" id="f_sc_notes"></textarea></div>
@@ -3696,7 +3708,7 @@ async function submitAddSchedule(){
     title: document.getElementById("f_sc_title").value.trim() || null,
     notes: document.getElementById("f_sc_notes").value.trim() || null,
   };
-  if (!body.start_time){ showToast("لازم تحدد وقت الحصة", "error"); return; }
+  if (!body.start_time){ showToast("لازم تحدد وقت الحصة - لو الوقت شكله فاضي تأكد إنك حددت ص/م", "error"); return; }
   await api("/api/schedule", {method:"POST", body: JSON.stringify(body)});
   showToast("تم إضافة الموعد", "success");
   closeOverlay("genericModal");
@@ -3713,8 +3725,8 @@ async function openEditScheduleModal(id){
       <div class="form-group"><label class="form-label">المجموعة</label><select class="form-select" id="f_sc_group"><option value="">موعد عام</option>${groupOptionsAll(it.group_id)}</select></div>
     </div>
     <div class="form-row-2">
-      <div class="form-group"><label class="form-label">من الساعة</label><input class="form-input" id="f_sc_start" type="time" value="${it.start_time}"></div>
-      <div class="form-group"><label class="form-label">إلى الساعة</label><input class="form-input" id="f_sc_end" type="time" value="${it.end_time||''}"></div>
+      <div class="form-group"><label class="form-label">من الساعة</label><input class="form-input" id="f_sc_start" type="time" lang="ar-EG" value="${it.start_time}"></div>
+      <div class="form-group"><label class="form-label">إلى الساعة</label><input class="form-input" id="f_sc_end" type="time" lang="ar-EG" value="${it.end_time||''}"></div>
     </div>
     <div class="form-group"><label class="form-label">عنوان الحصة</label><input class="form-input" id="f_sc_title" value="${escapeHtml(it.title||'')}"></div>
     <div class="form-group"><label class="form-label">ملاحظات</label><textarea class="form-textarea" id="f_sc_notes">${escapeHtml(it.notes||'')}</textarea></div>
@@ -3733,6 +3745,7 @@ async function submitEditSchedule(id){
     title: document.getElementById("f_sc_title").value.trim() || null,
     notes: document.getElementById("f_sc_notes").value.trim() || null,
   };
+  if (!body.start_time){ showToast("لازم تحدد وقت الحصة - لو الوقت شكله فاضي تأكد إنك حددت ص/م", "error"); return; }
   await api(`/api/schedule/${id}`, {method:"PUT", body: JSON.stringify(body)});
   showToast("تم حفظ التعديلات", "success");
   closeOverlay("genericModal");
