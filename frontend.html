@@ -2512,13 +2512,33 @@ function renderGroupScheduleSlots(){
   const wrap = document.getElementById("groupSlotsWrap");
   if (!wrap) return;
   wrap.innerHTML = GROUP_SCHEDULE_SLOTS.map((slot, idx)=>`
-    <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center;">
-      <select class="form-select" style="flex:1.2;" onchange="updateGroupScheduleSlot(${idx}, 'day_of_week', this.value)">${dayOptions(slot.day_of_week)}</select>
-      <input class="form-input" type="time" style="flex:1;" value="${slot.start_time}" placeholder="وقت البداية" onchange="updateGroupScheduleSlot(${idx}, 'start_time', this.value)">
+    <div class="group-slot-row" style="display:flex;gap:8px;margin-bottom:8px;align-items:center;">
+      <select class="form-select gs-day" style="flex:1.2;" onchange="updateGroupScheduleSlot(${idx}, 'day_of_week', this.value)">${dayOptions(slot.day_of_week)}</select>
+      <input class="form-input gs-time" type="time" style="flex:1;" value="${slot.start_time}" placeholder="وقت البداية" onchange="updateGroupScheduleSlot(${idx}, 'start_time', this.value)">
       <button type="button" class="action-btn del" onclick="removeGroupScheduleSlotRow(${idx})"><i data-lucide="x" style="width:14px;height:14px;"></i></button>
     </div>
   `).join("");
   icons();
+}
+
+// بنقرأ قيم مواعيد المجموعة مباشرة من عناصر الـ DOM وقت الحفظ (مش من المتغيّر
+// GROUP_SCHEDULE_SLOTS اللي بيتحدّث بس لما حدث onchange يطلق) - عشان حقل
+// <input type="time"> معروف إنه أحيانًا بيتأخر أو ميطلقش onchange قبل ما
+// المستخدم يدوس على زرار الحفظ مباشرة (خصوصًا مع أسهم/بيكر الوقت بتاع
+// المتصفح)، فكانت القيمة بتتبعت قديمة أو فاضية للسيرفر رغم إن الشاشة
+// شكلها محدّث. القراءة المباشرة من input.value مضمونة دايمًا.
+function collectGroupScheduleSlotsFromDom(){
+  const rows = document.querySelectorAll("#groupSlotsWrap .group-slot-row");
+  const slots = [];
+  rows.forEach(row=>{
+    const dayEl = row.querySelector(".gs-day");
+    const timeEl = row.querySelector(".gs-time");
+    const start_time = timeEl ? timeEl.value : "";
+    if (start_time){
+      slots.push({day_of_week: dayEl ? dayEl.value : DAYS_ORDER[0], start_time, end_time: null});
+    }
+  });
+  return slots;
 }
 
 async function submitAddGroup(){
@@ -2526,7 +2546,7 @@ async function submitAddGroup(){
   const governorate_id = document.getElementById("f_g_gov_value").value;
   if (!name){ showToast("لازم تكتب اسم المجموعة", "error"); return; }
   if (!governorate_id){ showToast("لازم تختار المحافظة من القائمة", "error"); return; }
-  const validSlots = GROUP_SCHEDULE_SLOTS.filter(s => s.start_time);
+  const validSlots = collectGroupScheduleSlotsFromDom();
   const body = {
     name,
     stage_id: parseInt(document.getElementById("f_g_stage").value),
@@ -2585,7 +2605,7 @@ async function openEditGroupModal(id){
 async function submitEditGroup(id){
   const governorate_id = document.getElementById("f_g_gov_value").value;
   if (!governorate_id){ showToast("لازم تختار المحافظة من القائمة", "error"); return; }
-  const validSlots = GROUP_SCHEDULE_SLOTS.filter(s => s.start_time);
+  const validSlots = collectGroupScheduleSlotsFromDom();
   const body = {
     name: document.getElementById("f_g_name").value.trim(),
     stage_id: parseInt(document.getElementById("f_g_stage").value),
