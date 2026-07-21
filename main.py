@@ -135,9 +135,8 @@ class GroupIn(BaseModel):
     stage_id: int
     governorate_id: int
     notes: Optional[str] = Field(None, max_length=2000)
-    session_price: Optional[float] = None
     monthly_fee: Optional[float] = None
-    supervisor_id: Optional[int] = None
+    supervisor_ids: Optional[List[int]] = None  # ممكن أكتر من مشرف مسؤول عن نفس المجموعة
     schedule_slots: Optional[list[ScheduleSlotIn]] = None  # مواعيد المجموعة (يوم + وقت)
 
 
@@ -287,7 +286,7 @@ class BoardImageIn(BaseModel):
 
 
 class AssignSupervisorIn(BaseModel):
-    supervisor_id: Optional[int] = None  # None = شيل المشرف من المجموعة
+    supervisor_ids: List[int] = []  # قايمة فاضية = شيل كل المشرفين من المجموعة
 
 
 class BehaviorNoteIn(BaseModel):
@@ -423,15 +422,19 @@ def require_roles(*roles):
 
 
 def supervised_group_ids(conn, supervisor_id):
-    rows = conn.execute("SELECT id FROM groups WHERE supervisor_id=?", (supervisor_id,)).fetchall()
-    return [r["id"] for r in rows]
+    rows = conn.execute("SELECT group_id FROM group_supervisors WHERE supervisor_id=?", (supervisor_id,)).fetchall()
+    return [r["group_id"] for r in rows]
 
 
 def assert_supervisor_owns_group(conn, session, group_id):
-    """يتأكد إن المشرف بيتعامل مع مجموعته بس"""
+    """يتأكد إن المشرف بيتعامل مع إحدى مجموعاته بس (ممكن يبقى مشرف على أكتر من مجموعة،
+    وممكن يبقى للمجموعة الواحدة أكتر من مشرف)"""
     if session["role"] == "supervisor":
-        grp = conn.execute("SELECT supervisor_id FROM groups WHERE id=?", (group_id,)).fetchone()
-        if not grp or grp["supervisor_id"] != session["id"]:
+        row = conn.execute(
+            "SELECT 1 FROM group_supervisors WHERE group_id=? AND supervisor_id=?",
+            (group_id, session["id"])
+        ).fetchone()
+        if not row:
             raise HTTPException(status_code=403, detail="مش مسموح لك تتعامل مع مجموعة غير مجموعتك")
 
 
@@ -782,14 +785,15 @@ def get_groups(stage_id: Optional[int] = None, governorate_id: Optional[int] = N
                session=Depends(get_current_session)):
     """جلب المجموعات - المشرف يشوف مجموعاته بس، والطالب يشوف مجموعته بس"""
     query = """
-        SELECT g.id, g.name, g.notes, g.session_price, g.monthly_fee, g.stage_id, g.governorate_id,
-               g.supervisor_id, g.created_at, st.name as stage_name, gov.name as governorate_name,
-               u.full_name as supervisor_name,
+        SELECT g.id, g.name, g.notes, g.monthly_fee, g.stage_id, g.governorate_id,
+               g.created_at, st.name as stage_name, gov.name as governorate_name,
+               (SELECT GROUP_CONCAT(u.full_name, '، ') FROM group_supervisors gs
+                  JOIN users u ON u.id = gs.supervisor_id WHERE gs.group_id = g.id) as supervisor_name,
+               (SELECT GROUP_CONCAT(gs.supervisor_id) FROM group_supervisors gs WHERE gs.group_id = g.id) as supervisor_ids_csv,
                (SELECT COUNT(*) FROM students s WHERE s.group_id = g.id) as students_count
         FROM groups g
         JOIN stages st ON st.id = g.stage_id
         JOIN governorates gov ON gov.id = g.governorate_id
-        LEFT JOIN users u ON u.id = g.supervisor_id
         WHERE 1=1
     """
     params = []
@@ -801,7 +805,7 @@ def get_groups(stage_id: Optional[int] = None, governorate_id: Optional[int] = N
         params.append(governorate_id)
 
     if session["role"] == "supervisor":
-        query += " AND g.supervisor_id = ?"
+        query += " AND g.id IN (SELECT group_id FROM group_supervisors WHERE supervisor_id = ?)"
         params.append(session["id"])
     elif session["role"] == "student":
         query += " AND g.id = ?"
@@ -811,7 +815,13 @@ def get_groups(stage_id: Optional[int] = None, governorate_id: Optional[int] = N
 
     with get_connection() as conn:
         rows = conn.execute(query, params).fetchall()
-        return [dict(r) for r in rows]
+        result = []
+        for r in rows:
+            d = dict(r)
+            csv = d.pop("supervisor_ids_csv", None)
+            d["supervisor_ids"] = [int(x) for x in csv.split(",")] if csv else []
+            result.append(d)
+        return result
 
 
 @app.get("/api/groups/{group_id}/info")
@@ -819,13 +829,16 @@ def get_group_info(group_id: int, session=Depends(get_current_session)):
     """بيانات مجموعة معينة + بيانات المشرف (اسمه ورقمه) + مواعيد المجموعة"""
     with get_connection() as conn:
         group = conn.execute("""
-            SELECT g.id, g.name, g.notes, g.session_price, g.monthly_fee, g.supervisor_id,
+            SELECT g.id, g.name, g.notes, g.monthly_fee,
                    st.name as stage_name, gov.name as governorate_name,
-                   u.full_name as supervisor_name, u.phone as supervisor_phone
+                   (SELECT GROUP_CONCAT(u.full_name, '، ') FROM group_supervisors gs
+                      JOIN users u ON u.id = gs.supervisor_id WHERE gs.group_id = g.id) as supervisor_name,
+                   (SELECT u2.phone FROM group_supervisors gs2 JOIN users u2 ON u2.id = gs2.supervisor_id
+                      WHERE gs2.group_id = g.id ORDER BY gs2.supervisor_id LIMIT 1) as supervisor_phone,
+                   (SELECT GROUP_CONCAT(gs3.supervisor_id) FROM group_supervisors gs3 WHERE gs3.group_id = g.id) as supervisor_ids_csv
             FROM groups g
             JOIN stages st ON st.id = g.stage_id
             JOIN governorates gov ON gov.id = g.governorate_id
-            LEFT JOIN users u ON u.id = g.supervisor_id
             WHERE g.id = ?
         """, (group_id,)).fetchone()
         if not group:
@@ -840,8 +853,31 @@ def get_group_info(group_id: int, session=Depends(get_current_session)):
         """, (group_id,)).fetchall()
 
         result = dict(group)
+        csv = result.pop("supervisor_ids_csv", None)
+        result["supervisor_ids"] = [int(x) for x in csv.split(",")] if csv else []
         result["schedule"] = [dict(s) for s in schedule]
         return result
+
+
+def _validate_supervisor_ids(conn, supervisor_ids):
+    """يتأكد إن كل الـ IDs المبعوتة فعلاً حسابات مشرفين موجودة"""
+    ids = list(dict.fromkeys(supervisor_ids or []))  # إزالة أي تكرار مع الحفاظ على الترتيب
+    for sid in ids:
+        sup = conn.execute("SELECT id FROM users WHERE id=? AND role='supervisor'", (sid,)).fetchone()
+        if not sup:
+            raise HTTPException(status_code=404, detail=f"المشرف رقم {sid} غير موجود")
+    return ids
+
+
+def _set_group_supervisors(conn, group_id, supervisor_ids):
+    """يستبدل قايمة المشرفين المسؤولين عن المجموعة بالقايمة الجديدة"""
+    ids = _validate_supervisor_ids(conn, supervisor_ids)
+    conn.execute("DELETE FROM group_supervisors WHERE group_id=?", (group_id,))
+    for sid in ids:
+        conn.execute(
+            "INSERT OR IGNORE INTO group_supervisors (group_id, supervisor_id) VALUES (?, ?)",
+            (group_id, sid)
+        )
 
 
 @app.post("/api/groups")
@@ -849,15 +885,17 @@ def add_group(group: GroupIn, session=Depends(require_roles("admin"))):
     with get_connection() as conn:
         try:
             cur = conn.execute(
-                """INSERT INTO groups (name, stage_id, governorate_id, notes, session_price, monthly_fee, supervisor_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (group.name, group.stage_id, group.governorate_id, group.notes,
-                 group.session_price, group.monthly_fee, group.supervisor_id)
+                """INSERT INTO groups (name, stage_id, governorate_id, notes, monthly_fee)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (group.name, group.stage_id, group.governorate_id, group.notes, group.monthly_fee)
             )
         except Exception:
             raise HTTPException(status_code=400, detail="المجموعة دي موجودة بالفعل في نفس المرحلة والمحافظة")
 
         group_id = cur.lastrowid
+
+        if group.supervisor_ids:
+            _set_group_supervisors(conn, group_id, group.supervisor_ids)
 
         # إضافة مواعيد المجموعة (لو حددها الأدمن) - تتسجل في جدول المواعيد العام تلقائيًا
         if group.schedule_slots:
@@ -875,13 +913,16 @@ def add_group(group: GroupIn, session=Depends(require_roles("admin"))):
 def update_group(group_id: int, group: GroupIn, session=Depends(require_roles("admin"))):
     with get_connection() as conn:
         result = conn.execute(
-            """UPDATE groups SET name=?, stage_id=?, governorate_id=?, notes=?, session_price=?, monthly_fee=?, supervisor_id=?
+            """UPDATE groups SET name=?, stage_id=?, governorate_id=?, notes=?, monthly_fee=?
                WHERE id=?""",
             (group.name, group.stage_id, group.governorate_id, group.notes,
-             group.session_price, group.monthly_fee, group.supervisor_id, group_id)
+             group.monthly_fee, group_id)
         )
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="المجموعة غير موجودة")
+
+        if group.supervisor_ids is not None:
+            _set_group_supervisors(conn, group_id, group.supervisor_ids)
 
         # لو الأدمن بعت مواعيد للمجموعة، نمسح القديم المرتبط بيها ونسجل الجديد
         # (عشان تظهر صح في "جدول المواعيد" عند المدرس وباقي الأدوار)
@@ -912,20 +953,13 @@ def set_group_monthly_fee(group_id: int, payload: MonthlyFeeIn, session=Depends(
 
 @app.put("/api/groups/{group_id}/supervisor")
 def assign_supervisor(group_id: int, data: AssignSupervisorIn, session=Depends(require_roles("admin"))):
-    """تعيين أو تغيير المشرف المسؤول عن مجموعة معينة"""
+    """تعيين مشرف أو أكتر من مشرف مسؤول عن مجموعة معينة (قايمة فاضية = شيل كل المشرفين)"""
     with get_connection() as conn:
-        if data.supervisor_id is not None:
-            sup = conn.execute(
-                "SELECT id FROM users WHERE id=? AND role='supervisor'", (data.supervisor_id,)
-            ).fetchone()
-            if not sup:
-                raise HTTPException(status_code=404, detail="المشرف غير موجود")
-        result = conn.execute(
-            "UPDATE groups SET supervisor_id=? WHERE id=?", (data.supervisor_id, group_id)
-        )
-        if result.rowcount == 0:
+        grp = conn.execute("SELECT id FROM groups WHERE id=?", (group_id,)).fetchone()
+        if not grp:
             raise HTTPException(status_code=404, detail="المجموعة غير موجودة")
-        return {"message": "تم تحديث المشرف المسؤول عن المجموعة"}
+        _set_group_supervisors(conn, group_id, data.supervisor_ids)
+        return {"message": "تم تحديث المشرفين المسؤولين عن المجموعة"}
 
 
 @app.delete("/api/groups/{group_id}")
@@ -956,7 +990,7 @@ def search_students(q: str = "", session=Depends(require_roles("admin", "head_su
         """
         params = [f"%{q}%", q.strip(), q.strip()]
         if session["role"] == "supervisor":
-            query += " AND g.supervisor_id = ?"
+            query += " AND g.id IN (SELECT group_id FROM group_supervisors WHERE supervisor_id = ?)"
             params.append(session["id"])
         query += " ORDER BY s.full_name LIMIT 20"
 
@@ -1018,7 +1052,7 @@ def get_students(group_id: Optional[int] = None, stage_id: Optional[int] = None,
         params.append(governorate_id)
 
     if session["role"] == "supervisor":
-        query += " AND g.supervisor_id = ?"
+        query += " AND g.id IN (SELECT group_id FROM group_supervisors WHERE supervisor_id = ?)"
         params.append(session["id"])
     elif session["role"] == "student":
         query += " AND s.id = ?"
@@ -1212,7 +1246,8 @@ def get_users(role: Optional[str] = None, session=Depends(require_roles("admin",
             d = dict(r)
             if d["role"] == "supervisor":
                 groups = conn.execute(
-                    "SELECT id, name FROM groups WHERE supervisor_id=?", (d["id"],)
+                    "SELECT g.id, g.name FROM groups g JOIN group_supervisors gs ON gs.group_id=g.id WHERE gs.supervisor_id=?",
+                    (d["id"],)
                 ).fetchall()
                 d["groups"] = [dict(g) for g in groups]
             result.append(d)
@@ -1294,7 +1329,7 @@ def delete_user(user_id: int, session=Depends(require_roles("admin"))):
         user = conn.execute("SELECT id FROM users WHERE id=? AND role != 'admin'", (user_id,)).fetchone()
         if not user:
             raise HTTPException(status_code=404, detail="المستخدم غير موجود")
-        conn.execute("UPDATE groups SET supervisor_id=NULL WHERE supervisor_id=?", (user_id,))
+        conn.execute("DELETE FROM group_supervisors WHERE supervisor_id=?", (user_id,))
         conn.execute("DELETE FROM users WHERE id=?", (user_id,))
         return {"message": "تم حذف المستخدم"}
 
@@ -1316,7 +1351,7 @@ def get_schedule(session=Depends(get_current_session)):
         """
         params = []
         if session["role"] == "supervisor":
-            query += " AND (sc.group_id IS NULL OR sc.group_id IN (SELECT id FROM groups WHERE supervisor_id=?))"
+            query += " AND (sc.group_id IS NULL OR sc.group_id IN (SELECT group_id FROM group_supervisors WHERE supervisor_id=?))"
             params.append(session["id"])
         elif session["role"] == "student":
             query += " AND (sc.group_id IS NULL OR sc.group_id = ?)"
@@ -2056,13 +2091,13 @@ def get_quizzes(group_id: Optional[int] = None, stage_id: Optional[int] = None,
     with get_connection() as conn:
         if session["role"] == "supervisor":
             my_stage_ids = [r["stage_id"] for r in conn.execute(
-                "SELECT DISTINCT stage_id FROM groups WHERE supervisor_id=?", (session["id"],)
+                "SELECT DISTINCT g.stage_id FROM groups g JOIN group_supervisors gs ON gs.group_id=g.id WHERE gs.supervisor_id=?", (session["id"],)
             ).fetchall()]
             my_stage_ids = my_stage_ids or [-1]
             placeholders = ",".join("?" * len(my_stage_ids))
             query += f""" AND (
                 (q.group_id IS NULL AND q.stage_id IS NULL)
-                OR q.group_id IN (SELECT id FROM groups WHERE supervisor_id=?)
+                OR q.group_id IN (SELECT group_id FROM group_supervisors WHERE supervisor_id=?)
                 OR q.stage_id IN ({placeholders})
             )"""
             params.append(session["id"])
@@ -2177,7 +2212,7 @@ def get_quiz_scores(quiz_id: int, session=Depends(get_current_session)):
             """
             params = [quiz_id, quiz["stage_id"]]
             if session["role"] == "supervisor":
-                base_query += " AND s.group_id IN (SELECT id FROM groups WHERE supervisor_id=?)"
+                base_query += " AND s.group_id IN (SELECT group_id FROM group_supervisors WHERE supervisor_id=?)"
                 params.append(session["id"])
             elif session["role"] == "student":
                 base_query += " AND s.id = ?"
@@ -2195,7 +2230,7 @@ def get_quiz_scores(quiz_id: int, session=Depends(get_current_session)):
             """
             params = [quiz_id]
             if session["role"] == "supervisor":
-                base_query += " AND s.group_id IN (SELECT id FROM groups WHERE supervisor_id=?)"
+                base_query += " AND s.group_id IN (SELECT group_id FROM group_supervisors WHERE supervisor_id=?)"
                 params.append(session["id"])
             elif session["role"] == "student":
                 base_query += " AND s.id = ?"
@@ -2306,7 +2341,7 @@ def get_attendance_by_date(session_date: str, group_id: Optional[int] = None,
             params.append(group_id)
 
         if session["role"] == "supervisor":
-            query += " AND s.group_id IN (SELECT id FROM groups WHERE supervisor_id=?)"
+            query += " AND s.group_id IN (SELECT group_id FROM group_supervisors WHERE supervisor_id=?)"
             params.append(session["id"])
         elif session["role"] == "student":
             query += " AND s.id = ?"
@@ -2634,7 +2669,7 @@ def get_payments(group_id: Optional[int] = None, month: Optional[str] = None,
             query += " AND s.group_id = ?"
             params.append(group_id)
         if session["role"] == "supervisor":
-            query += " AND s.group_id IN (SELECT id FROM groups WHERE supervisor_id=?)"
+            query += " AND s.group_id IN (SELECT group_id FROM group_supervisors WHERE supervisor_id=?)"
             params.append(session["id"])
         query += " ORDER BY s.full_name"
 
@@ -2812,12 +2847,14 @@ def get_monthly_report(student_id: int, month: str, session=Depends(get_current_
     with get_connection() as conn:
         student = conn.execute("""
             SELECT s.*, g.name as group_name, st.name as stage_name, gov.name as governorate_name,
-                   u.full_name as supervisor_name, u.phone as supervisor_phone
+                   (SELECT GROUP_CONCAT(u.full_name, '، ') FROM group_supervisors gs
+                      JOIN users u ON u.id = gs.supervisor_id WHERE gs.group_id = g.id) as supervisor_name,
+                   (SELECT u2.phone FROM group_supervisors gs2 JOIN users u2 ON u2.id = gs2.supervisor_id
+                      WHERE gs2.group_id = g.id ORDER BY gs2.supervisor_id LIMIT 1) as supervisor_phone
             FROM students s
             JOIN groups g ON g.id = s.group_id
             JOIN stages st ON st.id = g.stage_id
             JOIN governorates gov ON gov.id = g.governorate_id
-            LEFT JOIN users u ON u.id = g.supervisor_id
             WHERE s.id = ?
         """, (student_id,)).fetchone()
         if not student:
@@ -2890,7 +2927,7 @@ def get_homework(group_id: Optional[int] = None, session=Depends(get_current_ses
             query += " AND h.group_id = ?"
             params.append(group_id)
         if session["role"] == "supervisor":
-            query += " AND g.supervisor_id = ?"
+            query += " AND g.id IN (SELECT group_id FROM group_supervisors WHERE supervisor_id = ?)"
             params.append(session["id"])
         elif session["role"] == "student":
             query += " AND h.group_id = ?"
@@ -3105,12 +3142,16 @@ def create_student_request(data: StudentRequestIn, session=Depends(get_current_s
         request_id = cur.lastrowid
 
         group = conn.execute("SELECT * FROM groups WHERE id=?", (session["group_id"],)).fetchone()
-        if group and group["supervisor_id"]:
-            create_user_notification(
-                conn, group["supervisor_id"],
-                f"طلب جديد من الطالب {session['full_name']}",
-                REQUEST_TYPE_LABELS.get(data.request_type, data.request_type)
-            )
+        if group:
+            sup_ids = [r["supervisor_id"] for r in conn.execute(
+                "SELECT supervisor_id FROM group_supervisors WHERE group_id=?", (group["id"],)
+            ).fetchall()]
+            for sup_id in sup_ids:
+                create_user_notification(
+                    conn, sup_id,
+                    f"طلب جديد من الطالب {session['full_name']}",
+                    REQUEST_TYPE_LABELS.get(data.request_type, data.request_type)
+                )
         return {"message": "تم إرسال طلبك لمشرف مجموعتك", "id": request_id}
 
 
@@ -3221,7 +3262,8 @@ def get_stats_overview(session=Depends(require_roles("admin", "teacher", "head_s
         # أداء كل مجموعة: متوسط الدرجات + نسبة الحضور + عدد الطلاب
         groups_overview = conn.execute("""
             SELECT g.id, g.name, st.name as stage_name, gov.name as governorate_name,
-                   u.full_name as supervisor_name,
+                   (SELECT GROUP_CONCAT(u.full_name, '، ') FROM group_supervisors gs
+                      JOIN users u ON u.id = gs.supervisor_id WHERE gs.group_id = g.id) as supervisor_name,
                    (SELECT COUNT(*) FROM students s WHERE s.group_id=g.id AND s.is_active=1) as students_count,
                    (SELECT AVG(qs.score * 100.0 / q.max_score)
                       FROM quiz_scores qs JOIN quizzes q ON q.id=qs.quiz_id
@@ -3233,7 +3275,6 @@ def get_stats_overview(session=Depends(require_roles("admin", "teacher", "head_s
             FROM groups g
             JOIN stages st ON st.id=g.stage_id
             JOIN governorates gov ON gov.id=g.governorate_id
-            LEFT JOIN users u ON u.id=g.supervisor_id
             ORDER BY avg_score_percent DESC NULLS LAST
         """).fetchall()
         groups_overview = [dict(r) for r in groups_overview]
@@ -3434,7 +3475,9 @@ def get_stage_overview(stage_id: int, governorate_id: Optional[int] = None,
         outer_params = base_params()
 
         groups_ranking = conn.execute(f"""
-            SELECT g.id, g.name, gov.name as governorate_name, u.full_name as supervisor_name,
+            SELECT g.id, g.name, gov.name as governorate_name,
+                   (SELECT GROUP_CONCAT(u.full_name, '، ') FROM group_supervisors gs
+                      JOIN users u ON u.id = gs.supervisor_id WHERE gs.group_id = g.id) as supervisor_name,
                    (SELECT COUNT(*) FROM students s WHERE s.group_id=g.id AND s.is_active=1) as students_count,
                    (SELECT AVG(qs.score*100.0/q.max_score) FROM quiz_scores qs
                       JOIN quizzes q ON q.id=qs.quiz_id AND q.max_score>0
@@ -3448,7 +3491,6 @@ def get_stage_overview(stage_id: int, governorate_id: Optional[int] = None,
                       WHERE h.group_id=g.id{g_hw_clause}) as commitment_rate
             FROM groups g
             JOIN governorates gov ON gov.id=g.governorate_id
-            LEFT JOIN users u ON u.id=g.supervisor_id
             WHERE g.stage_id=?{gov_filter_sql}
             ORDER BY avg_score_percent DESC NULLS LAST
         """, g_score_params + g_att_params + g_hw_params + outer_params).fetchall()
@@ -3541,12 +3583,12 @@ def get_group_detail(group_id: int, date_from: Optional[str] = None, date_to: Op
     with get_connection() as conn:
         group = conn.execute("""
             SELECT g.id, g.name, g.stage_id, st.name as stage_name, gov.name as governorate_name,
-                   u.full_name as supervisor_name,
+                   (SELECT GROUP_CONCAT(u.full_name, '، ') FROM group_supervisors gs
+                      JOIN users u ON u.id = gs.supervisor_id WHERE gs.group_id = g.id) as supervisor_name,
                    (SELECT COUNT(*) FROM students s WHERE s.group_id=g.id AND s.is_active=1) as students_count
             FROM groups g
             JOIN stages st ON st.id=g.stage_id
             JOIN governorates gov ON gov.id=g.governorate_id
-            LEFT JOIN users u ON u.id=g.supervisor_id
             WHERE g.id=?
         """, (group_id,)).fetchone()
         if not group:

@@ -2360,7 +2360,7 @@ async function renderGroupsPage(){
     </div>
     <div class="table-card">
       <div class="table-wrap"><table>
-        <thead><tr><th>المجموعة</th><th>المرحلة</th><th>المحافظة</th><th>المشرف المسؤول</th><th>عدد الطلاب</th><th>سعر الحصة</th>${canManage?'<th></th>':''}</tr></thead>
+        <thead><tr><th>المجموعة</th><th>المرحلة</th><th>المحافظة</th><th>المشرف المسؤول</th><th>عدد الطلاب</th><th>قيمة الاشتراك الشهري</th>${canManage?'<th></th>':''}</tr></thead>
         <tbody>
           ${groups.map(g=>`
             <tr>
@@ -2369,10 +2369,10 @@ async function renderGroupsPage(){
               <td>${g.governorate_name}</td>
               <td>${g.supervisor_name ? `<span class="badge badge-amber">${g.supervisor_name}</span>` : `<span class="badge badge-gray">بدون مشرف</span>`}</td>
               <td>${g.students_count}</td>
-              <td>${g.session_price ? g.session_price + " ج" : "—"}</td>
+              <td>${g.monthly_fee ? g.monthly_fee + " ج/شهر" : "—"}</td>
               ${canManage ? `
               <td class="td-actions">
-                <button class="action-btn" title="تعيين مشرف" onclick="openAssignSupervisorModal(${g.id}, ${g.supervisor_id||'null'})"><i data-lucide="shield-check" style="width:15px;height:15px;"></i></button>
+                <button class="action-btn" title="تعيين مشرفين" onclick='openAssignSupervisorModal(${g.id}, ${JSON.stringify(g.supervisor_ids||[])})'><i data-lucide="shield-check" style="width:15px;height:15px;"></i></button>
                 <span class="act-divider"></span>
                 <button class="act-btn act-edit" title="تعديل بيانات المجموعة" onclick="openEditGroupModal(${g.id})"><i data-lucide="pencil" style="width:13px;height:13px;"></i>تعديل</button>
                 <button class="act-btn act-del" title="حذف المجموعة نهائيًا" onclick="deleteGroup(${g.id}, '${jsAttr(g.name)}')"><i data-lucide="trash-2" style="width:13px;height:13px;"></i>حذف</button>
@@ -2393,7 +2393,27 @@ function govOptions(selected){
   return CACHE_GOVS.map(g=>`<option value="${g.id}" ${g.id==selected?"selected":""}>${g.name}</option>`).join("");
 }
 function supervisorOptions(selected){
+  // select عادي (اختيار واحد) - باقي مستخدم في أماكن تانية لسه محتاجة اختيار مشرف واحد بس
   return `<option value="">بدون مشرف</option>` + CACHE_SUPERVISORS.map(s=>`<option value="${s.id}" ${s.id==selected?"selected":""}>${escapeHtml(s.full_name)}</option>`).join("");
+}
+function supervisorCheckboxes(selectedIds, namePrefix){
+  // مجموعة checkboxes تسمح باختيار أكتر من مشرف مسؤول عن نفس المجموعة
+  const selected = (selectedIds||[]).map(String);
+  if (!CACHE_SUPERVISORS.length){
+    return `<div class="form-hint">لا يوجد مشرفين مسجّلين حاليًا</div>`;
+  }
+  return `<div class="checkbox-list" id="${namePrefix}_list" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;">
+    ${CACHE_SUPERVISORS.map(s=>`
+      <label style="display:flex;align-items:center;gap:8px;padding:6px 4px;cursor:pointer;">
+        <input type="checkbox" value="${s.id}" ${selected.includes(String(s.id))?"checked":""}>
+        <span>${escapeHtml(s.full_name)}</span>
+      </label>`).join("")}
+  </div>`;
+}
+function getCheckedSupervisorIds(namePrefix){
+  const list = document.getElementById(`${namePrefix}_list`);
+  if (!list) return [];
+  return Array.from(list.querySelectorAll('input[type="checkbox"]:checked')).map(cb=>parseInt(cb.value));
 }
 
 /* =====================================================================
@@ -2482,11 +2502,8 @@ async function openAddGroupModal(){
         ${renderSearchableSelect("f_g_gov", CACHE_GOVS, null, "دوس واكتب اسم المحافظة...")}
       </div>
     </div>
-    <div class="form-row-2">
-      <div class="form-group"><label class="form-label">سعر الحصة</label><input class="form-input" id="f_g_price" type="number" placeholder="جنيه"></div>
-      <div class="form-group"><label class="form-label">قيمة الاشتراك الشهري</label><input class="form-input" id="f_g_fee" type="number" placeholder="جنيه/شهر"></div>
-    </div>
-    <div class="form-group"><label class="form-label">المشرف المسؤول</label><select class="form-select" id="f_g_sup">${supervisorOptions()}</select></div>
+    <div class="form-group"><label class="form-label">قيمة الاشتراك الشهري</label><input class="form-input" id="f_g_fee" type="number" placeholder="جنيه/شهر"></div>
+    <div class="form-group"><label class="form-label">المشرفين المسؤولين</label>${supervisorCheckboxes([], "f_g_sup")}</div>
     <div class="form-group"><label class="form-label">ملاحظات</label><textarea class="form-textarea" id="f_g_notes"></textarea></div>
     <div class="form-group">
       <label class="form-label">مواعيد المجموعة (الأيام والأوقات)</label>
@@ -2570,9 +2587,8 @@ async function submitAddGroup(){
     name,
     stage_id: parseInt(document.getElementById("f_g_stage").value),
     governorate_id: parseInt(governorate_id),
-    session_price: parseFloat(document.getElementById("f_g_price").value) || null,
     monthly_fee: parseFloat(document.getElementById("f_g_fee").value) || null,
-    supervisor_id: document.getElementById("f_g_sup").value ? parseInt(document.getElementById("f_g_sup").value) : null,
+    supervisor_ids: getCheckedSupervisorIds("f_g_sup"),
     notes: document.getElementById("f_g_notes").value.trim() || null,
     schedule_slots: validSlots.length ? validSlots : null,
   };
@@ -2600,11 +2616,8 @@ async function openEditGroupModal(id){
         ${renderSearchableSelect("f_g_gov", CACHE_GOVS, g.governorate_id, "دوس واكتب اسم المحافظة...")}
       </div>
     </div>
-    <div class="form-row-2">
-      <div class="form-group"><label class="form-label">سعر الحصة</label><input class="form-input" id="f_g_price" type="number" value="${g.session_price||''}"></div>
-      <div class="form-group"><label class="form-label">قيمة الاشتراك الشهري</label><input class="form-input" id="f_g_fee" type="number" value="${g.monthly_fee||''}"></div>
-    </div>
-    <div class="form-group"><label class="form-label">المشرف المسؤول</label><select class="form-select" id="f_g_sup">${supervisorOptions(g.supervisor_id)}</select></div>
+    <div class="form-group"><label class="form-label">قيمة الاشتراك الشهري</label><input class="form-input" id="f_g_fee" type="number" value="${g.monthly_fee||''}"></div>
+    <div class="form-group"><label class="form-label">المشرفين المسؤولين</label>${supervisorCheckboxes(g.supervisor_ids||[], "f_g_sup")}</div>
     <div class="form-group"><label class="form-label">ملاحظات</label><textarea class="form-textarea" id="f_g_notes">${escapeHtml(g.notes||'')}</textarea></div>
     <div class="form-group">
       <label class="form-label">مواعيد المجموعة (الأيام والأوقات)</label>
@@ -2630,9 +2643,8 @@ async function submitEditGroup(id){
     name: document.getElementById("f_g_name").value.trim(),
     stage_id: parseInt(document.getElementById("f_g_stage").value),
     governorate_id: parseInt(governorate_id),
-    session_price: parseFloat(document.getElementById("f_g_price").value) || null,
     monthly_fee: parseFloat(document.getElementById("f_g_fee").value) || null,
-    supervisor_id: document.getElementById("f_g_sup").value ? parseInt(document.getElementById("f_g_sup").value) : null,
+    supervisor_ids: getCheckedSupervisorIds("f_g_sup"),
     notes: document.getElementById("f_g_notes").value.trim() || null,
     schedule_slots: validSlots,
   };
@@ -2642,12 +2654,12 @@ async function submitEditGroup(id){
   renderGroupsPage();
 }
 
-function openAssignSupervisorModal(groupId, currentSupId){
-  openModal("تعيين المشرف المسؤول", `
+function openAssignSupervisorModal(groupId, currentSupIds){
+  openModal("تعيين المشرفين المسؤولين", `
     <div class="form-group">
-      <label class="form-label">اختار المشرف المسؤول عن المجموعة دي</label>
-      <select class="form-select" id="f_assign_sup">${supervisorOptions(currentSupId)}</select>
-      <div class="form-hint">المشرف هيقدر بس يشوف ويتعامل مع المجموعة دي ومش هيقدر يشوف أي مجموعة تانية.</div>
+      <label class="form-label">اختار مشرف واحد أو أكتر مسؤولين عن المجموعة دي</label>
+      ${supervisorCheckboxes(currentSupIds||[], "f_assign_sup")}
+      <div class="form-hint">كل مشرف من اللي هتحددهم هيقدر يشوف ويتعامل مع المجموعة دي بس، ومش هيقدر يشوف أي مجموعة تانية.</div>
     </div>
   `, `
     <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
@@ -2656,9 +2668,9 @@ function openAssignSupervisorModal(groupId, currentSupId){
 }
 
 async function submitAssignSupervisor(groupId){
-  const val = document.getElementById("f_assign_sup").value;
-  await api(`/api/groups/${groupId}/supervisor`, {method:"PUT", body: JSON.stringify({supervisor_id: val?parseInt(val):null})});
-  showToast("تم تحديث المشرف المسؤول", "success");
+  const supervisor_ids = getCheckedSupervisorIds("f_assign_sup");
+  await api(`/api/groups/${groupId}/supervisor`, {method:"PUT", body: JSON.stringify({supervisor_ids})});
+  showToast("تم تحديث المشرفين المسؤولين", "success");
   closeOverlay("genericModal");
   renderGroupsPage();
 }

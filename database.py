@@ -359,6 +359,33 @@ def init_db():
         _safe_alter(cur, "ALTER TABLE groups ADD COLUMN session_price REAL")
         _safe_alter(cur, "ALTER TABLE groups ADD COLUMN monthly_fee REAL DEFAULT 0")
         _safe_alter(cur, "ALTER TABLE groups ADD COLUMN supervisor_id INTEGER REFERENCES users(id)")
+        # ملحوظة: عمود session_price و supervisor_id فوق باقيين في الجدول للتوافق مع نسخ
+        # قديمة من قاعدة البيانات، لكن النظام بقى مايستخدمهمش؛ سعر الحصة اتشال من واجهة
+        # تعيين المجموعة، والمشرف المسؤول بقى بيتسجل في جدول group_supervisors تحت
+        # عشان تقدر تعيّن أكتر من مشرف لنفس المجموعة.
+
+        # ---------------------------------------------------------------
+        # جدول ربط المجموعات بالمشرفين - Many-to-Many
+        # (ممكن يبقى للمجموعة الواحدة أكتر من مشرف مسؤول عنها)
+        # ---------------------------------------------------------------
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS group_supervisors (
+            group_id INTEGER NOT NULL,
+            supervisor_id INTEGER NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (group_id, supervisor_id),
+            FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+            FOREIGN KEY (supervisor_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_group_supervisors_supervisor ON group_supervisors(supervisor_id)")
+
+        # ترحيل تلقائي: أي مجموعة كان ليها مشرف واحد مسجل في العمود القديم groups.supervisor_id
+        # (من نسخة سابقة من النظام) بننقله لجدول group_supervisors الجديد لو لسه مش موجود فيه
+        cur.execute("""
+            INSERT OR IGNORE INTO group_supervisors (group_id, supervisor_id)
+            SELECT id, supervisor_id FROM groups WHERE supervisor_id IS NOT NULL
+        """)
 
         # جدول الطلاب - كل طالب تابع لمجموعة معينة + كود دخول خاص بيه
         cur.execute("""
