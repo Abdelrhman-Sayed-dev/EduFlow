@@ -6620,16 +6620,14 @@ function buildMonthlyReportHtmlDoc(d, studentName, opts){
       @page { size: A4; margin: 14mm 12mm; }
       *{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;color-adjust:exact;}
       :root{
-        --ink:#1E2A3A; --muted:#64748B; --line:#E7EAF3;
-        --primary:#4457E8; --primary-soft:#EEF1FD;
-        --green:#1FA971; --green-soft:#EAF8F1;
-        --amber:#C98A15; --amber-soft:#FBF3E4;
-        --red:#D2564D; --red-soft:#FCEEEC;
-        --page-bg:#F3F5FA;
+        --ink:#2E2D29; --muted:#8A8778; --line:#E6E3DC;
+        --primary:#3E7CB1; --primary-soft:#EFF5FA;
+        --neutral-soft:#F2F1ED;
+        --page-bg:#FAF9F6;
       }
       body{font-family:'Cairo','Segoe UI',sans-serif;color:var(--ink);margin:0;padding:0;background:var(--page-bg);}
       .report-page{max-width:820px;margin:0 auto;padding:22px 26px 30px;}
-      .card{background:#fff;border-radius:16px;box-shadow:0 1px 3px rgba(30,42,58,.06);border:1px solid var(--line);}
+      .card{background:#fff;border-radius:14px;border:1px solid var(--line);}
 
       /* هيدر التقرير */
       .rpt-header{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:18px 22px;margin-bottom:16px;}
@@ -6639,8 +6637,8 @@ function buildMonthlyReportHtmlDoc(d, studentName, opts){
       .rpt-title{font-size:17px;font-weight:800;color:var(--ink);}
       .rpt-subtitle{font-size:12px;color:var(--muted);margin-top:2px;}
       .rpt-header-right{display:flex;gap:10px;}
-      .rpt-chip{text-align:center;background:var(--primary-soft);border-radius:12px;padding:8px 14px;min-width:120px;}
-      .rpt-chip .chip-label{font-size:10.5px;color:var(--primary);display:flex;align-items:center;justify-content:center;gap:4px;font-weight:700;}
+      .rpt-chip{text-align:center;background:var(--neutral-soft);border-radius:12px;padding:8px 14px;min-width:120px;}
+      .rpt-chip .chip-label{font-size:10.5px;color:var(--muted);display:flex;align-items:center;justify-content:center;gap:4px;font-weight:700;}
       .rpt-chip .chip-label svg{width:12px;height:12px;}
       .rpt-chip .chip-value{font-size:12.5px;font-weight:700;color:var(--ink);margin-top:3px;}
       .rpt-chip .chip-sub{font-size:10px;color:var(--muted);margin-top:1px;direction:ltr;}
@@ -6648,7 +6646,7 @@ function buildMonthlyReportHtmlDoc(d, studentName, opts){
       /* شبكة المعلومات */
       .info-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:16px;margin-bottom:16px;}
       .info-item{text-align:center;padding:6px 4px;}
-      .info-item .ic{width:30px;height:30px;border-radius:50%;background:var(--primary-soft);color:var(--primary);display:flex;align-items:center;justify-content:center;margin:0 auto 6px;}
+      .info-item .ic{width:30px;height:30px;border-radius:50%;background:var(--neutral-soft);color:var(--muted);display:flex;align-items:center;justify-content:center;margin:0 auto 6px;}
       .info-item .ic svg{width:15px;height:15px;}
       .info-item .lbl{font-size:10.5px;color:var(--muted);margin-bottom:2px;}
       .info-item .val{font-size:12.5px;font-weight:700;color:var(--ink);}
@@ -6662,27 +6660,24 @@ function buildMonthlyReportHtmlDoc(d, studentName, opts){
       .perf-card .lbl{font-size:10.5px;color:var(--muted);margin-top:6px;}
       .perf-card .val{font-size:19px;font-weight:800;}
       .ring{width:56px;height:56px;border-radius:50%;margin:0 auto;display:flex;align-items:center;justify-content:center;position:relative;
-            background:conic-gradient(var(--primary) ${ringDeg}deg, var(--primary-soft) ${ringDeg}deg);}
+            background:conic-gradient(var(--primary) ${ringDeg}deg, var(--neutral-soft) ${ringDeg}deg);}
       .ring-inner{width:44px;height:44px;border-radius:50%;background:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:var(--primary);}
-      .stat-ic{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto;}
+      .stat-ic{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto;background:var(--neutral-soft);color:var(--muted);}
       .stat-ic svg{width:17px;height:17px;}
-      .ic-amber{background:var(--amber-soft);color:var(--amber);}
-      .ic-red{background:var(--red-soft);color:var(--red);}
-      .ic-green{background:var(--green-soft);color:var(--green);}
 
       table{width:100%;border-collapse:collapse;font-size:12.5px;}
       th,td{padding:9px 10px;text-align:center;border-bottom:1px solid var(--line);}
-      th{background:#FAFBFD;font-weight:700;color:var(--muted);font-size:11px;}
+      th{background:#FAFAF8;font-weight:700;color:var(--muted);font-size:11px;}
       td:first-child, th:first-child{text-align:right;}
       tr:last-child td{border-bottom:none;}
       .table-card{padding:4px 14px 8px;overflow:hidden;}
 
-      .badge{padding:3px 11px;border-radius:99px;font-size:10.5px;font-weight:700;display:inline-block;}
-      .b-present{background:var(--green-soft);color:var(--green);} .b-absent{background:var(--red-soft);color:var(--red);}
-      .b-late{background:var(--amber-soft);color:var(--amber);} .b-excused{background:var(--primary-soft);color:var(--primary);}
+      .badge{padding:3px 11px;border-radius:99px;font-size:10.5px;font-weight:700;display:inline-block;border:1px solid var(--line);}
+      .b-present{background:var(--neutral-soft);color:#4F7A5C;} .b-absent{background:var(--neutral-soft);color:#A5564C;}
+      .b-late{background:var(--neutral-soft);color:#A17A2E;} .b-excused{background:var(--neutral-soft);color:var(--primary);}
 
       .rec-card{display:flex;gap:12px;padding:16px 18px;margin-top:16px;}
-      .rec-ic{width:34px;height:34px;border-radius:10px;background:var(--primary-soft);color:var(--primary);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+      .rec-ic{width:34px;height:34px;border-radius:10px;background:var(--neutral-soft);color:var(--primary);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
       .rec-ic svg{width:16px;height:16px;}
       .rec-title{font-size:12.5px;font-weight:800;margin-bottom:4px;}
       .rec-text{font-size:11.5px;color:var(--muted);line-height:1.7;}
