@@ -761,7 +761,18 @@ async function api(path, options={}){
 }
 
 function openOverlay(id){ document.getElementById(id).classList.add("open"); icons(); }
-function closeOverlay(id){ document.getElementById(id).classList.remove("open"); }
+function closeOverlay(id){
+  const el = document.getElementById(id);
+  el.classList.remove("open");
+  // إيقاف أي فيديو أو رابط خارجي (iframe) شغال جوه المودال ده - لو قفلنا المودال
+  // من غير ما نعمل بوز، الفيديو أو الصوت كان بيفضل شغال في الخلفية من غير ما يبان
+  el.querySelectorAll("video").forEach(v => {
+    try { v.pause(); v.removeAttribute("src"); v.load(); } catch(e){}
+  });
+  el.querySelectorAll("iframe").forEach(f => {
+    try { f.src = "about:blank"; } catch(e){}
+  });
+}
 
 function openModal(titleHtml, bodyHtml, footerHtml, opts){
   const modal = document.getElementById("genericModalBody");
@@ -4513,8 +4524,8 @@ function renderAttendanceSessionShell(groupId, groupName, sn, isOpen){
               oninput="onQuickAttCodeInput('${key}')"
               onkeydown="if(event.key==='Enter'){event.preventDefault();submitQuickAttendance(${groupId}, ${sn}, 'present');}">
           </div>
-          <button class="btn btn-primary" onclick="submitQuickAttendance(${groupId}, ${sn}, 'present')"><i data-lucide="check" style="width:14px;height:14px;"></i> تسجيل حضور بالكود</button>
-          <button class="btn" style="background:var(--danger-bg);color:var(--danger);" onclick="submitQuickAttendance(${groupId}, ${sn}, 'absent')"><i data-lucide="x" style="width:14px;height:14px;"></i> تسجيل غياب بالكود</button>
+          <button class="btn btn-primary" onclick="submitQuickAttendance(${groupId}, ${sn}, 'present')"><i data-lucide="check" style="width:14px;height:14px;"></i> تسجيل حضور</button>
+          <button class="btn" style="background:var(--danger-bg);color:var(--danger);" onclick="submitQuickAttendance(${groupId}, ${sn}, 'absent')"><i data-lucide="x" style="width:14px;height:14px;"></i> تسجيل غياب</button>
           <button class="btn btn-ghost" title="يعلّم كل الطلاب اللي لسه من غير حالة كـ حاضر" onclick="markAllPresent(${groupId}, ${sn})"><i data-lucide="check-check" style="width:14px;height:14px;"></i> تحديد الكل حاضر</button>
         </div>
         <div id="quick_att_profile_${key}" style="padding:10px 16px 0;"></div>
@@ -4603,10 +4614,21 @@ async function previewStudentByCode(key){
   const input = document.getElementById(`quick_att_code_${key}`);
   const profileEl = document.getElementById(`quick_att_profile_${key}`);
   if (!input || !profileEl) return;
-  const code = input.value.trim();
-  if (!code){ profileEl.innerHTML = ""; return; }
+  const query = input.value.trim();
+  if (!query){ profileEl.innerHTML = ""; return; }
+  // لو المكتوب مطابق لكود طالب بالظبط، أو مطابق لاسم طالب واحد بس في نفس
+  // الحصة، بنجيب بروفايله - مش الكود بس زي الأول
+  const rows = ATT_ROWS_CACHE_BY_SESSION[key] || [];
+  const q = query.toLowerCase();
+  let match = rows.find(r => (r.attendance_code||"").toLowerCase() === q);
+  if (!match){
+    const nameMatches = rows.filter(r => (r.full_name||"").toLowerCase().includes(q));
+    if (nameMatches.length === 1) match = nameMatches[0];
+  }
+  const lookupCode = match ? match.attendance_code : query;
+  if (!lookupCode){ profileEl.innerHTML = ""; return; }
   try{
-    const s = await api(`/api/students/find-by-code?code=${encodeURIComponent(code)}`);
+    const s = await api(`/api/students/find-by-code?code=${encodeURIComponent(lookupCode)}`);
     profileEl.innerHTML = renderStudentQuickProfileCard(s);
     icons();
   }catch(e){
@@ -4696,23 +4718,60 @@ async function submitQuickAttendance(groupId, sn, status){
   status = status || "present";
   const key = `${groupId}_${sn}`;
   const codeInput = document.getElementById(`quick_att_code_${key}`);
-  const code = codeInput.value.trim();
+  const query = codeInput.value.trim();
   const date = todayStr();
   const resultEl = document.getElementById(`quick_att_result_${key}`);
-  if (!code){ showToast("لازم تكتب كود الطالب", "error"); return; }
+  if (!query){ showToast("لازم تكتب اسم الطالب أو كود الحضور أو رقم الهاتف", "error"); return; }
   const sessionLabel = ATT_SESSION_NAMES[sn] || sn;
-  try{
-    const res = await api("/api/attendance/by-code", {method:"POST", body: JSON.stringify({access_code: code, session_date: date, status, session_number: sn})});
-    const unpaidWarning = res.subscription_paid ? "" : ` <span class="badge badge-red"><i data-lucide="alert-triangle" style="width:11px;height:11px;"></i> مش مسدد الاشتراك</span>`;
-    resultEl.innerHTML = `<span class="badge ${status==='present'?'badge-green':'badge-red'}"><i data-lucide="${status==='present'?'check':'x'}" style="width:12px;height:12px;"></i> "${escapeHtml(res.student_name)}" - ${ATT_LABELS[status]} - الحصة ${sessionLabel}</span>${unpaidWarning}`;
+  const q = query.toLowerCase();
+
+  // نجرب الأول نلاقي الطالب في جدول الحصة المحمّل حاليًا - بالكود، أو بالاسم،
+  // أو برقم الهاتف - مش بالكود بس (زي ما بيوعد نص الحقل "بالاسم أو كود الحضور
+  // أو رقم الهاتف")
+  const rows = ATT_ROWS_CACHE_BY_SESSION[key] || [];
+  let matches = rows.filter(r => (r.attendance_code||"").toLowerCase() === q);
+  if (!matches.length){
+    matches = rows.filter(r =>
+      (r.full_name||"").toLowerCase().includes(q) ||
+      (query && (r.phone||"").includes(query)) ||
+      (query && (r.parent_phone||"").includes(query))
+    );
+  }
+
+  const showSuccess = (studentName, subscriptionPaid) => {
+    const unpaidWarning = subscriptionPaid ? "" : ` <span class="badge badge-red"><i data-lucide="alert-triangle" style="width:11px;height:11px;"></i> مش مسدد الاشتراك</span>`;
+    resultEl.innerHTML = `<span class="badge ${status==='present'?'badge-green':'badge-red'}"><i data-lucide="${status==='present'?'check':'x'}" style="width:12px;height:12px;"></i> "${escapeHtml(studentName)}" - ${ATT_LABELS[status]} - الحصة ${sessionLabel}</span>${unpaidWarning}`;
     codeInput.value = "";
     codeInput.focus();
     const profileEl = document.getElementById(`quick_att_profile_${key}`);
     if (profileEl) profileEl.innerHTML = "";
     icons();
     loadAttendanceTableForSession(groupId, sn);
+  };
+
+  if (matches.length > 1){
+    resultEl.innerHTML = `<span class="badge badge-amber">في أكتر من طالب مطابق (${matches.length}) - اكتب الاسم كامل أو كود الحضور عشان تحدد الطالب المطلوب بالظبط</span>`;
+    return;
+  }
+
+  if (matches.length === 1){
+    const m = matches[0];
+    try{
+      await api("/api/attendance", {method:"POST", body: JSON.stringify({student_id: m.student_id, session_date: date, status, session_number: sn})});
+      showSuccess(m.full_name, m.subscription_paid);
+    }catch(e){
+      resultEl.innerHTML = `<span class="badge badge-red">حصل خطأ في تسجيل الحضور</span>`;
+    }
+    return;
+  }
+
+  // مفيش تطابق في جدول الحصة المحمّل دلوقتي - نجرب السيرفر بالكود (حالة نادرة:
+  // كود صحيح لطالب مش ظاهر في الجدول الحالي لأي سبب)
+  try{
+    const res = await api("/api/attendance/by-code", {method:"POST", body: JSON.stringify({access_code: query, session_date: date, status, session_number: sn})});
+    showSuccess(res.student_name, res.subscription_paid);
   }catch(e){
-    resultEl.innerHTML = `<span class="badge badge-red">مفيش طالب بالكود ده</span>`;
+    resultEl.innerHTML = `<span class="badge badge-red">مفيش طالب مطابق للاسم أو الكود أو الرقم ده جوه الحصة دي</span>`;
     codeInput.value = "";
     codeInput.focus();
   }
