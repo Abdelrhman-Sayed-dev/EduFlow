@@ -389,7 +389,6 @@ tbody tr:hover{background:var(--primary-10);}
 html, body{max-width:100%;overflow-x:hidden;}
 * {box-sizing:border-box;}
 img, video, table{max-width:100%;}
-.cards-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;}
 .modal-body{overflow-x:hidden;}
 .modal-footer{flex-wrap:wrap;}
 
@@ -533,6 +532,16 @@ body.is-student .bottom-nav, body.is-supervisor .bottom-nav, body.is-teacher .bo
 .video-row{display:flex;align-items:center;gap:12px;padding:12px 8px;border-bottom:1px solid var(--border);}
 .video-row:last-child{border-bottom:none;}
 .video-row-ic{width:38px;height:38px;border-radius:var(--radius-sm);background:var(--primary-10);color:var(--primary);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+
+/* أقسام محتوى الحصة (واجب/سبورات/فيديوهات/كويزات) في صفحة "محتوى مجموعتي
+   بالشهور" - كل قسم صندوق واضح الحدود لوحده بدل الفواصل المنقطة الهزيلة
+   اللي كانت بتخلي القسم يبان زحمة ومقطوعة عن بعض */
+.mc-subsec{background:var(--surface-2);border-radius:var(--radius-md);padding:12px 14px;margin-bottom:10px;}
+.mc-subsec:last-child{margin-bottom:0;}
+.mc-subsec-header{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--text-2);margin-bottom:10px;}
+.mc-subsec-empty{font-size:12px;color:var(--text-3);}
+.mc-hw-box{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
+.mc-hw-tag{font-size:10.5px;font-weight:700;color:var(--primary);background:var(--primary-10);border-radius:99px;padding:2px 9px;flex-shrink:0;}
 </style>
 </head>
 <body>
@@ -1070,7 +1079,6 @@ const NAV_BY_ROLE = {
     {id:"boards", label:"سبورة الحصة", icon:"presentation"},
     {id:"quizzes", label:"الكويزات والامتحانات", icon:"file-check-2"},
     {id:"homework", label:"الواجبات", icon:"clipboard-list"},
-    {id:"student_videos", label:"فيديوهات المجموعة", icon:"video"},
     {id:"attendance", label:"الحضور والغياب", icon:"calendar-check"},
     {id:"monthly_reports", label:"التقرير الشهري", icon:"file-bar-chart"},
     {id:"student_requests", label:"طلبات الطلاب", icon:"inbox"},
@@ -4491,9 +4499,10 @@ function renderAttendanceSessionShell(groupId, groupName, sn, isOpen){
             <label class="form-label">بحث سريع <span style="font-weight:400;color:var(--text-3);">(بالاسم أو كود الحضور أو رقم الهاتف)</span></label>
             <input class="form-input" id="quick_att_code_${key}" placeholder="اكتب أي حاجة: الاسم / الكود / رقم الهاتف..." style="font-family:monospace;" autocomplete="off"
               oninput="onQuickAttCodeInput('${key}')"
-              onkeydown="if(event.key==='Enter'){event.preventDefault();submitQuickAttendance(${groupId}, ${sn});}">
+              onkeydown="if(event.key==='Enter'){event.preventDefault();submitQuickAttendance(${groupId}, ${sn}, 'present');}">
           </div>
-          <button class="btn btn-primary" onclick="submitQuickAttendance(${groupId}, ${sn})"><i data-lucide="check" style="width:14px;height:14px;"></i> تسجيل حضور بالكود</button>
+          <button class="btn btn-primary" onclick="submitQuickAttendance(${groupId}, ${sn}, 'present')"><i data-lucide="check" style="width:14px;height:14px;"></i> تسجيل حضور بالكود</button>
+          <button class="btn" style="background:var(--danger-bg);color:var(--danger);" onclick="submitQuickAttendance(${groupId}, ${sn}, 'absent')"><i data-lucide="x" style="width:14px;height:14px;"></i> تسجيل غياب بالكود</button>
           <button class="btn btn-ghost" title="يعلّم كل الطلاب اللي لسه من غير حالة كـ حاضر" onclick="markAllPresent(${groupId}, ${sn})"><i data-lucide="check-check" style="width:14px;height:14px;"></i> تحديد الكل حاضر</button>
         </div>
         <div id="quick_att_profile_${key}" style="padding:10px 16px 0;"></div>
@@ -4671,11 +4680,11 @@ async function markAllPresent(groupId, sn){
   });
 }
 
-async function submitQuickAttendance(groupId, sn){
+async function submitQuickAttendance(groupId, sn, status){
+  status = status || "present";
   const key = `${groupId}_${sn}`;
   const codeInput = document.getElementById(`quick_att_code_${key}`);
   const code = codeInput.value.trim();
-  const status = "present"; // البحث بالكود بيسجل "حاضر" على طول، وأي حالة تانية (غايب/متأخر...) بتتحدد من جدول الطلاب تحت
   const date = todayStr();
   const resultEl = document.getElementById(`quick_att_result_${key}`);
   if (!code){ showToast("لازم تكتب كود الطالب", "error"); return; }
@@ -4683,7 +4692,7 @@ async function submitQuickAttendance(groupId, sn){
   try{
     const res = await api("/api/attendance/by-code", {method:"POST", body: JSON.stringify({access_code: code, session_date: date, status, session_number: sn})});
     const unpaidWarning = res.subscription_paid ? "" : ` <span class="badge badge-red"><i data-lucide="alert-triangle" style="width:11px;height:11px;"></i> مش مسدد الاشتراك</span>`;
-    resultEl.innerHTML = `<span class="badge badge-green"><i data-lucide="check" style="width:12px;height:12px;"></i> "${escapeHtml(res.student_name)}" - ${ATT_LABELS[status]} - الحصة ${sessionLabel}</span>${unpaidWarning}`;
+    resultEl.innerHTML = `<span class="badge ${status==='present'?'badge-green':'badge-red'}"><i data-lucide="${status==='present'?'check':'x'}" style="width:12px;height:12px;"></i> "${escapeHtml(res.student_name)}" - ${ATT_LABELS[status]} - الحصة ${sessionLabel}</span>${unpaidWarning}`;
     codeInput.value = "";
     codeInput.focus();
     const profileEl = document.getElementById(`quick_att_profile_${key}`);
@@ -5277,11 +5286,8 @@ function openVideoPlayerModal(videoId, title, videoType, externalUrl){
           ? `<iframe src="${embedUrl}" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen style="width:100%;aspect-ratio:16/9;border:0;display:block;"></iframe>`
           : `<div style="padding:40px 20px;text-align:center;color:var(--text-2);">
                <i data-lucide="link" style="width:28px;height:28px;margin-bottom:10px;"></i>
-               <div style="font-size:13px;">مش هينفتح جوه المنصة - افتح الرابط في تاب جديد</div>
+               <div style="font-size:13px;">مش هينفتح جوه المنصة - الرابط ده مش مدعوم للعرض المباشر</div>
              </div>`}
-      </div>
-      <div style="margin-top:12px;text-align:center;">
-        <a href="${escapeHtml(externalUrl)}" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm"><i data-lucide="external-link" style="width:13px;height:13px;"></i> فتح الرابط في تاب جديد</a>
       </div>
     `, `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`,
     { width: "760px" });
@@ -5416,16 +5422,16 @@ function renderMonthlySessionBlock(s, monthIdx){
       </div>
       <div class="collapse-body" id="${bodyId}" style="display:${isOpen?'block':'none'};padding:12px 14px;">
         ${hw ? `
-          <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:10px 12px;margin-bottom:12px;border-right:3px solid var(--primary);">
-            <div style="font-size:11px;font-weight:700;color:var(--text-3);margin-bottom:3px;">الواجب</div>
-            <div style="font-size:13px;color:var(--text);">${escapeHtml(hw.description||'واجب الحصة')}</div>
+          <div class="mc-subsec">
+            <div class="mc-hw-box">
+              <span class="mc-hw-tag">الواجب</span>
+              <span style="font-size:13px;color:var(--text);">${escapeHtml(hw.description||'واجب الحصة')}</span>
+            </div>
             ${hw.submission && hw.submission.notes ? `<div style="font-size:11.5px;color:var(--text-3);margin-top:6px;">ملاحظة مشرفك: ${escapeHtml(hw.submission.notes)}</div>` : ""}
           </div>` : ""}
 
-        <div style="border-top:1px dashed var(--border);padding-top:10px;margin-bottom:${videos.length||s.quizzes.length?'12px':'0'};">
-          <div style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--text-3);margin-bottom:8px;">
-            <i data-lucide="presentation" style="width:13px;height:13px;"></i> سبورات الحصة
-          </div>
+        <div class="mc-subsec">
+          <div class="mc-subsec-header"><i data-lucide="presentation" style="width:13px;height:13px;"></i> سبورات الحصة</div>
           ${s.board_images.length ? `
             <div class="cards-grid">
               ${s.board_images.map((im,i)=>`
@@ -5437,13 +5443,11 @@ function renderMonthlySessionBlock(s, monthIdx){
                   </div>
                 </div>
               `).join("")}
-            </div>` : `<div style="font-size:12px;color:var(--text-3);">لا يوجد صور سبورة للحصة دي لسه</div>`}
+            </div>` : `<div class="mc-subsec-empty">لا يوجد صور سبورة للحصة دي لسه</div>`}
         </div>
 
-        <div style="border-top:1px dashed var(--border);padding-top:10px;margin-bottom:${s.quizzes.length?'12px':'0'};">
-          <div style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--text-3);margin-bottom:8px;">
-            <i data-lucide="video" style="width:13px;height:13px;"></i> فيديوهات شرح الحصة
-          </div>
+        <div class="mc-subsec">
+          <div class="mc-subsec-header"><i data-lucide="video" style="width:13px;height:13px;"></i> فيديوهات شرح الحصة</div>
           ${videos.length ? videos.map(v=>`
             <div class="video-row">
               <div class="video-row-ic"><i data-lucide="${v.video_type==='link'?'link':'video'}" style="width:18px;height:18px;"></i></div>
@@ -5453,10 +5457,14 @@ function renderMonthlySessionBlock(s, monthIdx){
               </div>
               <button class="btn btn-primary btn-sm" onclick="openVideoPlayerModal(${v.id}, '${jsAttr(v.title)}', '${v.video_type||'upload'}', '${jsAttr(v.external_url||'')}')"><i data-lucide="play" style="width:13px;height:13px;"></i> تشغيل</button>
             </div>
-          `).join("") : `<div style="font-size:12px;color:var(--text-3);">لا يوجد فيديوهات شرح للحصة دي لسه</div>`}
+          `).join("") : `<div class="mc-subsec-empty">لا يوجد فيديوهات شرح للحصة دي لسه</div>`}
         </div>
 
-        ${s.quizzes.length ? s.quizzes.map(q=>renderMonthlyQuizRow(q)).join("") : ""}
+        ${s.quizzes.length ? `
+        <div class="mc-subsec" style="padding-bottom:2px;">
+          <div class="mc-subsec-header"><i data-lucide="file-check-2" style="width:13px;height:13px;"></i> كويزات الحصة</div>
+          ${s.quizzes.map(q=>renderMonthlyQuizRow(q)).join("")}
+        </div>` : ""}
         ${isEmpty ? `<div style="font-size:12.5px;color:var(--text-3);padding:6px 0;">لا يوجد محتوى للحصة دي لسه</div>` : ""}
       </div>
     </div>
@@ -5787,16 +5795,6 @@ async function renderSupervisorMorePage(){
       <div class="student-more-item" onclick="navigateTo('student_search')">
         <div class="student-more-ic"><i data-lucide="search" style="width:18px;height:18px;"></i></div>
         <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">بحث عن طالب</div><div style="font-size:11.5px;color:var(--text-3);">دور على أي طالب بالاسم أو الكود</div></div>
-        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
-      </div>
-      <div class="student-more-item" onclick="navigateTo('student_requests')">
-        <div class="student-more-ic"><i data-lucide="inbox" style="width:18px;height:18px;"></i></div>
-        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">طلبات الطلاب</div><div style="font-size:11.5px;color:var(--text-3);">طلبات مجموعتك (إذن حضور / مشكلة / شرح)</div></div>
-        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
-      </div>
-      <div class="student-more-item" onclick="navigateTo('student_videos')">
-        <div class="student-more-ic"><i data-lucide="video" style="width:18px;height:18px;"></i></div>
-        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">فيديوهات المجموعة</div><div style="font-size:11.5px;color:var(--text-3);">ارفع فيديو لمجموعتك، والطلاب يتفرجوا عليه بس من غير تنزيل</div></div>
         <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
       </div>
     </div>
