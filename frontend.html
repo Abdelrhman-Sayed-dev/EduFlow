@@ -1067,6 +1067,7 @@ const NAV_BY_ROLE = {
     {id:"quizzes", label:"الكويزات والامتحانات", icon:"file-check-2"},
     {id:"attendance", label:"الحضور والغياب", icon:"calendar-check"},
     {id:"student_search", label:"بحث عن طالب", icon:"search"},
+    {id:"student_cards", label:"بطاقات الطلاب", icon:"id-card"},
   ],
   teacher: [
     {id:"dashboard", label:"الرئيسية", icon:"layout-dashboard"},
@@ -1239,6 +1240,7 @@ const PAGE_TITLES = {
   myrequests:"طلباتي", student_requests:"طلبات الطلاب",
   student_videos:"فيديوهات المجموعة", myvideos:"فيديوهاتي", hs_videos:"كل الفيديوهات",
   subscriptions_report:"تقرير الاشتراكات الشهري",
+  student_cards:"بطاقات الطلاب",
 };
 
 async function renderPage(page){
@@ -1286,6 +1288,7 @@ async function renderPage(page){
       myvideos: renderMyVideosPage,
       hs_videos: renderHeadSupervisorVideosPage,
       subscriptions_report: renderSubscriptionsReportPage,
+      student_cards: renderStudentCardsPage,
     };
     const fn = renderers[page];
     if (fn) await fn();
@@ -3075,6 +3078,204 @@ function toggleSubsReportGroup(groupId){
   else SUBS_REPORT_EXPANDED.add(groupId);
   renderSubscriptionsReportView();
 }
+
+/* =====================================================================
+   بطاقات الطلاب (Student Cards) - أدمن فقط
+   إنشاء وطباعة بطاقات كل الطلاب أو مجموعة معينة، دفعة واحدة، PDF جاهز للطباعة
+===================================================================== */
+let CARD_TEMPLATES_CACHE = [];
+let CARD_SELECTED_TEMPLATE = null;
+let CARD_LAST_PDF_URL = null;
+let CARD_LAST_PDF_BLOB = null;
+
+async function renderStudentCardsPage(){
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `<div class="empty-state"><div class="empty-title">بتحمّل...</div></div>`;
+
+  const [templates, groups] = await Promise.all([
+    api("/api/admin/student-cards/templates"),
+    loadGroups(),
+  ]);
+  CARD_TEMPLATES_CACHE = templates;
+  if (!CARD_SELECTED_TEMPLATE) CARD_SELECTED_TEMPLATE = templates[0]?.key || null;
+
+  // تجميع المجموعات حسب المرحلة عشان تظهر منظمة، مع دايماً وجود خيار "كل الطلاب"
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>بطاقات الطلاب</h1><p>إنشاء وطباعة بطاقات كل الطلاب أو مجموعات معينة دفعة واحدة، بتصميم جاهز للطباعة</p></div>
+    </div>
+
+    <div class="table-card" style="padding:18px;margin-bottom:14px;">
+      <div style="font-weight:700;font-size:14px;margin-bottom:10px;display:flex;align-items:center;gap:8px;">
+        <i data-lucide="users" style="width:16px;height:16px;color:var(--primary);"></i> اختيار الطلاب
+      </div>
+      <div class="checkbox-list" id="cardGroupsList" style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;">
+        <label style="display:flex;align-items:center;gap:8px;padding:7px 4px;cursor:pointer;font-weight:700;border-bottom:1px solid var(--border);margin-bottom:4px;">
+          <input type="checkbox" id="cardGroupAll" onchange="toggleCardAllGroups(this.checked)">
+          <span>جميع الطلاب</span>
+        </label>
+        ${groups.map(g=>`
+          <label style="display:flex;align-items:center;gap:8px;padding:6px 4px;cursor:pointer;">
+            <input type="checkbox" class="card-group-cb" value="${g.id}" onchange="onCardGroupCbChange()">
+            <span>${escapeHtml(g.name)} <span style="color:var(--text-3);font-size:11.5px;">(${escapeHtml(g.stage_name)} - ${g.students_count} طالب)</span></span>
+          </label>`).join("") || `<div class="form-hint">لا يوجد مجموعات مسجّلة حاليًا</div>`}
+      </div>
+      <div class="form-hint" id="cardSelectionSummary" style="margin-top:8px;"></div>
+    </div>
+
+    <div class="table-card" style="padding:18px;margin-bottom:14px;">
+      <div style="font-weight:700;font-size:14px;margin-bottom:12px;display:flex;align-items:center;gap:8px;">
+        <i data-lucide="palette" style="width:16px;height:16px;color:var(--primary);"></i> اختيار التصميم
+      </div>
+      <div class="cards-grid" id="cardTemplatesGrid">
+        ${templates.map(t=>`
+          <div class="card-template-option" data-key="${t.key}" onclick="selectCardTemplate('${t.key}')"
+               style="border:2px solid ${CARD_SELECTED_TEMPLATE===t.key?'var(--primary)':'var(--border)'};border-radius:10px;padding:10px;cursor:pointer;text-align:center;transition:border-color .12s;">
+            <img src="/api/admin/student-cards/templates/${t.key}/preview?token=${encodeURIComponent(TOKEN||'')}" alt="${t.key}"
+                 style="width:100%;border-radius:6px;border:1px solid var(--border);margin-bottom:8px;background:#fff;" loading="lazy">
+            <div style="font-weight:700;font-size:12.5px;">${escapeHtml(t.label)}</div>
+            <div style="font-size:11px;color:var(--text-3);margin-top:2px;">${t.cards_per_page} بطاقات لكل صفحة A4</div>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+
+    <div class="table-card" style="padding:18px;text-align:center;">
+      <button class="btn btn-primary btn-block" id="generateCardsBtn" style="max-width:340px;margin:0 auto;height:48px;font-size:14.5px;" onclick="generateStudentCardsPdf()">
+        <i data-lucide="printer" style="width:16px;height:16px;"></i> Generate PDF
+      </button>
+      <div id="cardGenerateResult" style="margin-top:16px;"></div>
+    </div>
+  `;
+  icons();
+  updateCardSelectionSummary();
+}
+
+function toggleCardAllGroups(checked){
+  document.querySelectorAll(".card-group-cb").forEach(cb=>{ cb.checked = false; cb.disabled = checked; });
+  updateCardSelectionSummary();
+}
+
+function onCardGroupCbChange(){
+  document.getElementById("cardGroupAll").checked = false;
+  updateCardSelectionSummary();
+}
+
+function getCardSelectedGroupIds(){
+  return Array.from(document.querySelectorAll(".card-group-cb:checked")).map(cb=>parseInt(cb.value));
+}
+
+function updateCardSelectionSummary(){
+  const summary = document.getElementById("cardSelectionSummary");
+  if (!summary) return;
+  const allChecked = document.getElementById("cardGroupAll")?.checked;
+  if (allChecked){
+    summary.textContent = "هيتم إنشاء بطاقات لكل الطلاب النشطين في النظام";
+  } else {
+    const n = getCardSelectedGroupIds().length;
+    summary.textContent = n ? `هيتم إنشاء بطاقات لـ ${n} مجموعة مختارة` : "اختار مجموعة واحدة على الأقل، أو فعّل \"جميع الطلاب\"";
+  }
+}
+
+function selectCardTemplate(key){
+  CARD_SELECTED_TEMPLATE = key;
+  document.querySelectorAll(".card-template-option").forEach(el=>{
+    el.style.borderColor = el.dataset.key === key ? "var(--primary)" : "var(--border)";
+  });
+}
+
+async function generateStudentCardsPdf(){
+  const allChecked = document.getElementById("cardGroupAll")?.checked;
+  const groupIds = getCardSelectedGroupIds();
+  const resultBox = document.getElementById("cardGenerateResult");
+
+  if (!allChecked && !groupIds.length){
+    showToast("اختار جميع الطلاب أو مجموعة واحدة على الأقل", "error");
+    return;
+  }
+  if (!CARD_SELECTED_TEMPLATE){
+    showToast("اختار تصميم البطاقة الأول", "error");
+    return;
+  }
+
+  const btn = document.getElementById("generateCardsBtn");
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner"></span> بيتم الإنشاء...`;
+  resultBox.innerHTML = "";
+
+  try{
+    const payload = allChecked
+      ? {scope:"all", template: CARD_SELECTED_TEMPLATE}
+      : {scope:"groups", group_ids: groupIds, template: CARD_SELECTED_TEMPLATE};
+
+    const headers = {"Content-Type":"application/json"};
+    if (TOKEN) headers["Authorization"] = "Bearer " + TOKEN;
+
+    const res = await fetch("/api/admin/student-cards/generate", {
+      method:"POST", headers, body: JSON.stringify(payload)
+    });
+
+    if (!res.ok){
+      let msg = "حصل خطأ أثناء إنشاء البطاقات";
+      try{ const d = await res.json(); if (d && d.detail) msg = d.detail; }catch(e){}
+      throw new Error(msg);
+    }
+
+    const studentCount = res.headers.get("X-Student-Count") || "0";
+    const pageCount = res.headers.get("X-Page-Count") || "0";
+    const blob = await res.blob();
+
+    if (CARD_LAST_PDF_URL) URL.revokeObjectURL(CARD_LAST_PDF_URL);
+    CARD_LAST_PDF_BLOB = blob;
+    CARD_LAST_PDF_URL = URL.createObjectURL(blob);
+
+    if (studentCount === "0"){
+      resultBox.innerHTML = `
+        <div class="empty-state" style="padding:20px;">
+          <div class="empty-icon"><i data-lucide="user-x" style="width:22px;height:22px;"></i></div>
+          <div class="empty-title">مفيش طلاب مطابقين للاختيار ده</div>
+        </div>`;
+    } else {
+      resultBox.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:center;gap:8px;color:var(--accent);font-weight:700;font-size:14px;margin-bottom:12px;">
+          <i data-lucide="check-circle-2" style="width:18px;height:18px;"></i> تم إنشاء البطاقات بنجاح
+        </div>
+        <div style="display:flex;justify-content:center;gap:22px;margin-bottom:16px;font-size:13px;color:var(--text-3);">
+          <span>عدد الطلاب: <b style="color:var(--text-1);">${studentCount}</b></span>
+          <span>عدد الصفحات: <b style="color:var(--text-1);">${pageCount}</b></span>
+        </div>
+        <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+          <button class="btn btn-primary" onclick="downloadCardsPdf()"><i data-lucide="download" style="width:14px;height:14px;"></i> Download PDF</button>
+          <button class="btn btn-ghost" onclick="printCardsPdf()"><i data-lucide="printer" style="width:14px;height:14px;"></i> Print PDF</button>
+        </div>`;
+    }
+    icons();
+  }catch(e){
+    showToast(e.message || "حصل خطأ أثناء إنشاء البطاقات", "error");
+  }finally{
+    btn.disabled = false;
+    btn.innerHTML = `<i data-lucide="printer" style="width:16px;height:16px;"></i> Generate PDF`;
+    icons();
+  }
+}
+
+function downloadCardsPdf(){
+  if (!CARD_LAST_PDF_URL) return;
+  const a = document.createElement("a");
+  a.href = CARD_LAST_PDF_URL; a.download = "student_cards.pdf";
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+function printCardsPdf(){
+  if (!CARD_LAST_PDF_URL) return;
+  const win = window.open(CARD_LAST_PDF_URL, "_blank");
+  if (!win){
+    showToast("فعّل النوافذ المنبثقة (popups) عشان تقدر تطبع", "error");
+    return;
+  }
+  win.addEventListener("load", ()=>{ try{ win.print(); }catch(e){} });
+}
+
 
 /* =====================================================================
    استيراد طلاب من ملف CSV - تحميل نموذج، رفع الملف، معاينة، ثم الإضافة دفعة واحدة
