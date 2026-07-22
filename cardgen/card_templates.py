@@ -98,77 +98,79 @@ def template_a(c, x, y, w, h, data, brand):
     c.setLineWidth(0.5)
     c.roundRect(x + 0.7, y + 0.7, w - 1.4, h - 1.4, 3, fill=0, stroke=1)
 
-    # مثلث كحلي أعلى اليسار (زاوية علوية)
-    tri = w * 0.20
+    # مثلث كحلي أعلى اليسار (زاوية علوية) - مقاس صغير عشان ميدخلش في مساحة النصوص
+    tri_w = w * 0.11
+    tri_h = h * 0.17
     c.setFillColor(NAVY)
     p = c.beginPath()
     p.moveTo(x, y + h)
-    p.lineTo(x + tri, y + h)
-    p.lineTo(x, y + h - tri * 1.4)
+    p.lineTo(x + tri_w, y + h)
+    p.lineTo(x, y + h - tri_h)
     p.close()
     c.drawPath(p, fill=1, stroke=0)
 
-    # خط دهبي موازي لضلع المثلث العلوي
+    # خط دهبي رفيع بالظبط على ضلع المثلث (مش مادّ برّه المثلث)
     c.setStrokeColor(GOLD)
     c.setLineWidth(1.1)
-    c.line(x + tri * 0.15, y + h - tri * 0.05, x + tri * 1.35, y + h - tri * 1.55)
+    c.line(x + tri_w, y + h, x, y + h - tri_h)
 
-    # مثلث كحلي أسفل اليمين (زاوية سفلية)
+    # مثلث كحلي أسفل اليمين (زاوية سفلية) - نفس المقاس الصغير
     p2 = c.beginPath()
     p2.moveTo(x + w, y)
-    p2.lineTo(x + w - tri, y)
-    p2.lineTo(x + w, y + tri * 1.4)
+    p2.lineTo(x + w - tri_w, y)
+    p2.lineTo(x + w, y + tri_h)
     p2.close()
     c.drawPath(p2, fill=1, stroke=0)
-    c.line(x + w - tri * 0.15, y + tri * 0.05, x + w - tri * 1.35, y + tri * 1.55)
+    c.line(x + w - tri_w, y, x + w, y + tri_h)
 
     cx = x + w / 2
     top = y + h
 
-    # اسم الدكتور + العنوان
-    _rtext(c, cx, top - h * 0.135, brand["doctor_prefix"], "Kufi-SemiBold", h * 0.052, GOLD, "center")
-    _rtext(c, cx, top - h * 0.24, brand["doctor_name"], "Kufi-Bold", h * 0.115, NAVY, "center")
-    _rtext(c, cx, top - h * 0.315, brand["subject"], "Kufi-Regular", h * 0.052, TEXT_MUTED, "center")
+    # اسم الدكتور + العنوان (مسافات كافية بين السطور عشان مايحصلش تداخل مع الخط الكبير)
+    _rtext(c, cx, top - h * 0.075, brand["doctor_prefix"], "Kufi-SemiBold", h * 0.038, GOLD, "center")
+    _rtext(c, cx, top - h * 0.20, brand["doctor_name"], "Kufi-Bold", h * 0.088, NAVY, "center")
+    _rtext(c, cx, top - h * 0.315, brand["subject"], "Kufi-Regular", h * 0.040, TEXT_MUTED, "center")
 
     # اسم المنصة (يسار/يمين حسب المساحة - أعلى يمين الكارت بعيد عن المثلث)
-    _etext(c, x + w - w * 0.06, top - h * 0.10, brand["platform_name"], "Cairo-ExtraBold", h * 0.075, NAVY, "right")
+    _etext(c, x + w - w * 0.06, top - h * 0.075, brand["platform_name"], "Cairo-ExtraBold", h * 0.07, NAVY, "right")
 
     # خط فاصل دهبي رفيع تحت العنوان
     c.setStrokeColor(GOLD)
     c.setLineWidth(0.8)
-    c.line(x + w * 0.12, top - h * 0.35, x + w * 0.88, top - h * 0.35)
+    c.line(x + w * 0.12, top - h * 0.365, x + w * 0.88, top - h * 0.365)
 
-    # صندوق اسم الطالب
-    box_y = top - h * 0.52
-    box_h = h * 0.145
+    # صندوق اسم الطالب (فراغ كافي بين تسمية "اسم الطالب" والاسم نفسه عشان الاسم أحيانًا بيبقى بخط كبير)
+    label_y = top - h * 0.406
+    value_y = top - h * 0.50
+    box_top = top - h * 0.376
+    box_bottom = top - h * 0.53
     c.setStrokeColor(LINE_LIGHT)
     c.setLineWidth(0.6)
-    c.roundRect(x + w * 0.08, box_y - box_h + h * 0.03, w * 0.84, box_h, 3, fill=0, stroke=1)
-    _rtext(c, x + w * 0.88, box_y + h * 0.052, "اسم الطالب", "Kufi-Regular", h * 0.04, GOLD, "right")
-    _rtext(c, x + w * 0.88, box_y - h * 0.02, data["full_name"], "Kufi-Bold", h * 0.075, NAVY, "right")
+    c.roundRect(x + w * 0.08, box_bottom, w * 0.84, box_top - box_bottom, 3, fill=0, stroke=1)
+    _rtext(c, x + w * 0.88, label_y, "اسم الطالب", "Kufi-Regular", h * 0.036, GOLD, "right")
+    _rtext(c, x + w * 0.88, value_y, data["full_name"], "Kufi-Bold", h * 0.072, NAVY, "right")
 
     # فاصل أفقي رفيع
     c.setStrokeColor(LINE_LIGHT)
     c.setLineWidth(0.5)
-    c.line(x + w * 0.08, top - h * 0.585, x + w * 0.92, top - h * 0.585)
+    c.line(x + w * 0.08, top - h * 0.55, x + w * 0.92, top - h * 0.55)
 
-    # صف الأكواد (كود الحضور | كود الدخول)
-    codes_y1 = top - h * 0.685
-    codes_y2 = top - h * 0.75
-    half = w / 2
+    # صف الأكواد (كود الحضور | كود الدخول) - فراغ كافي بين التسمية والكود الكبير تحتها
+    codes_y1 = top - h * 0.63
+    codes_y2 = top - h * 0.731
     # كود الحضور - يمين
-    _rtext(c, x + w * 0.92, codes_y1, "كود الحضور", "Kufi-Regular", h * 0.042, GOLD, "right")
-    _etext(c, x + w * 0.92, codes_y2, data["attendance_code"], "Cairo-Bold", h * 0.078, NAVY, "right")
+    _rtext(c, x + w * 0.92, codes_y1, "كود الحضور", "Kufi-Regular", h * 0.040, GOLD, "right")
+    _etext(c, x + w * 0.92, codes_y2, data["attendance_code"], "Cairo-Bold", h * 0.075, NAVY, "right")
     # كود الدخول - شمال
-    _rtext(c, x + w * 0.46, codes_y1, "كود الدخول للمنصة", "Kufi-Regular", h * 0.042, GOLD, "right")
-    _etext(c, x + w * 0.46, codes_y2, data["access_code"], "Cairo-Bold", h * 0.078, NAVY, "right")
+    _rtext(c, x + w * 0.46, codes_y1, "كود الدخول للمنصة", "Kufi-Regular", h * 0.040, GOLD, "right")
+    _etext(c, x + w * 0.46, codes_y2, data["access_code"], "Cairo-Bold", h * 0.075, NAVY, "right")
     # فاصل رأسي بين الكودين
     c.setStrokeColor(LINE_LIGHT)
     c.setLineWidth(0.5)
-    c.line(cx, codes_y2 - h * 0.01, cx, codes_y1 + h * 0.04)
+    c.line(cx, codes_y2 - h * 0.015, cx, codes_y1 + h * 0.03)
 
-    _rtext(c, cx, top - h * 0.80, "كود تسجيل الدخول الخاص بك - لا تشاركه مع أي شخص",
-           "Kufi-Regular", h * 0.03, TEXT_MUTED, "center")
+    _rtext(c, cx, top - h * 0.795, "كود تسجيل الدخول الخاص بك - لا تشاركه مع أي شخص",
+           "Kufi-Regular", h * 0.028, TEXT_MUTED, "center")
 
     # فوتر: المجموعة | العام الدراسي
     footer_y = y + h * 0.10
@@ -203,13 +205,13 @@ def template_b(c, x, y, w, h, data, brand):
     _rtext(c, x + w * 0.94, y + h - bar_h * 0.42, brand["doctor_name"], "Kufi-Bold", h * 0.075, CREAM, "right")
 
     # اسم الطالب
-    _rtext(c, cx, y + h - bar_h - h * 0.16, data["full_name"], "Kufi-Bold", h * 0.115, NAVY, "center")
-    _rtext(c, cx, y + h - bar_h - h * 0.245, f"{data.get('group_name','')}  •  {brand['subject']}",
-           "Kufi-Regular", h * 0.045, TEXT_MUTED, "center")
+    _rtext(c, cx, y + h - bar_h - h * 0.155, data["full_name"], "Kufi-Bold", h * 0.10, NAVY, "center")
+    _rtext(c, cx, y + h - bar_h - h * 0.29, f"{data.get('group_name','')}  •  {brand['subject']}",
+           "Kufi-Regular", h * 0.04, TEXT_MUTED, "center")
 
     c.setStrokeColor(GOLD)
     c.setLineWidth(0.7)
-    c.line(x + w * 0.1, y + h - bar_h - h * 0.29, x + w * 0.9, y + h - bar_h - h * 0.29)
+    c.line(x + w * 0.1, y + h - bar_h - h * 0.335, x + w * 0.9, y + h - bar_h - h * 0.335)
 
     half = w / 2
     _rtext(c, x + w * 0.92, y + h * 0.20, "كود الحضور", "Kufi-Regular", h * 0.04, GOLD, "right")
@@ -239,28 +241,27 @@ def template_c(c, x, y, w, h, data, brand):
 
     cx = x + (w - strip_w) / 2
     top = y + h
-    _etext(c, x + w * 0.05, top - h * 0.13, brand["platform_name"], "Cairo-ExtraBold", h * 0.075, NAVY, "left")
-    _rtext(c, cx, top - h * 0.13, brand["doctor_name"], "Kufi-Bold", h * 0.06, GOLD, "center")
+    _etext(c, x + w * 0.05, top - h * 0.12, brand["platform_name"], "Cairo-ExtraBold", h * 0.07, NAVY, "left")
+    _rtext(c, cx, top - h * 0.12, brand["doctor_name"], "Kufi-Bold", h * 0.055, GOLD, "center")
 
     c.setStrokeColor(LINE_LIGHT)
     c.setLineWidth(0.5)
-    c.line(x + w * 0.06, top - h * 0.19, x + w * 0.94, top - h * 0.19)
+    c.line(x + w * 0.06, top - h * 0.21, x + w * 0.94, top - h * 0.21)
 
-    _rtext(c, cx, top - h * 0.36, data["full_name"], "Kufi-Bold", h * 0.10, NAVY, "center")
-    _rtext(c, cx, top - h * 0.45, data.get("group_name", ""), "Kufi-Regular", h * 0.045, TEXT_MUTED, "center")
+    _rtext(c, cx, top - h * 0.36, data["full_name"], "Kufi-Bold", h * 0.095, NAVY, "center")
+    _rtext(c, cx, top - h * 0.48, data.get("group_name", ""), "Kufi-Regular", h * 0.042, TEXT_MUTED, "center")
 
-    box_top = top - h * 0.56
-    box_h = h * 0.34
+    box_top = top - h * 0.565
+    box_h = h * 0.365
     c.setFillColor(NAVY)
     c.roundRect(x + w * 0.06, box_top - box_h, w * 0.88, box_h, 3, fill=1, stroke=0)
 
-    half_y = box_top - box_h * 0.38
-    _rtext(c, x + w * 0.86, box_top - h * 0.075, "كود الحضور", "Kufi-Regular", h * 0.032, GOLD_LIGHT, "right")
-    _etext(c, x + w * 0.86, box_top - h * 0.145, data["attendance_code"], "Cairo-Bold", h * 0.065, CREAM, "right")
-    _rtext(c, x + w * 0.86, box_top - h * 0.215, "كود الدخول للمنصة", "Kufi-Regular", h * 0.032, GOLD_LIGHT, "right")
-    _etext(c, x + w * 0.86, box_top - h * 0.285, data["access_code"], "Cairo-Bold", h * 0.065, CREAM, "right")
+    _rtext(c, x + w * 0.86, box_top - h * 0.075, "كود الحضور", "Kufi-Regular", h * 0.030, GOLD_LIGHT, "right")
+    _etext(c, x + w * 0.86, box_top - h * 0.16, data["attendance_code"], "Cairo-Bold", h * 0.062, CREAM, "right")
+    _rtext(c, x + w * 0.86, box_top - h * 0.225, "كود الدخول للمنصة", "Kufi-Regular", h * 0.030, GOLD_LIGHT, "right")
+    _etext(c, x + w * 0.86, box_top - h * 0.31, data["access_code"], "Cairo-Bold", h * 0.062, CREAM, "right")
 
-    _etext(c, cx, y + h * 0.05, brand["academic_year"], "Cairo-Bold", h * 0.035, TEXT_MUTED, "center")
+    _etext(c, cx, y + h * 0.045, brand["academic_year"], "Cairo-Bold", h * 0.032, TEXT_MUTED, "center")
 
 
 TEMPLATES = {
