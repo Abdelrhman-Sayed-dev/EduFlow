@@ -126,24 +126,20 @@ def template_a(c, x, y, w, h, data, brand):
     cx = x + w / 2
     top = y + h
 
-    # اسم الدكتور + العنوان (مسافات كافية بين السطور عشان مايحصلش تداخل مع الخط الكبير)
-    _rtext(c, cx, top - h * 0.075, brand["doctor_prefix"], "Kufi-SemiBold", h * 0.038, GOLD, "center")
-    _rtext(c, cx, top - h * 0.20, brand["doctor_name"], "Kufi-Bold", h * 0.088, NAVY, "center")
-    _rtext(c, cx, top - h * 0.315, brand["subject"], "Kufi-Regular", h * 0.040, TEXT_MUTED, "center")
+    # اسم الدكتور + العنوان (بدون جملة المادة عشان الكارت يبقى أنضف)
+    _rtext(c, cx, top - h * 0.095, brand["doctor_prefix"], "Kufi-SemiBold", h * 0.042, GOLD, "center")
+    _rtext(c, cx, top - h * 0.25, brand["doctor_name"], "Kufi-Bold", h * 0.105, NAVY, "center")
 
-    # اسم المنصة (يسار/يمين حسب المساحة - أعلى يمين الكارت بعيد عن المثلث)
-    _etext(c, x + w - w * 0.06, top - h * 0.075, brand["platform_name"], "Cairo-ExtraBold", h * 0.07, NAVY, "right")
+    # اسم المنصة + شعارها (أعلى يمين الكارت بعيد عن المثلث)
+    draw_platform_brand(c, brand["platform_name"], x + w - w * 0.06, top - h * 0.095,
+                         h * 0.072, "Cairo-ExtraBold", NAVY, logo_r=h * 0.048, align="right",
+                         gap=w * 0.018)
 
-    # خط فاصل دهبي رفيع تحت العنوان
-    c.setStrokeColor(GOLD)
-    c.setLineWidth(0.8)
-    c.line(x + w * 0.12, top - h * 0.365, x + w * 0.88, top - h * 0.365)
-
-    # صندوق اسم الطالب (فراغ كافي بين تسمية "اسم الطالب" والاسم نفسه عشان الاسم أحيانًا بيبقى بخط كبير)
-    label_y = top - h * 0.406
-    value_y = top - h * 0.50
-    box_top = top - h * 0.376
-    box_bottom = top - h * 0.53
+    # صندوق اسم الطالب (فراغ كافي بين تسمية "اسم الطالب" والاسم نفسه)
+    label_y = top - h * 0.385
+    value_y = top - h * 0.485
+    box_top = top - h * 0.355
+    box_bottom = top - h * 0.515
     c.setStrokeColor(LINE_LIGHT)
     c.setLineWidth(0.6)
     c.roundRect(x + w * 0.08, box_bottom, w * 0.84, box_top - box_bottom, 3, fill=0, stroke=1)
@@ -153,11 +149,11 @@ def template_a(c, x, y, w, h, data, brand):
     # فاصل أفقي رفيع
     c.setStrokeColor(LINE_LIGHT)
     c.setLineWidth(0.5)
-    c.line(x + w * 0.08, top - h * 0.55, x + w * 0.92, top - h * 0.55)
+    c.line(x + w * 0.08, top - h * 0.565, x + w * 0.92, top - h * 0.565)
 
     # صف الأكواد (كود الحضور | كود الدخول) - فراغ كافي بين التسمية والكود الكبير تحتها
-    codes_y1 = top - h * 0.63
-    codes_y2 = top - h * 0.731
+    codes_y1 = top - h * 0.645
+    codes_y2 = top - h * 0.745
     # كود الحضور - يمين
     _rtext(c, x + w * 0.92, codes_y1, "كود الحضور", "Kufi-Regular", h * 0.040, GOLD, "right")
     _etext(c, x + w * 0.92, codes_y2, data["attendance_code"], "Cairo-Bold", h * 0.075, NAVY, "right")
@@ -169,7 +165,7 @@ def template_a(c, x, y, w, h, data, brand):
     c.setLineWidth(0.5)
     c.line(cx, codes_y2 - h * 0.015, cx, codes_y1 + h * 0.03)
 
-    _rtext(c, cx, top - h * 0.795, "كود تسجيل الدخول الخاص بك - لا تشاركه مع أي شخص",
+    _rtext(c, cx, top - h * 0.81, "كود تسجيل الدخول الخاص بك - لا تشاركه مع أي شخص",
            "Kufi-Regular", h * 0.028, TEXT_MUTED, "center")
 
     # فوتر: المجموعة | العام الدراسي
@@ -201,8 +197,10 @@ def template_b(c, x, y, w, h, data, brand):
     c.rect(x, y + h - bar_h, w, bar_h * 0.5, fill=1, stroke=0)  # يغطي الاستدارة السفلية للبار
 
     cx = x + w / 2
-    _etext(c, x + w * 0.06, y + h - bar_h * 0.42, brand["platform_name"], "Cairo-ExtraBold", h * 0.09, GOLD_LIGHT, "left")
-    _rtext(c, x + w * 0.94, y + h - bar_h * 0.42, brand["doctor_name"], "Kufi-Bold", h * 0.075, CREAM, "right")
+    draw_platform_brand(c, brand["platform_name"], x + w * 0.09, y + h - bar_h * 0.42,
+                         h * 0.09, "Cairo-ExtraBold", GOLD_LIGHT, logo_r=h * 0.038, align="left",
+                         gap=w * 0.015, ring_color=GOLD_LIGHT, mark_color=NAVY)
+    _rtext(c, x + w * 0.94, y + h - bar_h * 0.42, f"{brand['doctor_prefix']} {brand['doctor_name']}", "Kufi-Bold", h * 0.062, CREAM, "right")
 
     # اسم الطالب
     _rtext(c, cx, y + h - bar_h - h * 0.155, data["full_name"], "Kufi-Bold", h * 0.10, NAVY, "center")
@@ -241,8 +239,10 @@ def template_c(c, x, y, w, h, data, brand):
 
     cx = x + (w - strip_w) / 2
     top = y + h
-    _etext(c, x + w * 0.05, top - h * 0.12, brand["platform_name"], "Cairo-ExtraBold", h * 0.07, NAVY, "left")
-    _rtext(c, cx, top - h * 0.12, brand["doctor_name"], "Kufi-Bold", h * 0.055, GOLD, "center")
+    draw_platform_brand(c, brand["platform_name"], x + w * 0.075, top - h * 0.12,
+                         h * 0.07, "Cairo-ExtraBold", NAVY, logo_r=h * 0.032, align="left",
+                         gap=w * 0.014)
+    _rtext(c, cx, top - h * 0.12, f"{brand['doctor_prefix']} {brand['doctor_name']}", "Kufi-Bold", h * 0.048, GOLD, "center")
 
     c.setStrokeColor(LINE_LIGHT)
     c.setLineWidth(0.5)
@@ -283,3 +283,62 @@ def draw_crop_marks(c, x, y, w, h, length=6, offset=3):
         c.line(cx0 + dx * offset, cy0, cx0 + dx * (offset + length), cy0)
         # خط رأسي
         c.line(cx0, cy0 + dy * offset, cx0, cy0 + dy * (offset + length))
+
+
+# ---------------------------------------------------------------------------
+# شعار المنصة (Logo) - أيقونة دائرية بسيطة بشكل "قبعة تخرج" جنب اسم EduFlow
+# مرسومة بالكامل Vector (من غير أي صورة خارجية) عشان تفضل حادة في الطباعة
+# ---------------------------------------------------------------------------
+def draw_platform_brand(c, text, x, y, size, font, color, logo_r, align="right",
+                         gap=None, ring_color=None, mark_color=None):
+    """يرسم اسم المنصة (نص) + شعار المنصة جنبه، مع حساب عرض النص فعليًا
+    عشان الشعار ميتصقش في النص ولا يفضل بعيد عنه بمسافة غريبة"""
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    if gap is None:
+        gap = logo_r * 0.55
+    tw = stringWidth(text, font, size)
+    logo_cy = y + size * 0.35
+    if align == "right":
+        c.setFont(font, size)
+        c.setFillColor(color)
+        c.drawRightString(x, y, text)
+        logo_cx = x - tw - gap - logo_r
+    else:
+        c.setFont(font, size)
+        c.setFillColor(color)
+        c.drawString(x, y, text)
+        logo_cx = x - gap - logo_r
+    draw_platform_logo(c, logo_cx, logo_cy, logo_r, ring_color=ring_color, mark_color=mark_color)
+
+
+def draw_platform_logo(c, cx, cy, r, ring_color=None, mark_color=None):
+    ring_color = ring_color or NAVY
+    mark_color = mark_color or GOLD
+
+    c.setFillColor(ring_color)
+    c.circle(cx, cy, r, fill=1, stroke=0)
+
+    dw = r * 0.62
+    dh = r * 0.34
+    cy_cap = cy + r * 0.16
+    c.setFillColor(mark_color)
+    p = c.beginPath()
+    p.moveTo(cx, cy_cap + dh)
+    p.lineTo(cx + dw, cy_cap)
+    p.lineTo(cx, cy_cap - dh)
+    p.lineTo(cx - dw, cy_cap)
+    p.close()
+    c.drawPath(p, fill=1, stroke=0)
+
+    base_w = r * 0.62
+    base_h = r * 0.30
+    c.roundRect(cx - base_w / 2, cy_cap - dh - base_h * 0.55, base_w, base_h, base_h * 0.35, fill=1, stroke=0)
+
+    c.setStrokeColor(mark_color)
+    c.setLineWidth(max(0.6, r * 0.10))
+    tx = cx + dw * 0.55
+    ty0 = cy_cap + dh * 0.25
+    ty1 = ty0 - r * 0.75
+    c.line(tx, ty0, tx, ty1)
+    c.setFillColor(mark_color)
+    c.circle(tx, ty1 - r * 0.07, r * 0.11, fill=1, stroke=0)
