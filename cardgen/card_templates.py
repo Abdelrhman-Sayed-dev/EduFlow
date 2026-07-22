@@ -204,7 +204,7 @@ def template_b(c, x, y, w, h, data, brand):
 
     # اسم الطالب
     _rtext(c, cx, y + h - bar_h - h * 0.155, data["full_name"], "Kufi-Bold", h * 0.10, NAVY, "center")
-    _rtext(c, cx, y + h - bar_h - h * 0.29, f"{data.get('group_name','')}  •  {brand['subject']}",
+    _rtext(c, cx, y + h - bar_h - h * 0.29, data.get('group_name', ''),
            "Kufi-Regular", h * 0.04, TEXT_MUTED, "center")
 
     c.setStrokeColor(GOLD)
