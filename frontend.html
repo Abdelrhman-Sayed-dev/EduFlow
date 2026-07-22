@@ -998,7 +998,8 @@ document.addEventListener("click", (e)=>{
    حسابي - تغيير كلمة المرور / تسجيل الخروج
 ===================================================================== */
 function openAccountModal(){
-  const isStudent = SESSION.role === "student";
+  if (SESSION.role === "student" || SESSION.role === "supervisor") return; // اعدادات الحساب متاحة للأدمن والمدرس ورئيس المشرفين بس
+  const isStudent = false;
   openModal("حسابي", `
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;">
       <div class="avatar" style="width:42px;height:42px;font-size:16px;">${(SESSION.full_name||"?").trim()[0]||"?"}</div>
@@ -1068,6 +1069,7 @@ const NAV_BY_ROLE = {
     {id:"attendance", label:"الحضور والغياب", icon:"calendar-check"},
     {id:"student_search", label:"بحث عن طالب", icon:"search"},
     {id:"student_cards", label:"بطاقات الطلاب", icon:"id-card"},
+    {id:"activity_log", label:"سجل الأنشطة", icon:"history"},
   ],
   teacher: [
     {id:"dashboard", label:"الرئيسية", icon:"layout-dashboard"},
@@ -1085,6 +1087,7 @@ const NAV_BY_ROLE = {
     {id:"teacher_compare", label:"مقارنة المجموعات", icon:"git-compare"},
     {id:"teacher_ranking", label:"الترتيب المتقدم", icon:"trophy"},
     {id:"supervisors", label:"المشرفين", icon:"shield-check"},
+    {id:"activity_log", label:"سجل الأنشطة", icon:"history"},
   ],
   supervisor: [
     {id:"mygroup", label:"مجموعتي", icon:"users"},
@@ -1241,6 +1244,7 @@ const PAGE_TITLES = {
   student_videos:"فيديوهات المجموعة", myvideos:"فيديوهاتي", hs_videos:"كل الفيديوهات",
   subscriptions_report:"تقرير الاشتراكات الشهري",
   student_cards:"بطاقات الطلاب",
+  activity_log:"سجل الأنشطة",
 };
 
 async function renderPage(page){
@@ -1289,6 +1293,7 @@ async function renderPage(page){
       hs_videos: renderHeadSupervisorVideosPage,
       subscriptions_report: renderSubscriptionsReportPage,
       student_cards: renderStudentCardsPage,
+      activity_log: renderActivityLogPage,
     };
     const fn = renderers[page];
     if (fn) await fn();
@@ -6071,11 +6076,6 @@ async function renderSupervisorMorePage(){
       </div>
     </div>
     <div class="table-card" style="padding:6px 12px;">
-      <div class="student-more-item" onclick="openAccountModal()">
-        <div class="student-more-ic"><i data-lucide="settings" style="width:18px;height:18px;"></i></div>
-        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">إعدادات الحساب</div><div style="font-size:11.5px;color:var(--text-3);">تغيير كلمة المرور وبيانات حسابك</div></div>
-        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
-      </div>
       <div class="student-more-item" onclick="logout()">
         <div class="student-more-ic" style="background:var(--danger-bg);color:var(--danger);"><i data-lucide="log-out" style="width:18px;height:18px;"></i></div>
         <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;color:var(--danger);">تسجيل الخروج</div></div>
@@ -6107,11 +6107,6 @@ async function renderStudentMorePage(){
       </div>
     </div>
     <div class="table-card" style="padding:6px 12px;">
-      <div class="student-more-item" onclick="openAccountModal()">
-        <div class="student-more-ic"><i data-lucide="settings" style="width:18px;height:18px;"></i></div>
-        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">إعدادات الحساب</div><div style="font-size:11.5px;color:var(--text-3);">تغيير كلمة المرور وبيانات حسابك</div></div>
-        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
-      </div>
       <div class="student-more-item" onclick="logout()">
         <div class="student-more-ic" style="background:var(--danger-bg);color:var(--danger);"><i data-lucide="log-out" style="width:18px;height:18px;"></i></div>
         <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;color:var(--danger);">تسجيل الخروج</div></div>
@@ -6763,9 +6758,17 @@ function buildMonthlyReportWaText(data, studentName){
   const a = data.attendance_summary;
   const monthLabel = monthLabelAr(data.month);
   const avgLine = data.average_percentage != null ? `${data.average_percentage}%` : "لا توجد درجات كافية";
-  const scoresLines = data.scores.length
-    ? data.scores.map(s => `- ${s.title}: ${s.score ?? "—"}/${s.max_score}`).join("\n")
+  const quizScores = data.quiz_scores || data.scores;
+  const examScores = data.exam_scores || [];
+  const scoresLines = quizScores.length
+    ? quizScores.map(s => `- ${s.title}: ${s.score ?? "—"}/${s.max_score}`).join("\n")
     : "لا يوجد كويزات هذا الشهر";
+  const examLines = examScores.length
+    ? examScores.map(s => `- ${s.title}: ${s.score ?? "—"}/${s.max_score}`).join("\n")
+    : "لا يوجد امتحانات شاملة هذا الشهر";
+  const notesLines = (data.supervisor_notes && data.supervisor_notes.length)
+    ? data.supervisor_notes.map(n => `- ${n.note}`).join("\n")
+    : "";
   return [
     `التقرير الشهري - ${studentName}`,
     `الشهر: ${monthLabel}`,
@@ -6775,6 +6778,10 @@ function buildMonthlyReportWaText(data, studentName){
     ``,
     `الكويزات:`,
     scoresLines,
+    ``,
+    `الامتحانات الشاملة:`,
+    examLines,
+    ...(notesLines ? [``, `ملاحظات المشرف:`, notesLines] : []),
     ``,
     `مع تحيات ${REPORT_LETTERHEAD.instructor}`,
   ].join("\n");
@@ -6797,8 +6804,23 @@ async function loadMonthlyReport(studentId, canEditPayment){
     <div class="form-label">الكويزات في الشهر ده</div>
     <div class="table-wrap" style="margin:8px 0 14px;"><table>
       <thead><tr><th>الكويز</th><th>التاريخ</th><th>الدرجة</th></tr></thead>
-      <tbody>${data.scores.map(s=>`<tr><td>${escapeHtml(s.title)}</td><td>${s.quiz_date||'—'}</td><td>${s.score??'—'} / ${s.max_score}</td></tr>`).join("") || `<tr><td colspan="3" style="text-align:center;color:var(--text-3);">لا يوجد كويزات</td></tr>`}</tbody>
+      <tbody>${(data.quiz_scores||data.scores).map(s=>`<tr><td>${escapeHtml(s.title)}</td><td>${s.quiz_date||'—'}</td><td>${s.score??'—'} / ${s.max_score}</td></tr>`).join("") || `<tr><td colspan="3" style="text-align:center;color:var(--text-3);">لا يوجد كويزات</td></tr>`}</tbody>
     </table></div>
+    <div class="form-label">الامتحانات الشاملة في الشهر ده</div>
+    <div class="table-wrap" style="margin:8px 0 14px;"><table>
+      <thead><tr><th>الامتحان</th><th>التاريخ</th><th>الدرجة</th></tr></thead>
+      <tbody>${(data.exam_scores||[]).map(s=>`<tr><td>${escapeHtml(s.title)}</td><td>${s.quiz_date||'—'}</td><td>${s.score??'—'} / ${s.max_score}</td></tr>`).join("") || `<tr><td colspan="3" style="text-align:center;color:var(--text-3);">لا يوجد امتحانات شاملة</td></tr>`}</tbody>
+    </table></div>
+    ${(data.supervisor_notes && data.supervisor_notes.length) ? `
+    <div class="form-label">ملاحظات المشرف في الشهر ده</div>
+    <div class="table-wrap" style="margin:8px 0 14px;"><table>
+      <thead><tr><th>الملاحظة</th><th>النوع</th><th>التاريخ</th><th>بواسطة</th></tr></thead>
+      <tbody>${data.supervisor_notes.map(n=>{
+        const typeLabel = {positive:'إيجابية', negative:'سلبية', neutral:'عامة'}[n.note_type] || n.note_type;
+        const typeBadge = {positive:'badge-green', negative:'badge-red', neutral:'badge-gray'}[n.note_type] || 'badge-gray';
+        return `<tr><td style="text-align:right;">${escapeHtml(n.note)}</td><td><span class="badge ${typeBadge}">${typeLabel}</span></td><td>${(n.created_at||'').slice(0,10)}</td><td>${escapeHtml(n.author_name||'—')}</td></tr>`;
+      }).join("")}</tbody>
+    </table></div>` : ""}
     ${data.attendance.length ? `
     <div class="form-label">سجل الحضور التفصيلي</div>
     <div class="table-wrap" style="margin:8px 0 0;"><table>
@@ -7016,8 +7038,24 @@ function buildMonthlyReportHtmlDoc(d, studentName, opts){
       <div class="section-title"><span class="bar"></span> الكويزات</div>
       <div class="card table-card">
         <table><thead><tr><th>الكويز</th><th>التاريخ</th><th>الدرجة</th></tr></thead>
-        <tbody>${d.scores.map(s=>`<tr><td>${escapeHtml(s.title)}</td><td>${s.quiz_date||'—'}</td><td>${s.score??'—'} / ${s.max_score}</td></tr>`).join("") || `<tr><td colspan="3" style="color:#94A3B8;">لا يوجد كويزات</td></tr>`}</tbody></table>
+        <tbody>${(d.quiz_scores||d.scores).map(s=>`<tr><td>${escapeHtml(s.title)}</td><td>${s.quiz_date||'—'}</td><td>${s.score??'—'} / ${s.max_score}</td></tr>`).join("") || `<tr><td colspan="3" style="color:#94A3B8;">لا يوجد كويزات</td></tr>`}</tbody></table>
       </div>
+
+      <div class="section-title"><span class="bar"></span> الامتحانات الشاملة</div>
+      <div class="card table-card">
+        <table><thead><tr><th>الامتحان</th><th>التاريخ</th><th>الدرجة</th></tr></thead>
+        <tbody>${(d.exam_scores||[]).map(s=>`<tr><td>${escapeHtml(s.title)}</td><td>${s.quiz_date||'—'}</td><td>${s.score??'—'} / ${s.max_score}</td></tr>`).join("") || `<tr><td colspan="3" style="color:#94A3B8;">لا يوجد امتحانات شاملة</td></tr>`}</tbody></table>
+      </div>
+
+      ${(d.supervisor_notes && d.supervisor_notes.length) ? `
+      <div class="section-title"><span class="bar"></span> ملاحظات المشرف</div>
+      <div class="card table-card">
+        <table><thead><tr><th>الملاحظة</th><th>النوع</th><th>التاريخ</th></tr></thead>
+        <tbody>${d.supervisor_notes.map(n=>{
+          const typeLabel = {positive:'إيجابية', negative:'سلبية', neutral:'عامة'}[n.note_type] || n.note_type;
+          return `<tr><td>${escapeHtml(n.note)}</td><td>${typeLabel}</td><td>${(n.created_at||'').slice(0,10)}</td></tr>`;
+        }).join("")}</tbody></table>
+      </div>` : ""}
 
       <div class="section-title"><span class="bar"></span> الحضور التفصيلي</div>
       <div class="card table-card">
@@ -7191,7 +7229,182 @@ async function shareMonthlyReportPdf(studentId, studentName, target){
   showToast("اتنزّل ملف الـ PDF - أرفقه في شات واتساب اللي فتح", "info");
 }
 
+/* =====================================================================
+   سجل الأنشطة (Activity Log) - أدمن / مشرف المشرفين
+   مين دخل وإمتى + أهم الإجراءات (سبورة، حضور، درجات، مدفوعات...) مع فلاتر
+===================================================================== */
+let ACTIVITY_LOG_ACTIONS_CACHE = null;
+let ACTIVITY_LOG_STATE = { page: 1, role: "", action: "", q: "", date_from: "", date_to: "" };
 
+const ACTIVITY_ROLE_BADGES = {
+  admin: {label:"الأدمن", cls:"badge-blue"},
+  head_supervisor: {label:"رئيس إشراف", cls:"badge-amber"},
+  teacher: {label:"مدرس", cls:"badge-teal"},
+  supervisor: {label:"مشرف", cls:"badge-green"},
+  student: {label:"طالب", cls:"badge-gray"},
+};
+
+async function renderActivityLogPage(){
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `<div class="empty-state"><div class="empty-title">بتحمّل...</div></div>`;
+
+  if (!ACTIVITY_LOG_ACTIONS_CACHE){
+    try{ ACTIVITY_LOG_ACTIONS_CACHE = await api("/api/admin/activity-log/actions"); }
+    catch(e){ ACTIVITY_LOG_ACTIONS_CACHE = []; }
+  }
+
+  const roleOptions = [
+    {v:"", l:"كل الأدوار"},
+    {v:"admin", l:"الأدمن"},
+    {v:"head_supervisor", l:"رئيس إشراف"},
+    {v:"teacher", l:"مدرس"},
+    {v:"supervisor", l:"مشرف"},
+    {v:"student", l:"طالب"},
+  ];
+
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>سجل الأنشطة</h1><p>مين دخل النظام وإمتى، وأهم الإجراءات اللي حصلت (رفع سبورة، تسجيل حضور، رصد درجات، مدفوعات...)</p></div>
+    </div>
+    <div class="table-card" style="padding:16px;margin-bottom:14px;">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+        <div style="min-width:150px;">
+          <label class="form-label">الدور</label>
+          <select id="al_role" class="form-input" onchange="onActivityLogFilterChange()">
+            ${roleOptions.map(o=>`<option value="${o.v}">${o.l}</option>`).join("")}
+          </select>
+        </div>
+        <div style="min-width:190px;">
+          <label class="form-label">نوع الإجراء</label>
+          <select id="al_action" class="form-input" onchange="onActivityLogFilterChange()">
+            <option value="">كل الإجراءات</option>
+            ${ACTIVITY_LOG_ACTIONS_CACHE.map(a=>`<option value="${a.key}">${escapeHtml(a.label)}</option>`).join("")}
+          </select>
+        </div>
+        <div style="min-width:150px;">
+          <label class="form-label">من تاريخ</label>
+          <input type="date" id="al_date_from" class="form-input" onchange="onActivityLogFilterChange()">
+        </div>
+        <div style="min-width:150px;">
+          <label class="form-label">إلى تاريخ</label>
+          <input type="date" id="al_date_to" class="form-input" onchange="onActivityLogFilterChange()">
+        </div>
+        <div style="flex:1;min-width:220px;">
+          <label class="form-label">بحث بالاسم أو التفاصيل</label>
+          <div class="search-wrap">
+            <i data-lucide="search" class="search-ic" style="width:14px;height:14px;"></i>
+            <input id="al_q" class="form-input" placeholder="اسم الشخص أو تفاصيل الإجراء..." oninput="debounceActivityLogSearch()" style="padding-right:38px;">
+          </div>
+        </div>
+        <button class="btn btn-ghost" onclick="resetActivityLogFilters()"><i data-lucide="rotate-ccw" style="width:14px;height:14px;"></i> إعادة تعيين</button>
+      </div>
+    </div>
+    <div class="table-card">
+      <div id="al_results" style="padding:20px 16px;"><div class="loading-row"><span class="spinner"></span> بيتحمّل...</div></div>
+    </div>
+  `;
+  icons();
+  await loadActivityLog();
+}
+
+function onActivityLogFilterChange(){
+  ACTIVITY_LOG_STATE.role = document.getElementById("al_role").value;
+  ACTIVITY_LOG_STATE.action = document.getElementById("al_action").value;
+  ACTIVITY_LOG_STATE.date_from = document.getElementById("al_date_from").value;
+  ACTIVITY_LOG_STATE.date_to = document.getElementById("al_date_to").value;
+  ACTIVITY_LOG_STATE.page = 1;
+  loadActivityLog();
+}
+
+let _alSearchTimer = null;
+function debounceActivityLogSearch(){
+  clearTimeout(_alSearchTimer);
+  _alSearchTimer = setTimeout(()=>{
+    ACTIVITY_LOG_STATE.q = document.getElementById("al_q").value.trim();
+    ACTIVITY_LOG_STATE.page = 1;
+    loadActivityLog();
+  }, 350);
+}
+
+function resetActivityLogFilters(){
+  ACTIVITY_LOG_STATE = { page: 1, role: "", action: "", q: "", date_from: "", date_to: "" };
+  renderActivityLogPage();
+}
+
+function formatActivityLogDate(dateStr){
+  if (!dateStr) return "—";
+  // created_at متخزن بصيغة CURRENT_TIMESTAMP بتاعة SQLite (UTC) "YYYY-MM-DD HH:MM:SS"
+  try{
+    const d = new Date(dateStr.replace(" ", "T") + "Z");
+    return d.toLocaleString("ar-EG", {day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit"});
+  }catch(e){ return dateStr; }
+}
+
+async function loadActivityLog(){
+  const el = document.getElementById("al_results");
+  if (!el) return;
+  el.innerHTML = `<div class="loading-row"><span class="spinner"></span> بيتحمّل...</div>`;
+
+  const params = { page: ACTIVITY_LOG_STATE.page, page_size: 50 };
+  if (ACTIVITY_LOG_STATE.role) params.role = ACTIVITY_LOG_STATE.role;
+  if (ACTIVITY_LOG_STATE.action) params.action = ACTIVITY_LOG_STATE.action;
+  if (ACTIVITY_LOG_STATE.q) params.q = ACTIVITY_LOG_STATE.q;
+  if (ACTIVITY_LOG_STATE.date_from) params.date_from = ACTIVITY_LOG_STATE.date_from;
+  if (ACTIVITY_LOG_STATE.date_to) params.date_to = ACTIVITY_LOG_STATE.date_to;
+  const qs = new URLSearchParams(params).toString();
+
+  let data;
+  try{
+    data = await api(`/api/admin/activity-log?${qs}`);
+  }catch(e){
+    el.innerHTML = `<div class="empty-state"><div class="empty-title">حصل خطأ أثناء تحميل السجل</div></div>`;
+    return;
+  }
+
+  if (!data.items.length){
+    el.innerHTML = `<div class="empty-state"><div class="empty-icon"><i data-lucide="inbox" style="width:22px;height:22px;"></i></div><div class="empty-title">مفيش نتائج مطابقة</div></div>`;
+    icons();
+    return;
+  }
+
+  const totalPages = Math.max(1, Math.ceil(data.total / data.page_size));
+
+  el.innerHTML = `
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th>الوقت</th><th>الاسم</th><th>الدور</th><th>الإجراء</th><th>التفاصيل</th><th>المجموعة</th>
+      </tr></thead>
+      <tbody>
+        ${data.items.map(r=>{
+          const roleInfo = ACTIVITY_ROLE_BADGES[r.actor_role] || {label:r.actor_role||"—", cls:"badge-gray"};
+          return `
+          <tr>
+            <td style="white-space:nowrap;font-size:12.5px;color:var(--text-3);">${formatActivityLogDate(r.created_at)}</td>
+            <td style="font-weight:600;">${escapeHtml(r.actor_name || "—")}</td>
+            <td><span class="badge ${roleInfo.cls}">${roleInfo.label}</span></td>
+            <td>${escapeHtml(r.action_label || r.action)}</td>
+            <td style="max-width:340px;">${escapeHtml(r.description || "")}</td>
+            <td>${r.group_name ? `<span class="badge badge-teal">${escapeHtml(r.group_name)}</span>` : "—"}</td>
+          </tr>`;
+        }).join("")}
+      </tbody>
+    </table></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 4px 4px;flex-wrap:wrap;gap:8px;">
+      <div style="font-size:12.5px;color:var(--text-3);">إجمالي ${data.total} سجل</div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button class="btn btn-ghost" ${data.page<=1?"disabled":""} onclick="changeActivityLogPage(-1)"><i data-lucide="chevron-right" style="width:14px;height:14px;"></i> السابق</button>
+        <span style="font-size:12.5px;color:var(--text-3);">صفحة ${data.page} من ${totalPages}</span>
+        <button class="btn btn-ghost" ${data.page>=totalPages?"disabled":""} onclick="changeActivityLogPage(1)">التالي <i data-lucide="chevron-left" style="width:14px;height:14px;"></i></button>
+      </div>
+    </div>
+  `;
+  icons();
+}
+
+function changeActivityLogPage(delta){
+  ACTIVITY_LOG_STATE.page = Math.max(1, ACTIVITY_LOG_STATE.page + delta);
+  loadActivityLog();
+}
 
 
 

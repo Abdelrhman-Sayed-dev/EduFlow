@@ -446,6 +446,69 @@ def assert_supervisor_owns_group(conn, session, group_id):
             raise HTTPException(status_code=403, detail="مش مسموح لك تتعامل مع مجموعة غير مجموعتك")
 
 
+# ---------------------------------------------------------------------------
+# سجل الأنشطة (Activity Log) - تسجيل دخول/خروج + أهم الإجراءات على مستوى النظام
+# ---------------------------------------------------------------------------
+
+# تسميات عربية للإجراءات - مستخدمة في فلتر لوحة الأدمن (GET /api/admin/activity-log)
+ACTION_LABELS = {
+    "login": "تسجيل دخول",
+    "logout": "تسجيل خروج",
+    "board_image_upload": "رفع صورة سبورة",
+    "board_image_delete": "حذف صورة سبورة",
+    "attendance": "تسجيل حضور/غياب",
+    "quiz_score": "رصد درجة",
+    "behavior_note_add": "إضافة ملاحظة سلوكية",
+    "behavior_note_delete": "حذف ملاحظة سلوكية",
+    "homework_add": "إضافة واجب",
+    "homework_update": "تعديل واجب",
+    "homework_delete": "حذف واجب",
+    "payment": "تسجيل دفعة اشتراك",
+    "video_upload": "رفع فيديو",
+    "video_delete": "حذف فيديو",
+    "student_add": "إضافة طالب",
+    "student_bulk_add": "استيراد طلاب",
+    "student_update": "تعديل بيانات طالب",
+    "student_delete": "حذف طالب",
+    "user_add": "إضافة مستخدم (مشرف/مدرس)",
+    "user_update": "تعديل بيانات مستخدم",
+    "user_delete": "حذف مستخدم",
+    "group_add": "إضافة مجموعة",
+    "group_update": "تعديل مجموعة",
+    "group_delete": "حذف مجموعة",
+}
+
+
+def log_activity(conn, actor_type: str, actor_id, actor_name: str, actor_role: str,
+                  action: str, description: str = None, group_id: int = None, ip: str = None):
+    """يسجل حدث في سجل الأنشطة - أي فشل هنا (مثلاً الجدول لسه مش موجود) لازم ميوقفش
+    العملية الأساسية، فبنبلعه بهدوء"""
+    try:
+        conn.execute(
+            """INSERT INTO activity_log (actor_type, actor_id, actor_name, actor_role, action, description, group_id, ip_address)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (actor_type, actor_id, actor_name, actor_role, action, description, group_id, ip)
+        )
+    except Exception:
+        pass
+
+
+def log_session_activity(conn, session: dict, action: str, description: str = None,
+                          group_id: int = None, ip: str = None):
+    """نفس log_activity لكن بتاخد الفاعل من dict الجلسة (session) اللي بيرجعه get_current_session"""
+    log_activity(
+        conn,
+        actor_type="student" if session.get("role") == "student" else "user",
+        actor_id=session.get("id"),
+        actor_name=session.get("full_name"),
+        actor_role=session.get("role"),
+        action=action,
+        description=description,
+        group_id=group_id,
+        ip=ip,
+    )
+
+
 def create_notification(conn, student_id: int, title: str, body: str = None):
     """إنشاء إشعار جديد للطالب - بيتنادى تلقائي بعد أي عملية مشرف تخص الطالب"""
     try:
@@ -605,6 +668,8 @@ def login(data: LoginIn, request: Request):
             "INSERT INTO sessions (token, user_type, user_id, expires_at) VALUES (?, 'user', ?, ?)",
             (token, user["id"], session_expiry())
         )
+        log_activity(conn, "user", user["id"], user["full_name"], user["role"],
+                     "login", f"تسجيل دخول باستخدام اسم المستخدم ({data.username})", ip=_client_ip(request))
         return {
             "token": token,
             "role": user["role"],
@@ -663,6 +728,9 @@ def login_with_code(data: CodeLoginIn, request: Request = None):
                 (token, student["id"], session_expiry())
             )
             group = conn.execute("SELECT * FROM groups WHERE id=?", (student["group_id"],)).fetchone()
+            log_activity(conn, "student", student["id"], student["full_name"], "student",
+                         "login", "تسجيل دخول بكود الدخول", group_id=student["group_id"],
+                         ip=ip_key.split("ip:", 1)[-1] if ip_key else None)
             return {
                 "token": token, "role": "student", "full_name": student["full_name"],
                 "id": student["id"], "group_id": student["group_id"],
@@ -683,6 +751,9 @@ def login_with_code(data: CodeLoginIn, request: Request = None):
                 "INSERT INTO sessions (token, user_type, user_id, expires_at) VALUES (?, 'user', ?, ?)",
                 (token, user["id"], session_expiry())
             )
+            log_activity(conn, "user", user["id"], user["full_name"], user["role"],
+                         "login", "تسجيل دخول بكود الدخول",
+                         ip=ip_key.split("ip:", 1)[-1] if ip_key else None)
             return {
                 "token": token, "role": user["role"], "full_name": user["full_name"],
                 "username": user["username"], "id": user["id"]
@@ -706,6 +777,20 @@ def logout(authorization: Optional[str] = Header(None)):
     if authorization and authorization.startswith("Bearer "):
         token = authorization.split(" ", 1)[1].strip()
         with get_connection() as conn:
+            sess = conn.execute("SELECT * FROM sessions WHERE token=?", (token,)).fetchone()
+            if sess:
+                try:
+                    if sess["user_type"] == "user":
+                        u = conn.execute("SELECT * FROM users WHERE id=?", (sess["user_id"],)).fetchone()
+                        if u:
+                            log_activity(conn, "user", u["id"], u["full_name"], u["role"], "logout", "تسجيل خروج")
+                    else:
+                        s = conn.execute("SELECT * FROM students WHERE id=?", (sess["user_id"],)).fetchone()
+                        if s:
+                            log_activity(conn, "student", s["id"], s["full_name"], "student",
+                                         "logout", "تسجيل خروج", group_id=s["group_id"])
+                except Exception:
+                    pass
             conn.execute("DELETE FROM sessions WHERE token=?", (token,))
     return {"message": "تم تسجيل الخروج"}
 
@@ -914,6 +999,7 @@ def add_group(group: GroupIn, session=Depends(require_roles("admin"))):
                     (slot.day_of_week, slot.start_time, slot.end_time, group_id, f"حصة {group.name}")
                 )
 
+        log_session_activity(conn, session, "group_add", f"إضافة مجموعة \"{group.name}\"", group_id=group_id)
         return {"id": group_id, "message": "تم إضافة المجموعة بنجاح"}
 
 
@@ -942,6 +1028,7 @@ def update_group(group_id: int, group: GroupIn, session=Depends(require_roles("a
                        VALUES (?, ?, ?, ?, ?)""",
                     (slot.day_of_week, slot.start_time, slot.end_time, group_id, f"حصة {group.name}")
                 )
+        log_session_activity(conn, session, "group_update", f"تعديل مجموعة \"{group.name}\"", group_id=group_id)
         return {"message": "تم تعديل المجموعة"}
 
 
@@ -973,9 +1060,12 @@ def assign_supervisor(group_id: int, data: AssignSupervisorIn, session=Depends(r
 @app.delete("/api/groups/{group_id}")
 def delete_group(group_id: int, session=Depends(require_roles("admin"))):
     with get_connection() as conn:
+        grp = conn.execute("SELECT name FROM groups WHERE id=?", (group_id,)).fetchone()
         result = conn.execute("DELETE FROM groups WHERE id=?", (group_id,))
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="المجموعة غير موجودة")
+        log_session_activity(conn, session, "group_delete",
+                              f"حذف مجموعة \"{grp['name'] if grp else group_id}\" (وكل طلابها)")
         return {"message": "تم حذف المجموعة (وكل طلابها)"}
 
 
@@ -1102,6 +1192,8 @@ def add_student(student: StudentIn, session=Depends(require_roles("admin"))):
             (student.full_name, student.phone, student.parent_phone,
              student.group_id, student.notes, code, att_code)
         )
+        log_session_activity(conn, session, "student_add", f"إضافة طالب \"{student.full_name}\"",
+                              group_id=student.group_id)
         return {"id": cur.lastrowid, "access_code": code, "attendance_code": att_code, "message": "تم إضافة الطالب بنجاح"}
 
 
@@ -1152,6 +1244,9 @@ def bulk_add_students(payload: BulkStudentsRequest, session=Depends(require_role
             except Exception:
                 errors.append({"row": idx, "name": name, "error": "حصلت مشكلة أثناء الإضافة"})
 
+        if created:
+            log_session_activity(conn, session, "student_bulk_add",
+                                  f"استيراد {len(created)} طالب دفعة واحدة (CSV)")
         return {"created_count": len(created), "created": created, "errors": errors}
 
 
@@ -1165,6 +1260,8 @@ def update_student(student_id: int, student: StudentIn, session=Depends(require_
         )
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="الطالب غير موجود")
+        log_session_activity(conn, session, "student_update", f"تعديل بيانات طالب \"{student.full_name}\" (#{student_id})",
+                              group_id=student.group_id)
         return {"message": "تم تعديل بيانات الطالب"}
 
 
@@ -1223,9 +1320,13 @@ def toggle_student_active(student_id: int, session=Depends(require_roles("admin"
 @app.delete("/api/students/{student_id}")
 def delete_student(student_id: int, session=Depends(require_roles("admin"))):
     with get_connection() as conn:
+        st = conn.execute("SELECT full_name, group_id FROM students WHERE id=?", (student_id,)).fetchone()
         result = conn.execute("DELETE FROM students WHERE id=?", (student_id,))
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="الطالب غير موجود")
+        log_session_activity(conn, session, "student_delete",
+                              f"حذف طالب \"{st['full_name'] if st else student_id}\" (#{student_id})",
+                              group_id=st["group_id"] if st else None)
         return {"message": "تم حذف الطالب"}
 
 
@@ -1290,6 +1391,7 @@ def add_user(user: UserIn, session=Depends(require_roles("admin"))):
             (user.username, hash_password(password), user.role, user.full_name, user.phone, code, gov_id)
         )
         role_label = "المشرف" if user.role == "supervisor" else "المدرس"
+        log_session_activity(conn, session, "user_add", f"إضافة {role_label} \"{user.full_name}\" ({user.role})")
         response = {"id": cur.lastrowid, "access_code": code, "message": f"تم إضافة {role_label} بنجاح"}
         if generated_password:
             response["generated_password"] = generated_password
@@ -1328,17 +1430,20 @@ def update_user(user_id: int, data: UserUpdateIn, session=Depends(require_roles(
             "UPDATE users SET full_name=?, phone=?, is_active=?, password_hash=?, governorate_id=? WHERE id=?",
             (full_name, phone, is_active, password_hash, governorate_id, user_id)
         )
+        log_session_activity(conn, session, "user_update", f"تعديل بيانات مستخدم \"{full_name}\" (#{user_id})")
         return {"message": "تم تعديل البيانات"}
 
 
 @app.delete("/api/users/{user_id}")
 def delete_user(user_id: int, session=Depends(require_roles("admin"))):
     with get_connection() as conn:
-        user = conn.execute("SELECT id FROM users WHERE id=? AND role != 'admin'", (user_id,)).fetchone()
+        user = conn.execute("SELECT * FROM users WHERE id=? AND role != 'admin'", (user_id,)).fetchone()
         if not user:
             raise HTTPException(status_code=404, detail="المستخدم غير موجود")
         conn.execute("DELETE FROM group_supervisors WHERE supervisor_id=?", (user_id,))
         conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+        log_session_activity(conn, session, "user_delete",
+                              f"حذف مستخدم \"{user['full_name']}\" ({user['role']}, #{user_id})")
         return {"message": "تم حذف المستخدم"}
 
 
@@ -1479,6 +1584,12 @@ def add_board_image(data: BoardImageIn, session=Depends(require_roles("superviso
             (data.group_id, data.session_number, data.session_date, image_url,
              data.caption, session["id"])
         )
+        grp_row = conn.execute("SELECT name FROM groups WHERE id=?", (data.group_id,)).fetchone()
+        log_session_activity(
+            conn, session, "board_image_upload",
+            f"رفع صورة سبورة لمجموعة \"{grp_row['name'] if grp_row else data.group_id}\" - حصة رقم {data.session_number}",
+            group_id=data.group_id
+        )
         group_students = conn.execute(
             "SELECT id FROM students WHERE group_id=? AND is_active=1", (data.group_id,)
         ).fetchall()
@@ -1499,6 +1610,8 @@ def delete_board_image(image_id: int, session=Depends(require_roles("supervisor"
         if session["role"] == "supervisor":
             assert_supervisor_owns_group(conn, session, img["group_id"])
         conn.execute("DELETE FROM board_images WHERE id=?", (image_id,))
+        log_session_activity(conn, session, "board_image_delete",
+                              f"حذف صورة سبورة (حصة رقم {img['session_number']})", group_id=img["group_id"])
 
         # حذف الملف الفعلي من الـ disk لو موجود
         if img["image_data"] and img["image_data"].startswith("/uploads/"):
@@ -1904,6 +2017,8 @@ async def upload_group_video(
             for sid in student_ids:
                 create_notification(conn, sid, "فيديو جديد", f"المشرف رفع فيديو جديد: {title.strip()}")
 
+        log_session_activity(conn, session, "video_upload", f"رفع فيديو \"{title.strip()}\"",
+                              group_id=group_id_list[0])
         return {"id": video_id, "linked_groups": group_id_list, "message": "تم رفع الفيديو بنجاح"}
 
 
@@ -1952,6 +2067,8 @@ def add_group_video_link(
             for sid in student_ids:
                 create_notification(conn, sid, "فيديو جديد", f"المشرف رفع فيديو جديد: {title}")
 
+        log_session_activity(conn, session, "video_upload", f"إضافة رابط فيديو \"{title}\"",
+                              group_id=group_id_list[0])
         return {"id": video_id, "linked_groups": group_id_list, "message": "تم إضافة رابط الفيديو بنجاح"}
 
 
@@ -1983,6 +2100,7 @@ def delete_video_permanently(video_id: int, session=Depends(require_roles("admin
             raise HTTPException(status_code=404, detail="الفيديو غير موجود")
 
         conn.execute("DELETE FROM group_videos WHERE id=?", (video_id,))  # video_group_links بتتشال تلقائي بالـ CASCADE
+        log_session_activity(conn, session, "video_delete", f"حذف فيديو \"{vid['title']}\" نهائيًا")
 
         # لو الفيديو رابط خارجي (video_type='link') مفيش ملف نحذفه من الديسك أصلاً
         if vid["video_type"] != "link" and vid["file_path"]:
@@ -2284,6 +2402,11 @@ def set_score(score: QuizScoreIn, session=Depends(require_roles("admin", "head_s
             "تمت إضافة درجة جديدة ✅" if is_new else "تم تعديل درجتك 📝",
             f"{quiz['title']}: {score.score} / {quiz['max_score']}"
         )
+        log_session_activity(
+            conn, session, "quiz_score",
+            f"رصد درجة لطالب #{score.student_id} في \"{quiz['title']}\": {score.score}/{quiz['max_score']}",
+            group_id=student["group_id"]
+        )
         return {"message": "تم حفظ الدرجة"}
 
 
@@ -2375,6 +2498,12 @@ def set_attendance(att: AttendanceIn, session=Depends(require_roles("admin", "he
             ON CONFLICT(student_id, session_date, session_number)
             DO UPDATE SET status=excluded.status, notes=COALESCE(excluded.notes, attendance.notes)
         """, (att.student_id, att.session_date, att.session_number, att.status, att.notes))
+        st_row = conn.execute("SELECT full_name, group_id FROM students WHERE id=?", (att.student_id,)).fetchone()
+        log_session_activity(
+            conn, session, "attendance",
+            f"تسجيل حضور للطالب \"{st_row['full_name'] if st_row else att.student_id}\" - حصة {att.session_number}: {att.status}",
+            group_id=st_row["group_id"] if st_row else None
+        )
         return {"message": "تم حفظ الحضور"}
 
 
@@ -2431,6 +2560,11 @@ def set_attendance_by_code(data: AttendanceCodeIn, session=Depends(require_roles
             ON CONFLICT(student_id, session_date, session_number)
             DO UPDATE SET status=excluded.status
         """, (student["id"], data.session_date, data.session_number, data.status))
+        log_session_activity(
+            conn, session, "attendance",
+            f"تسجيل حضور بالكود للطالب \"{student['full_name']}\" - حصة {data.session_number}: {data.status}",
+            group_id=student["group_id"]
+        )
         subscription_paid = is_student_subscribed(conn, student["id"])
         return {
             "message": "تم تسجيل الحضور", "student_name": student["full_name"], "student_id": student["id"],
@@ -2499,6 +2633,9 @@ def add_behavior_note(data: BehaviorNoteIn, session=Depends(require_roles("admin
             "INSERT INTO behavior_notes (student_id, author_id, note_type, note) VALUES (?, ?, ?, ?)",
             (data.student_id, session["id"], data.note_type, data.note)
         )
+        log_session_activity(conn, session, "behavior_note_add",
+                              f"إضافة ملاحظة سلوكية ({data.note_type}) لطالب #{data.student_id}",
+                              group_id=student["group_id"])
         return {"id": cur.lastrowid, "message": "تم إضافة الملاحظة بنجاح"}
 
 
@@ -2513,6 +2650,8 @@ def delete_behavior_note(note_id: int, session=Depends(require_roles("admin", "h
             if student:
                 assert_supervisor_owns_group(conn, session, student["group_id"])
         conn.execute("DELETE FROM behavior_notes WHERE id=?", (note_id,))
+        log_session_activity(conn, session, "behavior_note_delete",
+                              f"حذف ملاحظة سلوكية لطالب #{note['student_id']}")
         return {"message": "تم حذف الملاحظة"}
 
 
@@ -2711,6 +2850,11 @@ def set_payment(data: PaymentIn, session=Depends(require_roles("admin", "head_su
             DO UPDATE SET amount=excluded.amount, is_paid=excluded.is_paid,
                           paid_date=excluded.paid_date, notes=excluded.notes
         """, (data.student_id, data.month, amount, int(data.is_paid), paid_date, data.notes))
+        log_session_activity(
+            conn, session, "payment",
+            f"تسجيل دفعة لطالب #{data.student_id} - شهر {data.month}: {'مسدد' if data.is_paid else 'غير مسدد'}",
+            group_id=student["group_id"]
+        )
         return {"message": "تم حفظ بيانات الدفع"}
 
 
@@ -2756,6 +2900,10 @@ def set_bulk_payment(data: BulkPaymentIn, session=Depends(require_roles("admin",
             """, (sid, data.month, amount, int(data.is_paid), paid_date))
             updated += 1
 
+        log_session_activity(
+            conn, session, "payment",
+            f"تحديث اشتراك جماعي لـ {updated} طالب - شهر {data.month}: {'مسدد' if data.is_paid else 'غير مسدد'}"
+        )
         return {"message": f"تم تحديث اشتراك {updated} طالب", "updated": updated}
 
 
@@ -2885,22 +3033,39 @@ def get_monthly_report(student_id: int, month: str, session=Depends(get_current_
                 att_summary[a["status"]] += 1
 
         scores_rows = conn.execute("""
-            SELECT q.title, q.quiz_date, q.max_score, qs.score
+            SELECT q.title, q.quiz_date, q.max_score, qs.score, q.quiz_type
             FROM quiz_scores qs
             JOIN quizzes q ON q.id = qs.quiz_id
             WHERE qs.student_id = ? AND q.quiz_date LIKE ?
             ORDER BY q.quiz_date
         """, (student_id, f"{month}%")).fetchall()
         scores = [dict(r) for r in scores_rows]
-        avg_pct = None
-        if scores:
-            pcts = [ (s["score"]/s["max_score"]*100) for s in scores if s["score"] is not None and s["max_score"] ]
-            if pcts:
-                avg_pct = round(sum(pcts)/len(pcts), 1)
+        quiz_scores = [s for s in scores if s.get("quiz_type") != "exam"]
+        exam_scores = [s for s in scores if s.get("quiz_type") == "exam"]
+
+        def _avg(rows):
+            pcts = [ (s["score"]/s["max_score"]*100) for s in rows if s["score"] is not None and s["max_score"] ]
+            return round(sum(pcts)/len(pcts), 1) if pcts else None
+
+        avg_pct = _avg(scores)
+        quiz_avg_pct = _avg(quiz_scores)
+        exam_avg_pct = _avg(exam_scores)
 
         payment = conn.execute(
             "SELECT * FROM payments WHERE student_id=? AND month=?", (student_id, month)
         ).fetchone()
+
+        # ملاحظات المشرف السلوكية اللي اتسجلت في نفس الشهر - تظهر في التقرير الشهري (مش للطالب)
+        supervisor_notes = []
+        if session["role"] != "student":
+            notes_rows = conn.execute("""
+                SELECT bn.*, u.full_name as author_name
+                FROM behavior_notes bn
+                LEFT JOIN users u ON u.id = bn.author_id
+                WHERE bn.student_id = ? AND bn.created_at LIKE ?
+                ORDER BY bn.created_at DESC
+            """, (student_id, f"{month}%")).fetchall()
+            supervisor_notes = [dict(r) for r in notes_rows]
 
         return {
             "student": dict(student),
@@ -2908,8 +3073,13 @@ def get_monthly_report(student_id: int, month: str, session=Depends(get_current_
             "attendance": attendance,
             "attendance_summary": att_summary,
             "scores": scores,
+            "quiz_scores": quiz_scores,
+            "exam_scores": exam_scores,
             "average_percentage": avg_pct,
+            "quiz_average_percentage": quiz_avg_pct,
+            "exam_average_percentage": exam_avg_pct,
             "payment": dict(payment) if payment else None,
+            "supervisor_notes": supervisor_notes,
         }
 
 
@@ -2970,6 +3140,8 @@ def add_homework(data: HomeworkIn, session=Depends(require_roles("admin", "head_
                     "INSERT OR IGNORE INTO homework_submissions (homework_id, student_id) VALUES (?,?)",
                     (hw_id, s["id"])
                 )
+            log_session_activity(conn, session, "homework_add",
+                                  f"إضافة واجب لحصة رقم {data.session_number}", group_id=data.group_id)
             return {"id": hw_id, "message": "تم إضافة الواجب"}
         except Exception:
             raise HTTPException(status_code=400, detail="في واجب موجود بالفعل لنفس الحصة دي")
@@ -2984,13 +3156,17 @@ def update_homework(hw_id: int, data: HomeworkIn, session=Depends(require_roles(
             "UPDATE homework SET description=?, session_date=? WHERE id=?",
             (data.description, data.session_date, hw_id)
         )
+        log_session_activity(conn, session, "homework_update", f"تعديل واجب #{hw_id}", group_id=data.group_id)
         return {"message": "تم تعديل الواجب"}
 
 
 @app.delete("/api/homework/{hw_id}")
 def delete_homework(hw_id: int, session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
     with get_connection() as conn:
+        hw = conn.execute("SELECT group_id FROM homework WHERE id=?", (hw_id,)).fetchone()
         conn.execute("DELETE FROM homework WHERE id=?", (hw_id,))
+        log_session_activity(conn, session, "homework_delete", f"حذف واجب #{hw_id}",
+                              group_id=hw["group_id"] if hw else None)
         return {"message": "تم حذف الواجب"}
 
 
@@ -3978,6 +4154,94 @@ def get_rankings(stage_id: int, governorate_id: Optional[int] = None,
                 "by_pass_rate": grp_pass_rank,
                 "by_attendance": grp_att_rank,
             }
+        }
+
+
+# ---------------------------------------------------------------------------
+# سجل الأنشطة (Activity Log) - صفحة أدمن (ومشرف المشرفين اطلاع فقط) لمراجعة
+# كل عمليات الدخول/الخروج وأهم الإجراءات في النظام، مع فلترة حسب الدور/نوع
+# الإجراء/التاريخ/بحث بالاسم
+# ---------------------------------------------------------------------------
+
+@app.get("/api/admin/activity-log/actions")
+def get_activity_log_actions(session=Depends(require_roles("admin", "head_supervisor"))):
+    """قايمة أنواع الإجراءات المتاحة للفلترة، بأسمائها العربية"""
+    return [{"key": k, "label": v} for k, v in ACTION_LABELS.items()]
+
+
+@app.get("/api/admin/activity-log")
+def get_activity_log(
+    role: Optional[str] = None,           # admin / teacher / supervisor / head_supervisor / student
+    action: Optional[str] = None,         # مفتاح من ACTION_LABELS
+    q: Optional[str] = None,              # بحث بالاسم أو التفاصيل
+    group_id: Optional[int] = None,
+    date_from: Optional[str] = None,      # YYYY-MM-DD
+    date_to: Optional[str] = None,        # YYYY-MM-DD
+    page: int = 1,
+    page_size: int = 50,
+    session=Depends(require_roles("admin", "head_supervisor")),
+):
+    """
+    يرجع سجل الأنشطة مفلتر ومقسم صفحات (Pagination) - الأحدث أولاً.
+    كل صف فيه: مين عمل الإجراء (الاسم + الدور)، نوع الإجراء، تفاصيله، اسم
+    المجموعة المرتبطة (لو موجودة)، ووقت حدوثه.
+    """
+    page = max(1, page)
+    page_size = min(max(1, page_size), 200)
+
+    where = ["1=1"]
+    params: list = []
+
+    if role:
+        where.append("al.actor_role = ?")
+        params.append(role)
+    if action:
+        where.append("al.action = ?")
+        params.append(action)
+    if group_id:
+        where.append("al.group_id = ?")
+        params.append(group_id)
+    if date_from:
+        where.append("al.created_at >= ?")
+        params.append(date_from)
+    if date_to:
+        where.append("al.created_at <= ?")
+        params.append(date_to + " 23:59:59")
+    if q:
+        where.append("(al.actor_name LIKE ? OR al.description LIKE ?)")
+        like = f"%{q.strip()}%"
+        params.extend([like, like])
+
+    where_sql = " AND ".join(where)
+
+    with get_connection() as conn:
+        total = conn.execute(
+            f"SELECT COUNT(*) as c FROM activity_log al WHERE {where_sql}", params
+        ).fetchone()["c"]
+
+        rows = conn.execute(
+            f"""
+            SELECT al.*, g.name as group_name
+            FROM activity_log al
+            LEFT JOIN groups g ON g.id = al.group_id
+            WHERE {where_sql}
+            ORDER BY al.id DESC
+            LIMIT ? OFFSET ?
+            """,
+            params + [page_size, (page - 1) * page_size],
+        ).fetchall()
+
+        items = []
+        for r in rows:
+            d = dict(r)
+            d["action_label"] = ACTION_LABELS.get(d["action"], d["action"])
+            items.append(d)
+
+        return {
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "items": items,
         }
 
 

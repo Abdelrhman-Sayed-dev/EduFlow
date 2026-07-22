@@ -653,6 +653,30 @@ def init_db():
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_type, user_id, is_read)")
 
+        # ---------------------------------------------------------------
+        # سجل الأنشطة (Activity Log) - بيسجل كل عمليات تسجيل الدخول/الخروج
+        # وأهم الإجراءات (رفع سبورة، أخذ حضور، رصد درجة...) عشان الأدمن
+        # يقدر يراجع مين عمل إيه وإمتى
+        # ---------------------------------------------------------------
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS activity_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            actor_type TEXT NOT NULL CHECK(actor_type IN ('user','student')),
+            actor_id INTEGER,
+            actor_name TEXT,
+            actor_role TEXT,
+            action TEXT NOT NULL,
+            description TEXT,
+            group_id INTEGER,
+            ip_address TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE SET NULL
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_activity_log_role ON activity_log(actor_role)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_activity_log_created ON activity_log(created_at)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_activity_log_action ON activity_log(action)")
+
         # ترحيل قيد الأدوار القديم عشان يسمح بدور head_supervisor الجديد
         _migrate_users_role_check(cur)
 
