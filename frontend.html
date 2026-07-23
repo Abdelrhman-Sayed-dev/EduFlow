@@ -190,6 +190,25 @@ tbody tr:hover{background:var(--primary-10);}
 .act-del:hover{background:var(--danger);color:#fff;box-shadow:0 2px 8px rgba(239,68,68,.25);}
 .act-divider{width:1px;height:18px;background:var(--border);margin:0 2px;flex-shrink:0;}
 
+/* قائمة إجراءات الصف (المزيد) - عشان كل ريكورد يفضل سطر واحد حتى لو الإجراءات كتير */
+.row-menu-trigger{width:30px;height:30px;border-radius:var(--radius-sm);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text-2);background:var(--surface);transition:background .1s var(--ease),color .1s var(--ease),border-color .1s var(--ease);flex-shrink:0;}
+.row-menu-trigger:hover, .row-menu-trigger.open{background:var(--surface-3);color:var(--text);border-color:var(--border-2);}
+.row-menu{position:fixed;min-width:210px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow-lg);z-index:9999;padding:6px;display:none;max-height:70vh;overflow-y:auto;}
+.row-menu.open{display:block;}
+.row-menu-item{display:flex;align-items:center;gap:9px;width:100%;padding:8px 10px;border-radius:8px;border:none;background:transparent;cursor:pointer;font-family:'Cairo',sans-serif;font-size:12.5px;font-weight:600;color:var(--text);text-align:right;white-space:nowrap;}
+.row-menu-item:hover{background:var(--surface-3);}
+.row-menu-item i{width:15px;height:15px;flex-shrink:0;color:var(--text-2);}
+.row-menu-item.danger{color:#991B1B;}
+.row-menu-item.danger:hover{background:var(--danger-bg);}
+.row-menu-item.danger i{color:#991B1B;}
+.row-menu-item.warn{color:#92400E;}
+.row-menu-item.warn:hover{background:var(--warning-bg);}
+.row-menu-item.warn i{color:#92400E;}
+.row-menu-item.success{color:#065F46;}
+.row-menu-item.success:hover{background:var(--success-bg);}
+.row-menu-item.success i{color:#065F46;}
+.row-menu-divider{height:1px;background:var(--border);margin:5px 4px;}
+
 .badge{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:600;line-height:1.5;}
 .badge-teal{background:var(--primary-10);color:var(--primary-60);}
 .badge-blue{background:var(--info-bg);color:#1D4ED8;}
@@ -2743,20 +2762,8 @@ async function renderStudentsPage(){
               ${canManage ? `
               <td><code style="font-size:12px;background:var(--surface-3);padding:3px 8px;border-radius:6px;">${s.access_code||"—"}</code></td>
               <td>${s.is_active ? `<span class="badge badge-green">مفعّل</span>` : `<span class="badge badge-red">موقوف</span>`}</td>` : ""}
-              <td class="td-actions">
-                ${(s.phone || s.parent_phone) ? `<button class="action-btn" title="تواصل" onclick="openContactPopup('${jsAttr(s.full_name)}', '${jsAttr(s.phone||"")}', '${jsAttr(s.parent_phone||"")}')"><i data-lucide="phone" style="width:15px;height:15px;"></i></button>` : ""}
-                ${canViewExtra ? `
-                <button class="action-btn" title="ملاحظات سلوكية" onclick="openBehaviorNotesModal(${s.id}, '${jsAttr(s.full_name)}')"><i data-lucide="message-square-text" style="width:15px;height:15px;"></i></button>
-                <button class="action-btn" title="تقرير شهري" onclick="openMonthlyReportModal(${s.id}, '${jsAttr(s.full_name)}')"><i data-lucide="file-bar-chart" style="width:15px;height:15px;"></i></button>` : ""}
-                ${canManage ? `
-                <button class="action-btn" title="طباعة كارت الدخول" onclick="printStudentCard('${jsAttr(s.full_name)}', '${jsAttr(s.group_name)}', '${jsAttr(s.access_code||'')}', '${jsAttr(s.attendance_code||'')}')"><i data-lucide="printer" style="width:15px;height:15px;"></i></button>
-                <button class="action-btn" title="كود دخول جديد" onclick="resetStudentCode(${s.id})"><i data-lucide="refresh-cw" style="width:15px;height:15px;"></i></button>
-                <button class="action-btn" title="كود حضور جديد" onclick="resetStudentAttendanceCode(${s.id})"><i data-lucide="hash" style="width:15px;height:15px;"></i></button>
-                <button class="action-btn" title="فك ربط الجهاز (لو غيّر تليفونه)" onclick="resetStudentDevice(${s.id})"><i data-lucide="smartphone" style="width:15px;height:15px;"></i></button>
-                <span class="act-divider"></span>
-                <button class="act-btn ${s.is_active?'act-pause':'act-play'}" title="${s.is_active?'إيقاف الطالب':'تفعيل الطالب'}" onclick="toggleStudentActive(${s.id})"><i data-lucide="${s.is_active?'pause':'play'}" style="width:13px;height:13px;"></i>${s.is_active?'إيقاف':'تفعيل'}</button>
-                <button class="act-btn act-edit" title="تعديل بيانات الطالب" onclick="openEditStudentModal(${s.id})"><i data-lucide="pencil" style="width:13px;height:13px;"></i>تعديل</button>
-                <button class="act-btn act-del" title="حذف الطالب نهائيًا" onclick="deleteStudent(${s.id}, '${jsAttr(s.full_name)}')"><i data-lucide="trash-2" style="width:13px;height:13px;"></i>حذف</button>` : ""}
+              <td class="td-actions" style="justify-content:flex-end;flex-wrap:nowrap;">
+                <button class="row-menu-trigger" title="خيارات الطالب" onclick="openStudentRowMenu(this, ${s.id})"><i data-lucide="more-vertical" style="width:15px;height:15px;"></i></button>
               </td>
             </tr>`).join("") || `<tr><td colspan="8" style="text-align:center;color:var(--text-3);padding:30px;">لا يوجد طلاب بعد</td></tr>`}
         </tbody>
@@ -2777,6 +2784,33 @@ function filterStudentsTable(){
 }
 
 let STUDENTS_PAGE_DATA = [];
+
+// بيبني وبيفتح قائمة "المزيد" لإجراءات صف الطالب - عشان كل ريكورد يفضل سطر واحد
+function openStudentRowMenu(triggerBtn, studentId){
+  const s = STUDENTS_PAGE_DATA.find(x => x.id === studentId);
+  if (!s) return;
+  const canManage = SESSION.role === "admin";
+  const canViewExtra = SESSION.role === "admin" || SESSION.role === "teacher";
+  let items = "";
+  if (s.phone || s.parent_phone){
+    items += `<button class="row-menu-item" onclick="closeRowMenu();openContactPopup('${jsAttr(s.full_name)}', '${jsAttr(s.phone||"")}', '${jsAttr(s.parent_phone||"")}')"><i data-lucide="phone"></i> تواصل</button>`;
+  }
+  if (canViewExtra){
+    items += `<button class="row-menu-item" onclick="closeRowMenu();openBehaviorNotesModal(${s.id}, '${jsAttr(s.full_name)}')"><i data-lucide="message-square-text"></i> ملاحظات سلوكية</button>`;
+    items += `<button class="row-menu-item" onclick="closeRowMenu();openMonthlyReportModal(${s.id}, '${jsAttr(s.full_name)}')"><i data-lucide="file-bar-chart"></i> تقرير شهري</button>`;
+  }
+  if (canManage){
+    items += `<button class="row-menu-item" onclick="closeRowMenu();printStudentCard('${jsAttr(s.full_name)}', '${jsAttr(s.group_name)}', '${jsAttr(s.access_code||'')}', '${jsAttr(s.attendance_code||'')}')"><i data-lucide="printer"></i> طباعة كارت الدخول</button>`;
+    items += `<button class="row-menu-item" onclick="closeRowMenu();resetStudentCode(${s.id})"><i data-lucide="refresh-cw"></i> كود دخول جديد</button>`;
+    items += `<button class="row-menu-item" onclick="closeRowMenu();resetStudentAttendanceCode(${s.id})"><i data-lucide="hash"></i> كود حضور جديد</button>`;
+    items += `<button class="row-menu-item" onclick="closeRowMenu();resetStudentDevice(${s.id})"><i data-lucide="smartphone"></i> فك ربط الجهاز</button>`;
+    items += `<div class="row-menu-divider"></div>`;
+    items += `<button class="row-menu-item ${s.is_active?'warn':'success'}" onclick="closeRowMenu();toggleStudentActive(${s.id})"><i data-lucide="${s.is_active?'pause':'play'}"></i> ${s.is_active?'إيقاف الطالب':'تفعيل الطالب'}</button>`;
+    items += `<button class="row-menu-item" onclick="closeRowMenu();openEditStudentModal(${s.id})"><i data-lucide="pencil"></i> تعديل بيانات الطالب</button>`;
+    items += `<button class="row-menu-item danger" onclick="closeRowMenu();deleteStudent(${s.id}, '${jsAttr(s.full_name)}')"><i data-lucide="trash-2"></i> حذف الطالب</button>`;
+  }
+  toggleRowMenu(triggerBtn, items);
+}
 
 // بيصدّر بيانات الطلاب لملف CSV تقدر تحتفظ بيه كنسخة احتياطية أو تفتحه في Excel.
 // بيصدّر الطلاب المعروضين حاليًا بس (لو مطبّق فلتر بحث/مجموعة، بيحترمه)
@@ -3504,6 +3538,56 @@ function normalizePhoneForWa(phone){
   else if (p.startsWith("0")) p = "20" + p.slice(1); // افتراضيًا مصر - عدّل الكود لو محتاج دولة تانية
   return p;
 }
+
+// ══════════ قائمة إجراءات الصف (المزيد) - عشان كل ريكورد في الجداول يفضل سطر واحد ══════════
+// بتستخدم عنصر واحد مشترك في الصفحة، بيتحرك ويتملى حسب الزرار اللي اتضغط، عشان يفضل شغال بره الجدول ومايتقصش
+(function(){
+  let currentTriggerBtn = null;
+  window.toggleRowMenu = function(triggerBtn, itemsHtml){
+    let menu = document.getElementById("sharedRowMenu");
+    if (!menu){
+      menu = document.createElement("div");
+      menu.id = "sharedRowMenu";
+      menu.className = "row-menu";
+      document.body.appendChild(menu);
+    }
+    const isSameTrigger = currentTriggerBtn === triggerBtn && menu.classList.contains("open");
+    closeRowMenu();
+    if (isSameTrigger) return;
+    menu.innerHTML = itemsHtml;
+    menu.classList.add("open");
+    triggerBtn.classList.add("open");
+    currentTriggerBtn = triggerBtn;
+    positionRowMenu(triggerBtn, menu);
+    icons();
+  };
+  function positionRowMenu(triggerBtn, menu){
+    const rect = triggerBtn.getBoundingClientRect();
+    const menuWidth = menu.offsetWidth || 210;
+    const menuHeight = menu.offsetHeight || 0;
+    let left = rect.left - menuWidth + rect.width;
+    if (left < 8) left = 8;
+    let top = rect.bottom + 6;
+    if (top + menuHeight > window.innerHeight - 8) top = Math.max(8, rect.top - menuHeight - 6);
+    menu.style.left = left + "px";
+    menu.style.top = top + "px";
+  }
+  window.closeRowMenu = function(){
+    const menu = document.getElementById("sharedRowMenu");
+    if (menu) menu.classList.remove("open");
+    if (currentTriggerBtn) currentTriggerBtn.classList.remove("open");
+    currentTriggerBtn = null;
+  };
+  document.addEventListener("click", (e)=>{
+    const menu = document.getElementById("sharedRowMenu");
+    if (!menu || !menu.classList.contains("open")) return;
+    if (menu.contains(e.target)) return;
+    if (currentTriggerBtn && currentTriggerBtn.contains(e.target)) return;
+    closeRowMenu();
+  });
+  window.addEventListener("scroll", ()=>{ closeRowMenu(); }, true);
+  window.addEventListener("resize", ()=>{ closeRowMenu(); });
+})();
 
 function openContactPopup(name, phone, parentPhone){
   const rows = [];
