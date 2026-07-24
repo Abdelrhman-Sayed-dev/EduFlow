@@ -2725,6 +2725,7 @@ function deleteGroup(id, name){
    الطلاب - Students
 ===================================================================== */
 async function renderStudentsPage(){
+  if (window.closeRowMenu) closeRowMenu();
   const canManage = SESSION.role === "admin";
   const canSeeCodes = canManage || SESSION.role === "supervisor";
   const [students, groups] = await Promise.all([loadStudents(), loadGroups()]);
@@ -2763,7 +2764,7 @@ async function renderStudentsPage(){
               <td><code style="font-size:12px;background:var(--surface-3);padding:3px 8px;border-radius:6px;">${s.access_code||"—"}</code></td>
               <td>${s.is_active ? `<span class="badge badge-green">مفعّل</span>` : `<span class="badge badge-red">موقوف</span>`}</td>` : ""}
               <td class="td-actions" style="justify-content:flex-end;flex-wrap:nowrap;">
-                <button class="row-menu-trigger" title="خيارات الطالب" onclick="openStudentRowMenu(this, ${s.id})"><i data-lucide="more-vertical" style="width:15px;height:15px;"></i></button>
+                <button class="row-menu-trigger" title="خيارات الطالب" onclick="event.stopPropagation(); openStudentRowMenu(this, ${s.id})"><i data-lucide="more-vertical" style="width:15px;height:15px;"></i></button>
               </td>
             </tr>`).join("") || `<tr><td colspan="8" style="text-align:center;color:var(--text-3);padding:30px;">لا يوجد طلاب بعد</td></tr>`}
         </tbody>
@@ -3543,13 +3544,27 @@ function normalizePhoneForWa(phone){
 // بتستخدم عنصر واحد مشترك في الصفحة، بيتحرك ويتملى حسب الزرار اللي اتضغط، عشان يفضل شغال بره الجدول ومايتقصش
 (function(){
   let currentTriggerBtn = null;
+  let lastToggleAt = 0;
   window.toggleRowMenu = function(triggerBtn, itemsHtml){
+    // حماية من الضغطة المزدوجة (بتحصل أحيانًا على الموبايل بسبب click event بيتبعت مرتين لنفس اللمسة)
+    const now = Date.now();
+    if (currentTriggerBtn === triggerBtn && (now - lastToggleAt) < 300){
+      lastToggleAt = now;
+      return;
+    }
+    lastToggleAt = now;
+
     let menu = document.getElementById("sharedRowMenu");
     if (!menu){
       menu = document.createElement("div");
       menu.id = "sharedRowMenu";
       menu.className = "row-menu";
       document.body.appendChild(menu);
+    }
+    // لو الزرار اللي كان فاتح القايمة اتشال من الصفحة (الجدول اتعمله ريفريش)، اعتبر معدش فيه قايمة مفتوحة فعليًا
+    if (currentTriggerBtn && !currentTriggerBtn.isConnected){
+      currentTriggerBtn = null;
+      menu.classList.remove("open");
     }
     const isSameTrigger = currentTriggerBtn === triggerBtn && menu.classList.contains("open");
     closeRowMenu();
@@ -3567,8 +3582,10 @@ function normalizePhoneForWa(phone){
     const menuHeight = menu.offsetHeight || 0;
     let left = rect.left - menuWidth + rect.width;
     if (left < 8) left = 8;
+    if (left + menuWidth > window.innerWidth - 8) left = Math.max(8, window.innerWidth - menuWidth - 8);
     let top = rect.bottom + 6;
-    if (top + menuHeight > window.innerHeight - 8) top = Math.max(8, rect.top - menuHeight - 6);
+    if (top + menuHeight > window.innerHeight - 8) top = rect.top - menuHeight - 6;
+    if (top < 8) top = 8;
     menu.style.left = left + "px";
     menu.style.top = top + "px";
   }
