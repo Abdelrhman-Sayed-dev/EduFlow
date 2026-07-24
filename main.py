@@ -29,14 +29,6 @@ from database import (
     get_first_subscription_date, get_paid_months
 )
 
-# ---------------------------------------------------------------------------
-# مولّد بطاقات الطلاب (PDF) - خاص بصفحة "بطاقات الطلاب" في لوحة الأدمن فقط
-# ---------------------------------------------------------------------------
-import sys as _sys
-_sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "cardgen"))
-from student_cards import generate_student_cards_pdf, get_template_preview_png
-from card_templates import TEMPLATES as CARD_TEMPLATES
-
 app = FastAPI(title="منصة المدرس - نظام إدارة الطلاب والمجموعات")
 
 # ---------------------------------------------------------------------------
@@ -4243,94 +4235,6 @@ def get_activity_log(
             "page_size": page_size,
             "items": items,
         }
-
-
-# ---------------------------------------------------------------------------
-# بطاقات الطلاب (Student Cards) - صفحة أدمن فقط لإنشاء وطباعة بطاقات الطلاب
-# بشكل جماعي كملف PDF واحد جاهز للطباعة
-# ---------------------------------------------------------------------------
-
-# بيانات الهوية الثابتة المطبوعة على كل بطاقة - قابلة للتعديل من متغيرات البيئة
-# من غير ما نلمس كود التصميم نفسه
-CARD_BRAND_INFO = {
-    "doctor_prefix": "دكتور",
-    "doctor_name": os.environ.get("CARD_DOCTOR_NAME", "هيثم كمال"),
-    "subject": os.environ.get("CARD_SUBJECT", "الكيمياء والعلوم المتكاملة"),
-    "platform_name": os.environ.get("CARD_PLATFORM_NAME", "EduFlow"),
-    "academic_year": os.environ.get("CARD_ACADEMIC_YEAR", "2026 - 2027"),
-}
-
-
-@app.get("/api/admin/student-cards/templates")
-def list_card_templates(session=Depends(require_roles("admin"))):
-    """قايمة تصاميم البطاقات المتاحة (Templates) + عدد الكروت في الصفحة لكل تصميم"""
-    return [
-        {"key": key, "label": t["label"], "cards_per_page": t["cards_per_page"]}
-        for key, t in CARD_TEMPLATES.items()
-    ]
-
-
-@app.get("/api/admin/student-cards/templates/{template_key}/preview")
-def preview_card_template(template_key: str, session=Depends(get_session_for_media)):
-    """صورة معاينة صغيرة (PNG) لتصميم بطاقة معين ببيانات تجريبية - تتخزن في الذاكرة بعد أول توليد.
-    بيقبل التوكن كـ query param كمان (زي مواد الفيديو) عشان تشتغل جوه <img src="..."> مباشرة"""
-    if session["role"] != "admin":
-        raise HTTPException(status_code=403, detail="مفيش صلاحية للوصول لده")
-    if template_key not in CARD_TEMPLATES:
-        raise HTTPException(status_code=404, detail="التصميم غير موجود")
-    try:
-        png_bytes = get_template_preview_png(template_key, CARD_BRAND_INFO)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"تعذر توليد معاينة التصميم: {e}")
-    return Response(content=png_bytes, media_type="image/png")
-
-
-class StudentCardsGenerateIn(BaseModel):
-    scope: str = Field(..., description="'all' لكل الطلاب أو 'groups' لمجموعات محددة")
-    group_ids: Optional[List[int]] = None
-    template: str = "A"
-
-
-@app.post("/api/admin/student-cards/generate")
-def generate_student_cards(payload: StudentCardsGenerateIn, session=Depends(require_roles("admin"))):
-    """
-    يجلب الطلاب حسب الفلتر (كل الطلاب / مجموعات محددة)، ينشئ بطاقة لكل طالب بالتصميم
-    المختار، ويجمعهم في ملف PDF واحد جاهز للطباعة (Grid احترافي + علامات قص).
-    البيانات كلها بتتسحب مباشرة من قاعدة البيانات - مفيش أي إدخال يدوي.
-    """
-    if payload.template not in CARD_TEMPLATES:
-        raise HTTPException(status_code=400, detail="تصميم البطاقة غير موجود")
-    if payload.scope not in ("all", "groups"):
-        raise HTTPException(status_code=400, detail="قيمة scope غير صحيحة")
-    if payload.scope == "groups" and not payload.group_ids:
-        raise HTTPException(status_code=400, detail="لازم تختار مجموعة واحدة على الأقل")
-
-    with get_connection() as conn:
-        query = """
-            SELECT s.id, s.full_name, s.attendance_code, s.access_code, g.name as group_name
-            FROM students s
-            JOIN groups g ON g.id = s.group_id
-            WHERE s.is_active = 1
-        """
-        params = []
-        if payload.scope == "groups":
-            placeholders = ",".join("?" for _ in payload.group_ids)
-            query += f" AND s.group_id IN ({placeholders})"
-            params.extend(payload.group_ids)
-        query += " ORDER BY g.name, s.full_name"
-
-        rows = conn.execute(query, params).fetchall()
-        students = [dict(r) for r in rows]
-
-    pdf_bytes, page_count = generate_student_cards_pdf(students, payload.template, CARD_BRAND_INFO)
-
-    headers = {
-        "Content-Disposition": 'attachment; filename="student_cards.pdf"',
-        "X-Student-Count": str(len(students)),
-        "X-Page-Count": str(page_count),
-        "Access-Control-Expose-Headers": "X-Student-Count, X-Page-Count",
-    }
-    return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
 
 
 # ---------------------------------------------------------------------------

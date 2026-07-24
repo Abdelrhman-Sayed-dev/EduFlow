@@ -2,7 +2,3 @@ fastapi
 uvicorn[standard]
 bcrypt
 python-multipart
-reportlab
-arabic-reshaper
-python-bidi
-pypdfium2
