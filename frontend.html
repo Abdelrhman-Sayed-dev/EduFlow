@@ -2867,6 +2867,7 @@ async function renderSubscriptionsPage(){
         <button class="seg-btn ${SUBSCRIPTIONS_STATUS_TAB==='all'?'active':''}" onclick="SUBSCRIPTIONS_STATUS_TAB='all';renderSubscriptionsTable();">الكل</button>
         <button class="seg-btn ${SUBSCRIPTIONS_STATUS_TAB==='paid'?'active':''}" onclick="SUBSCRIPTIONS_STATUS_TAB='paid';renderSubscriptionsTable();">مسددين</button>
         <button class="seg-btn active-red ${SUBSCRIPTIONS_STATUS_TAB==='unpaid'?'active':''}" onclick="SUBSCRIPTIONS_STATUS_TAB='unpaid';renderSubscriptionsTable();">غير مسددين</button>
+        <button class="seg-btn ${SUBSCRIPTIONS_STATUS_TAB==='free'?'active':''}" onclick="SUBSCRIPTIONS_STATUS_TAB='free';renderSubscriptionsTable();">طلاب فري</button>
         <span style="flex:1;"></span>
         <button class="btn btn-primary btn-sm" onclick="bulkSetSubscription(true)"><i data-lucide="check-check" style="width:13px;height:13px;"></i> اشترك الكل</button>
         <button class="btn btn-ghost btn-sm" style="color:var(--danger);" onclick="bulkSetSubscription(false)"><i data-lucide="ban" style="width:13px;height:13px;color:var(--danger);"></i> وقف الاشتراك للكل</button>
@@ -2922,8 +2923,9 @@ async function loadSubscriptionsList(){
 function getFilteredSubscriptionRows(){
   const q = (document.getElementById("subSearchInput")?.value || "").trim().toLowerCase();
   let rows = SUBSCRIPTIONS_ROWS_CACHE.filter(r => !q || r.full_name.toLowerCase().includes(q));
-  if (SUBSCRIPTIONS_STATUS_TAB === "paid") rows = rows.filter(r => r.is_paid);
-  else if (SUBSCRIPTIONS_STATUS_TAB === "unpaid") rows = rows.filter(r => !r.is_paid);
+  if (SUBSCRIPTIONS_STATUS_TAB === "paid") rows = rows.filter(r => r.is_paid && !r.is_free);
+  else if (SUBSCRIPTIONS_STATUS_TAB === "unpaid") rows = rows.filter(r => !r.is_paid && !r.is_free);
+  else if (SUBSCRIPTIONS_STATUS_TAB === "free") rows = rows.filter(r => r.is_free);
   return rows;
 }
 
@@ -2935,7 +2937,7 @@ function renderSubscriptionsTable(){
   wrap.innerHTML = `
     <div style="padding:8px 16px;font-size:12px;color:var(--text-3);">${rows.length} طالب</div>
     <div class="table-wrap"><table>
-      <thead><tr><th>الطالب</th><th>المجموعة</th><th>قيمة الاشتراك</th><th>حالة الاشتراك</th><th>تاريخ السداد</th><th></th></tr></thead>
+      <thead><tr><th>الطالب</th><th>المجموعة</th><th>قيمة الاشتراك</th><th>حالة الاشتراك</th><th>تاريخ السداد</th><th>طالب فري</th><th></th></tr></thead>
       <tbody>
         ${rows.map(r => `
           <tr>
@@ -2943,19 +2945,37 @@ function renderSubscriptionsTable(){
             <td><span class="badge badge-teal">${escapeHtml(r.group_name)}</span></td>
             <td>${r.group_monthly_fee ? `${r.group_monthly_fee} ج` : `<span style="color:var(--text-3);">غير محدد للمجموعة</span>`}</td>
             <td>
-              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
-                <input type="checkbox" id="sub_paid_${r.student_id}" ${r.is_paid ? "checked" : ""} style="width:16px;height:16px;" onchange="quickToggleSubscription(${r.student_id}, this.checked)">
-                <span class="badge ${r.is_paid ? 'badge-green' : 'badge-red'}" id="sub_badge_${r.student_id}">${r.is_paid ? "مسدد" : "مش مسدد"}</span>
+              <label style="display:flex;align-items:center;gap:6px;cursor:${r.is_free ? 'default' : 'pointer'};">
+                <input type="checkbox" id="sub_paid_${r.student_id}" ${r.is_paid ? "checked" : ""} ${r.is_free ? "disabled" : ""} style="width:16px;height:16px;" onchange="quickToggleSubscription(${r.student_id}, this.checked)">
+                <span class="badge ${r.is_free ? 'badge-blue' : (r.is_paid ? 'badge-green' : 'badge-red')}" id="sub_badge_${r.student_id}">${r.is_free ? "فري" : (r.is_paid ? "مسدد" : "مش مسدد")}</span>
               </label>
             </td>
-            <td id="sub_paiddate_${r.student_id}" style="color:var(--text-3);font-size:12.5px;">${r.is_paid ? (r.paid_date || "—") : "—"}</td>
-            <td><button class="btn btn-primary btn-sm" onclick="saveSubscription(${r.student_id})"><i data-lucide="save" style="width:13px;height:13px;"></i> حفظ</button></td>
+            <td id="sub_paiddate_${r.student_id}" style="color:var(--text-3);font-size:12.5px;">${r.is_free ? "—" : (r.is_paid ? (r.paid_date || "—") : "—")}</td>
+            <td>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;" title="الطالب الفري بيشوف المحتوى من غير ما يدفع اشتراك">
+                <input type="checkbox" ${r.is_free ? "checked" : ""} style="width:16px;height:16px;" onchange="toggleStudentFree(${r.student_id}, this.checked)">
+              </label>
+            </td>
+            <td><button class="btn btn-primary btn-sm" ${r.is_free ? "disabled title='الطالب فري، مش محتاج سداد'" : ""} onclick="saveSubscription(${r.student_id})"><i data-lucide="save" style="width:13px;height:13px;"></i> حفظ</button></td>
           </tr>
-        `).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:24px;">لا يوجد طلاب</td></tr>`}
+        `).join("") || `<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:24px;">لا يوجد طلاب</td></tr>`}
       </tbody>
     </table></div>
   `;
   icons();
+}
+
+// تحديد/إلغاء إن الطالب "فري" (معفى من سداد الاشتراك) - بيتحدث فورًا من غير زرار حفظ
+async function toggleStudentFree(studentId, checked){
+  try{
+    const res = await api(`/api/students/${studentId}/toggle-free`, {method:"PUT"});
+    const row = SUBSCRIPTIONS_ROWS_CACHE.find(r => r.student_id === studentId);
+    if (row) row.is_free = res.is_free;
+    showToast(res.is_free ? "تم تحديد الطالب كـ فري" : "تم إلغاء الطالب الفري", "success");
+    renderSubscriptionsTable();
+  }catch(e){
+    renderSubscriptionsTable(); // ترجيع الشكل الأصلي لو فشل الطلب
+  }
 }
 
 // تحديث لون البادچ فورًا لما تضغط على الـ checkbox من غير ما تحتاج تحفظ الأول
@@ -3069,6 +3089,8 @@ function renderSubscriptionsReportView(){
         <div class="stat-value">${t.paid_count}</div><div class="stat-label">عدد المشتركين (مسددين)</div></div>
       <div class="stat-card"><div class="stat-top"><div class="stat-icon amber"><i data-lucide="ban" style="width:18px;height:18px;"></i></div></div>
         <div class="stat-value">${t.unpaid_count}</div><div class="stat-label">عدد غير المسددين</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon blue"><i data-lucide="gift" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${t.free_count || 0}</div><div class="stat-label">عدد الطلاب الفري</div></div>
       <div class="stat-card"><div class="stat-top"><div class="stat-icon teal"><i data-lucide="wallet" style="width:18px;height:18px;"></i></div></div>
         <div class="stat-value">${moneyLabel(t.total_amount)}</div><div class="stat-label">الإجمالي الكلي لكل الطلاب</div></div>
     </div>
@@ -3088,6 +3110,7 @@ function renderSubscriptionsReportView(){
         <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
           <span class="badge badge-green">${g.paid_count} مسدد</span>
           <span class="badge badge-red">${g.unpaid_count} مش مسدد</span>
+          ${g.free_count ? `<span class="badge badge-blue">${g.free_count} فري</span>` : ""}
           <span style="font-weight:700;font-size:13.5px;color:var(--primary);">${moneyLabel(g.total_amount)}</span>
         </div>
       </div>
@@ -3098,9 +3121,9 @@ function renderSubscriptionsReportView(){
             ${g.students.map(s => `
               <tr>
                 <td class="td-name">${escapeHtml(s.full_name)}</td>
-                <td>${moneyLabel(s.amount)}</td>
-                <td><span class="badge ${s.is_paid ? 'badge-green' : 'badge-red'}">${s.is_paid ? "مسدد" : "مش مسدد"}</span></td>
-                <td style="color:var(--text-3);font-size:12.5px;">${s.paid_date || "—"}</td>
+                <td>${s.is_free ? `<span style="color:var(--text-3);">—</span>` : moneyLabel(s.amount)}</td>
+                <td><span class="badge ${s.is_free ? 'badge-blue' : (s.is_paid ? 'badge-green' : 'badge-red')}">${s.is_free ? "فري" : (s.is_paid ? "مسدد" : "مش مسدد")}</span></td>
+                <td style="color:var(--text-3);font-size:12.5px;">${s.is_free ? "—" : (s.paid_date || "—")}</td>
               </tr>
             `).join("") || `<tr><td colspan="4" style="text-align:center;color:var(--text-3);padding:16px;">مفيش طلاب في المجموعة دي</td></tr>`}
           </tbody>
@@ -3125,11 +3148,11 @@ function printSubscribedStudentsReport(){
   const todayLabel = new Date().toLocaleDateString("ar-EG", {year:"numeric", month:"long", day:"numeric"});
 
   const groupsWithPaid = SUBS_REPORT_DATA.groups
-    .map(g => ({ ...g, paidStudents: g.students.filter(s => s.is_paid) }))
+    .map(g => ({ ...g, paidStudents: g.students.filter(s => s.is_paid || s.is_free) }))
     .filter(g => g.paidStudents.length > 0);
 
   const totalPaid = groupsWithPaid.reduce((sum, g) => sum + g.paidStudents.length, 0);
-  const totalAmount = groupsWithPaid.reduce((sum, g) => sum + g.paidStudents.reduce((gs, s) => gs + (Number(s.amount) || 0), 0), 0);
+  const totalAmount = groupsWithPaid.reduce((sum, g) => sum + g.paidStudents.reduce((gs, s) => gs + (s.is_free ? 0 : (Number(s.amount) || 0)), 0), 0);
 
   const groupsHtml = groupsWithPaid.map(g => `
     <div class="section-title"><span class="bar"></span>${escapeHtml(g.group_name)} <span style="font-weight:600;color:var(--muted);font-size:11.5px;">(${g.paidStudents.length} طالب)</span></div>
@@ -3140,9 +3163,9 @@ function printSubscribedStudentsReport(){
           ${g.paidStudents.map((s, i) => `
             <tr>
               <td style="color:var(--muted);">${i + 1}</td>
-              <td class="td-name" style="text-align:right;">${escapeHtml(s.full_name)}</td>
-              <td>${moneyLabel(s.amount)}</td>
-              <td>${s.paid_date || "—"}</td>
+              <td class="td-name" style="text-align:right;">${escapeHtml(s.full_name)}${s.is_free ? ' <span style="color:#1D4ED8;font-weight:700;font-size:11px;">(فري)</span>' : ''}</td>
+              <td>${s.is_free ? "فري - بدون سداد" : moneyLabel(s.amount)}</td>
+              <td>${s.is_free ? "—" : (s.paid_date || "—")}</td>
             </tr>
           `).join("")}
         </tbody>

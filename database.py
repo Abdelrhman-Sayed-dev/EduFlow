@@ -406,6 +406,9 @@ def init_db():
         _safe_alter(cur, "ALTER TABLE students ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
         _safe_alter(cur, "ALTER TABLE students ADD COLUMN attendance_code TEXT")
         _safe_alter(cur, "ALTER TABLE students ADD COLUMN device_id TEXT")
+        # طالب "فري" - معفى من سداد الاشتراك الشهري، بيقدر يشوف المحتوى زي أي طالب
+        # مسدد بالظبط، بس بيتعرض في تقرير الاشتراكات بشكل مميز (فري) مش ضمن المسددين فلوس
+        _safe_alter(cur, "ALTER TABLE students ADD COLUMN is_free INTEGER NOT NULL DEFAULT 0")
         _backfill_attendance_codes(cur)
 
         # ---------------------------------------------------------------

@@ -332,7 +332,13 @@ def current_month_str():
 
 
 def is_student_subscribed(conn, student_id: int) -> bool:
-    """هل الطالب سدد اشتراك الشهر الحالي؟ - ده اللي بيتحكم في السماح بمشاهدة المحتوى من عدمه"""
+    """
+    هل الطالب مسموحله يشوف المحتوى؟ - ده اللي بيتحكم في السماح بمشاهدة المحتوى من عدمه.
+    الطالب "الفري" (معفى من السداد) بيتحسب مشترك دايمًا من غير ما يحتاج يسدد أي حاجة.
+    """
+    student = conn.execute("SELECT is_free FROM students WHERE id=?", (student_id,)).fetchone()
+    if student and student["is_free"]:
+        return True
     row = conn.execute(
         "SELECT is_paid FROM payments WHERE student_id=? AND month=?",
         (student_id, current_month_str())
@@ -1307,6 +1313,29 @@ def toggle_student_active(student_id: int, session=Depends(require_roles("admin"
         new_state = 0 if student["is_active"] else 1
         conn.execute("UPDATE students SET is_active=? WHERE id=?", (new_state, student_id))
         return {"is_active": bool(new_state), "message": "تم تحديث حالة الحساب"}
+
+
+@app.put("/api/students/{student_id}/toggle-free")
+def toggle_student_free(student_id: int, session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
+    """
+    تحديد/إلغاء إن الطالب "فري" - معفى من سداد الاشتراك الشهري نهائيًا، بيقدر
+    يشوف كل محتوى المنصة من غير ما يحتاج يسدد أي شهر. بيظهر في تقرير الاشتراكات
+    بشكل مميز (فري) بدل مسدد/غير مسدد، ومش بيتحسب ضمن إجمالي المبالغ المحصّلة.
+    """
+    with get_connection() as conn:
+        student = conn.execute("SELECT is_free, group_id, full_name FROM students WHERE id=?", (student_id,)).fetchone()
+        if not student:
+            raise HTTPException(status_code=404, detail="الطالب غير موجود")
+        if session["role"] == "supervisor":
+            assert_supervisor_owns_group(conn, session, student["group_id"])
+        new_state = 0 if student["is_free"] else 1
+        conn.execute("UPDATE students SET is_free=? WHERE id=?", (new_state, student_id))
+        log_session_activity(
+            conn, session, "student_update",
+            f"{'تحديد' if new_state else 'إلغاء'} طالب \"{student['full_name']}\" (#{student_id}) كطالب فري (معفى من الاشتراك)",
+            group_id=student["group_id"]
+        )
+        return {"is_free": bool(new_state), "message": "تم تحديث حالة الطالب الفري"}
 
 
 @app.delete("/api/students/{student_id}")
@@ -2796,7 +2825,7 @@ def get_payments(group_id: Optional[int] = None, month: Optional[str] = None,
             assert_supervisor_owns_group(conn, session, group_id)
 
         query = """
-            SELECT s.id as student_id, s.full_name, s.group_id, g.name as group_name, g.monthly_fee as group_monthly_fee,
+            SELECT s.id as student_id, s.full_name, s.group_id, s.is_free, g.name as group_name, g.monthly_fee as group_monthly_fee,
                    p.id as payment_id, p.amount, p.is_paid, p.paid_date, p.notes
             FROM students s
             JOIN groups g ON g.id = s.group_id
@@ -2917,11 +2946,12 @@ def get_subscriptions_summary(month: str, session=Depends(require_roles("admin",
         result_groups = []
         grand_students = 0
         grand_paid = 0
+        grand_free = 0
         grand_amount = 0.0
 
         for g in groups:
             students = conn.execute("""
-                SELECT s.id as student_id, s.full_name, p.is_paid, p.amount, p.paid_date
+                SELECT s.id as student_id, s.full_name, s.is_free, p.is_paid, p.amount, p.paid_date
                 FROM students s
                 LEFT JOIN payments p ON p.student_id = s.id AND p.month = ?
                 WHERE s.group_id = ? AND s.is_active = 1
@@ -2930,17 +2960,23 @@ def get_subscriptions_summary(month: str, session=Depends(require_roles("admin",
 
             students_list = []
             paid_count = 0
+            free_count = 0
             group_amount = 0.0
             for s in students:
+                is_free = bool(s["is_free"])
                 is_paid = bool(s["is_paid"])
-                if is_paid:
+                if is_free:
+                    free_count += 1
+                elif is_paid:
                     paid_count += 1
                     group_amount += (s["amount"] or 0)
                 students_list.append({
                     "student_id": s["student_id"],
                     "full_name": s["full_name"],
+                    "is_free": is_free,
                     "is_paid": is_paid,
                     # قيمة الاشتراك الفعلية لو موجودة، وإلا قيمة المجموعة الافتراضية (كمتوقع لسه ملسددش)
+                    # الطالب الفري مش بيدفع فعليًا، القيمة هنا للعرض بس (مش بتتحسب في الإجمالي)
                     "amount": s["amount"] if s["amount"] is not None else g["monthly_fee"],
                     "paid_date": s["paid_date"],
                 })
@@ -2951,12 +2987,14 @@ def get_subscriptions_summary(month: str, session=Depends(require_roles("admin",
                 "monthly_fee": g["monthly_fee"],
                 "students_count": students_count,
                 "paid_count": paid_count,
-                "unpaid_count": students_count - paid_count,
+                "free_count": free_count,
+                "unpaid_count": students_count - paid_count - free_count,
                 "total_amount": group_amount,
                 "students": students_list,
             })
             grand_students += students_count
             grand_paid += paid_count
+            grand_free += free_count
             grand_amount += group_amount
 
         return {
@@ -2965,7 +3003,8 @@ def get_subscriptions_summary(month: str, session=Depends(require_roles("admin",
             "totals": {
                 "students_count": grand_students,
                 "paid_count": grand_paid,
-                "unpaid_count": grand_students - grand_paid,
+                "free_count": grand_free,
+                "unpaid_count": grand_students - grand_paid - grand_free,
                 "total_amount": grand_amount,
             },
         }
