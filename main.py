@@ -346,16 +346,34 @@ def is_student_subscribed(conn, student_id: int) -> bool:
     return bool(row and row["is_paid"])
 
 
-def student_content_cutoff(session) -> Optional[str]:
+def get_student_paid_months(conn, session) -> Optional[set]:
     """
-    فلتر عام (Global Filter): تاريخ أول اشتراك للطالب صاحب الجلسة الحالية.
-    - لو الجلسة طالب: بيرجع تاريخ أول اشتراك (أو None لو مفيش اشتراك مسدد أصلاً).
-    - لو الجلسة مش طالب (أدمن/مشرف/مدرس): بيرجع None يعني من غير أي فلترة تاريخ،
+    فلتر عام (Global Filter): مجموعة الشهور (YYYY-MM) اللي الطالب صاحب الجلسة
+    الحالية سددها فعليًا - ده المصدر الوحيد للحقيقة بخصوص أي محتوى مؤرخ يظهرله
+    (مش مجرد كونه بعد تاريخ أول اشتراك). لو شهر معين مش موجود في المجموعة دي
+    (فجوة سداد)، أي محتوى تاريخه في الشهر ده لازم يتخفي، حتى لو جاي بعد شهور تانية مدفوعة.
+    - لو الجلسة طالب: بيرجع set فيها كل شهر مدفوع فعليًا.
+    - لو الجلسة مش طالب (أدمن/مشرف/مدرس): بيرجع None يعني من غير أي فلترة شهور،
       لأن الشرط ده خاص بتجربة الطالب نفسه عند دخوله للمنصة.
     """
-    if session.get("role") == "student":
-        return session.get("subscription_since")
-    return None
+    if session.get("role") != "student":
+        return None
+    return set(get_paid_months(conn, session["id"]))
+
+
+def is_month_visible(date_value: Optional[str], paid_months: Optional[set]) -> bool:
+    """
+    بيتأكد إن شهر محتوى معين (مستخرج من تاريخه) موجود فعلاً ضمن الشهور اللي
+    الطالب دفعها. لو الطالب مشترك في شهر متأخر، هيشوف كل محتوى الشهر ده من أول
+    يوم فيه عادي (مفيش تاريخ دقيق بيتحقق منه، بس الشهر نفسه لازم يكون مدفوع).
+    - paid_months=None (مش طالب/مفيش فلترة) → مسموح دايمًا.
+    - date_value=None (محتوى من غير تاريخ محدد أصلاً) → مسموح دايمًا زي قبل كده،
+      مينفعش نحكم عليه بشهر معين.
+    - غير كده: لازم أول 7 حروف من التاريخ (YYYY-MM) تكون موجودة في paid_months.
+    """
+    if paid_months is None or date_value is None:
+        return True
+    return date_value[:7] in paid_months
 
 
 def _resolve_session_by_token(token: Optional[str]):
@@ -388,8 +406,8 @@ def _resolve_session_by_token(token: Optional[str]):
             # ده تحقق مركزي بيغطي كل الـ endpoints تلقائيًا من غير ما نعدل كل واحدة لوحدها
             if not is_student_subscribed(conn, student["id"]):
                 raise HTTPException(status_code=402, detail="يجب سداد الاشتراك الشهري لمشاهدة المحتوى")
-            # تاريخ أول اشتراك للطالب - نقطة البداية العامة لعرض أي محتوى له في المنصة
-            # (فلتر عام Global Filter بيتطبق في كل الـ endpoints اللي بترجع بيانات مؤرخة)
+            # تاريخ أول اشتراك للطالب (بالظبط) - للعرض بس في الواجهة، مش بيتحقق
+            # منه للسماح بالمحتوى (ده بقى مسؤولية get_student_paid_months بس)
             subscription_since = get_first_subscription_date(conn, student["id"])
             return {
                 "type": "student", "id": student["id"], "role": "student",
@@ -1580,14 +1598,11 @@ def get_board_images(group_id: int, session=Depends(get_current_session)):
                    LEFT JOIN users u ON u.id = bi.uploaded_by
                    WHERE bi.group_id=?"""
         params = [group_id]
-        # فلتر عام: إخفاء صور سبورة الحصص اللي تاريخها قبل تاريخ أول اشتراك الطالب
-        cutoff = student_content_cutoff(session)
-        if cutoff:
-            query += " AND (bi.session_date IS NULL OR bi.session_date >= ?)"
-            params.append(cutoff)
         query += " ORDER BY bi.session_number DESC, bi.created_at DESC"
         rows = conn.execute(query, params).fetchall()
-        return [dict(r) for r in rows]
+        # فلتر عام: إخفاء صور سبورة أي شهر لسه الطالب مسدده لسه
+        paid_months = get_student_paid_months(conn, session)
+        return [dict(r) for r in rows if is_month_visible(r["session_date"], paid_months)]
 
 
 @app.post("/api/board-images")
@@ -1700,14 +1715,11 @@ def list_group_videos(group_id: int, session=Depends(get_current_session)):
             WHERE vgl.group_id = ?
         """
         params = [group_id]
-        # فلتر عام: إخفاء الفيديوهات اللي اترفعت قبل تاريخ أول اشتراك الطالب
-        cutoff = student_content_cutoff(session)
-        if cutoff:
-            query += " AND gv.created_at >= ?"
-            params.append(cutoff)
         query += " ORDER BY gv.created_at DESC"
         rows = conn.execute(query, params).fetchall()
-        return [dict(r) for r in rows]
+        # فلتر عام: إخفاء فيديوهات أي شهر لسه الطالب مسدده لسه
+        paid_months = get_student_paid_months(conn, session)
+        return [dict(r) for r in rows if is_month_visible(r["created_at"], paid_months)]
 
 
 # ---------------------------------------------------------------------------
@@ -2148,10 +2160,10 @@ def stream_group_video(video_id: int, request: Request, session=Depends(get_sess
             raise HTTPException(status_code=400, detail="الفيديو ده رابط خارجي مش ملف مرفوع على المنصة")
         assert_can_access_video(conn, session, video_id)
 
-        # فلتر عام: منع الطالب من بث فيديو اترفع قبل تاريخ أول اشتراك ليه، حتى لو
-        # حاول يوصله مباشرة بالرابط (مش بس إخفاءه من القايمة)
-        cutoff = student_content_cutoff(session)
-        if cutoff and vid["created_at"] and vid["created_at"] < cutoff:
+        # فلتر عام: منع الطالب من بث فيديو خاص بشهر مش مسدده، حتى لو حاول يوصله
+        # مباشرة بالرابط (مش بس إخفاءه من القايمة)
+        paid_months = get_student_paid_months(conn, session)
+        if not is_month_visible(vid["created_at"], paid_months):
             raise HTTPException(status_code=404, detail="الفيديو غير موجود")
 
         file_path = os.path.join(VIDEOS_DIR, vid["file_path"])
@@ -2263,15 +2275,11 @@ def get_quizzes(group_id: Optional[int] = None, stage_id: Optional[int] = None,
             params.append(session.get("group_id"))
             params.append(student_stage)
 
-        # فلتر عام: إخفاء أي كويز تاريخه قبل تاريخ أول اشتراك الطالب
-        cutoff = student_content_cutoff(session)
-        if cutoff:
-            query += " AND (q.quiz_date IS NULL OR q.quiz_date >= ?)"
-            params.append(cutoff)
-
         query += " ORDER BY q.quiz_date DESC, q.id DESC"
         rows = conn.execute(query, params).fetchall()
-        return [dict(r) for r in rows]
+        # فلتر عام: إخفاء أي كويز خاص بشهر لسه الطالب مسدده لسه
+        paid_months = get_student_paid_months(conn, session)
+        return [dict(r) for r in rows if is_month_visible(r["quiz_date"], paid_months)]
 
 
 @app.post("/api/quizzes")
@@ -2332,9 +2340,9 @@ def get_quiz_scores(quiz_id: int, session=Depends(get_current_session)):
         if not quiz:
             raise HTTPException(status_code=404, detail="الكويز غير موجود")
 
-        # فلتر عام: الطالب ميقدرش يشوف كويز تاريخه قبل تاريخ أول اشتراك ليه
-        cutoff = student_content_cutoff(session)
-        if cutoff and quiz["quiz_date"] and quiz["quiz_date"] < cutoff:
+        # فلتر عام: الطالب ميقدرش يشوف كويز خاص بشهر لسه مسدده لسه
+        paid_months = get_student_paid_months(conn, session)
+        if not is_month_visible(quiz["quiz_date"], paid_months):
             raise HTTPException(status_code=404, detail="الكويز غير موجود")
 
         if session["role"] == "supervisor" and quiz["group_id"]:
@@ -2447,15 +2455,11 @@ def get_student_scores(student_id: int, session=Depends(get_current_session)):
             JOIN quizzes q ON q.id = qs.quiz_id
             WHERE qs.student_id = ?
         """
-        params = [student_id]
-        # فلتر عام: إخفاء أي درجة كويز تاريخه قبل تاريخ أول اشتراك الطالب
-        cutoff = student_content_cutoff(session)
-        if cutoff:
-            query += " AND (q.quiz_date IS NULL OR q.quiz_date >= ?)"
-            params.append(cutoff)
         query += " ORDER BY q.quiz_date DESC"
         rows = conn.execute(query, params).fetchall()
-        return [dict(r) for r in rows]
+        # فلتر عام: إخفاء أي درجة كويز خاص بشهر لسه الطالب مسدده لسه
+        paid_months = get_student_paid_months(conn, session)
+        return [dict(r) for r in rows if is_month_visible(r["quiz_date"], paid_months)]
 
 
 # ---------------------------------------------------------------------------
@@ -2471,9 +2475,9 @@ def get_attendance_by_date(session_date: str, group_id: Optional[int] = None,
         if session["role"] == "supervisor" and group_id:
             assert_supervisor_owns_group(conn, session, group_id)
 
-        # فلتر عام: الطالب ميقدرش يشوف حضور تاريخه قبل تاريخ أول اشتراك ليه
-        cutoff = student_content_cutoff(session)
-        if cutoff and session_date < cutoff:
+        # فلتر عام: الطالب ميقدرش يشوف حضور شهر لسه مسدده لسه
+        paid_months = get_student_paid_months(conn, session)
+        if not is_month_visible(session_date, paid_months):
             return []
 
         query = """
@@ -2605,14 +2609,11 @@ def get_student_attendance(student_id: int, session=Depends(get_current_session)
 
         query = "SELECT session_date, status, notes FROM attendance WHERE student_id = ?"
         params = [student_id]
-        # فلتر عام: إخفاء سجلات الحضور اللي تاريخها قبل تاريخ أول اشتراك الطالب
-        cutoff = student_content_cutoff(session)
-        if cutoff:
-            query += " AND session_date >= ?"
-            params.append(cutoff)
         query += " ORDER BY session_date DESC"
         rows = conn.execute(query, params).fetchall()
-        return [dict(r) for r in rows]
+        # فلتر عام: إخفاء سجلات الحضور الخاصة بأي شهر لسه الطالب مسدده لسه
+        paid_months = get_student_paid_months(conn, session)
+        return [dict(r) for r in rows if is_month_visible(r["session_date"], paid_months)]
 
 
 # ---------------------------------------------------------------------------
@@ -2693,11 +2694,9 @@ def get_student_payments(student_id: int, session=Depends(get_current_session)):
 
         query = "SELECT * FROM payments WHERE student_id=?"
         params = [student_id]
-        # فلتر عام: إخفاء أي سجل دفع لشهر قبل شهر أول اشتراك الطالب
-        cutoff = student_content_cutoff(session)
-        if cutoff:
-            query += " AND month >= ?"
-            params.append(cutoff[:7])  # مقارنة بصيغة الشهر YYYY-MM
+        # ملحوظة: مفيش فلتر شهور هنا عمدًا - ده سجل مدفوعات الطالب نفسه، ولازم
+        # يشوف كل الشهور المطلوب سدادها (المدفوعة وغير المدفوعة) عشان يعرف
+        # وضعه المالي بالكامل، بعكس المحتوى اللي بيتفلتر بـ paid_months
         query += " ORDER BY month DESC"
         rows = conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
@@ -3141,14 +3140,11 @@ def get_homework(group_id: Optional[int] = None, session=Depends(get_current_ses
         elif session["role"] == "student":
             query += " AND h.group_id = ?"
             params.append(session.get("group_id"))
-        # فلتر عام: إخفاء الواجبات اللي تاريخها قبل تاريخ أول اشتراك الطالب
-        cutoff = student_content_cutoff(session)
-        if cutoff:
-            query += " AND (h.session_date IS NULL OR h.session_date >= ?)"
-            params.append(cutoff)
         query += " ORDER BY h.session_number DESC"
         rows = conn.execute(query, params).fetchall()
-        return [dict(r) for r in rows]
+        # فلتر عام: إخفاء الواجبات الخاصة بأي شهر لسه الطالب مسدده لسه
+        paid_months = get_student_paid_months(conn, session)
+        return [dict(r) for r in rows if is_month_visible(r["session_date"], paid_months)]
 
 
 @app.post("/api/homework")
@@ -3211,9 +3207,9 @@ def get_homework_submissions(hw_id: int, session=Depends(require_roles("admin", 
         if session["role"] == "supervisor":
             assert_supervisor_owns_group(conn, session, hw["group_id"])
         if session["role"] == "student":
-            # فلتر عام: الطالب ميقدرش يشوف واجب تاريخه قبل تاريخ أول اشتراك ليه
-            cutoff = student_content_cutoff(session)
-            if cutoff and hw["session_date"] and hw["session_date"] < cutoff:
+            # فلتر عام: الطالب ميقدرش يشوف واجب خاص بشهر لسه مسدده لسه
+            paid_months = get_student_paid_months(conn, session)
+            if not is_month_visible(hw["session_date"], paid_months):
                 raise HTTPException(status_code=404, detail="الواجب غير موجود")
             # الطالب يشوف حالة تسليمه هو بس، ومن مجموعته هو بس
             if session.get("group_id") != hw["group_id"]:
@@ -3278,22 +3274,17 @@ def save_homework_submission(hw_id: int, data: HomeworkSubmissionIn,
 @app.get("/api/notifications")
 def get_notifications(session=Depends(get_current_session)):
     user_type = "student" if session["role"] == "student" else "user"
-    cutoff = student_content_cutoff(session)
+    # ملحوظة: مفيش فلتر شهور هنا عمدًا - الإشعارات دي أحداث خاصة بحساب
+    # الطالب نفسه (زي تأكيد تسليم واجب) مش "محتوى" مرتبط بشهر اشتراك معين
     with get_connection() as conn:
         query = """SELECT id, title, body, is_read, created_at FROM notifications
                    WHERE user_type=? AND user_id=?"""
         params = [user_type, session["id"]]
-        if cutoff:
-            query += " AND created_at >= ?"
-            params.append(cutoff)
         query += " ORDER BY created_at DESC LIMIT 50"
         rows = conn.execute(query, params).fetchall()
 
         unread_query = "SELECT COUNT(*) as c FROM notifications WHERE user_type=? AND user_id=? AND is_read=0"
         unread_params = [user_type, session["id"]]
-        if cutoff:
-            unread_query += " AND created_at >= ?"
-            unread_params.append(cutoff)
         unread = conn.execute(unread_query, unread_params).fetchone()["c"]
         return {"items": [dict(r) for r in rows], "unread_count": unread}
 
