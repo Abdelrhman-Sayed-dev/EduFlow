@@ -2455,6 +2455,7 @@ def get_student_scores(student_id: int, session=Depends(get_current_session)):
             JOIN quizzes q ON q.id = qs.quiz_id
             WHERE qs.student_id = ?
         """
+        params = [student_id]
         query += " ORDER BY q.quiz_date DESC"
         rows = conn.execute(query, params).fetchall()
         # فلتر عام: إخفاء أي درجة كويز خاص بشهر لسه الطالب مسدده لسه
