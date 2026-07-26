@@ -14,7 +14,7 @@ import base64
 import uuid
 import asyncio
 import calendar
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException, Header, Depends, Request, UploadFile, File, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse, Response
@@ -26,7 +26,7 @@ from database import (
     get_connection, init_db, hash_password, verify_password, gen_token,
     gen_access_code, gen_numeric_code, gen_temp_password, session_expiry, cleanup_expired_sessions,
     is_login_blocked, record_failed_login, clear_failed_logins, cleanup_old_login_attempts,
-    get_first_subscription_date, get_paid_months
+    get_first_subscription_date, get_paid_months, LOGIN_ATTEMPT_MAX
 )
 
 app = FastAPI(title="منصة المدرس - نظام إدارة الطلاب والمجموعات")
@@ -346,19 +346,34 @@ def is_student_subscribed(conn, student_id: int) -> bool:
     return bool(row and row["is_paid"])
 
 
+def paid_months_for_student(conn, student_id: int) -> Optional[set]:
+    """
+    نفس فكرة get_student_paid_months بس بتاخد student_id مباشرة بدل session - مستخدمة
+    في الأماكن اللي بتقدر تفلتر محتوى طالب تاني (زي أدمن/مشرف بيعاين طالب معين).
+    بترجع None (من غير فلترة) لو الطالب فري، وإلا بترجع set بالشهور المدفوعة فعليًا.
+    """
+    student = conn.execute("SELECT is_free FROM students WHERE id=?", (student_id,)).fetchone()
+    if student and student["is_free"]:
+        return None
+    return set(get_paid_months(conn, student_id))
+
+
 def get_student_paid_months(conn, session) -> Optional[set]:
     """
     فلتر عام (Global Filter): مجموعة الشهور (YYYY-MM) اللي الطالب صاحب الجلسة
     الحالية سددها فعليًا - ده المصدر الوحيد للحقيقة بخصوص أي محتوى مؤرخ يظهرله
     (مش مجرد كونه بعد تاريخ أول اشتراك). لو شهر معين مش موجود في المجموعة دي
     (فجوة سداد)، أي محتوى تاريخه في الشهر ده لازم يتخفي، حتى لو جاي بعد شهور تانية مدفوعة.
-    - لو الجلسة طالب: بيرجع set فيها كل شهر مدفوع فعليًا.
+    - لو الجلسة طالب "فري" (معفى من السداد): بيرجع None يعني من غير أي فلترة شهور
+      خالص - يشوف كل محتوى كل الشهور حتى لو قديم من قبل ما يتحول لفري، لأنه
+      أصلاً معفى من شرط السداد بالكامل.
+    - لو الجلسة طالب عادي: بيرجع set فيها كل شهر مدفوع فعليًا.
     - لو الجلسة مش طالب (أدمن/مشرف/مدرس): بيرجع None يعني من غير أي فلترة شهور،
       لأن الشرط ده خاص بتجربة الطالب نفسه عند دخوله للمنصة.
     """
     if session.get("role") != "student":
         return None
-    return set(get_paid_months(conn, session["id"]))
+    return paid_months_for_student(conn, session["id"])
 
 
 def is_month_visible(date_value: Optional[str], paid_months: Optional[set]) -> bool:
@@ -470,6 +485,8 @@ def assert_supervisor_owns_group(conn, session, group_id):
 ACTION_LABELS = {
     "login": "تسجيل دخول",
     "logout": "تسجيل خروج",
+    "login_blocked_device": "دخول مرفوض - جهاز مختلف",
+    "login_blocked_inactive": "دخول مرفوض - حساب موقوف",
     "board_image_upload": "رفع صورة سبورة",
     "board_image_delete": "حذف صورة سبورة",
     "attendance": "تسجيل حضور/غياب",
@@ -669,6 +686,10 @@ def login(data: LoginIn, request: Request):
             conn.commit()  # لازم commit قبل الـ raise، لأن get_connection بيعمل rollback عند أي Exception
             raise HTTPException(status_code=401, detail="اسم المستخدم أو كلمة المرور غلط")
         if not user["is_active"]:
+            log_activity(conn, "user", user["id"], user["full_name"], user["role"],
+                         "login_blocked_inactive", "محاولة دخول بيوزر/باسورد صحيحين لحساب موقوف",
+                         ip=_client_ip(request))
+            conn.commit()
             raise HTTPException(status_code=403, detail="الحساب موقوف، كلم الأدمن")
 
         clear_failed_logins(conn, ip_key)
@@ -714,6 +735,11 @@ def login_with_code(data: CodeLoginIn, request: Request = None):
         student = conn.execute("SELECT * FROM students WHERE access_code=?", (code,)).fetchone()
         if student:
             if not student["is_active"]:
+                log_activity(conn, "student", student["id"], student["full_name"], "student",
+                             "login_blocked_inactive", "محاولة دخول بكود صحيح لحساب طالب موقوف",
+                             group_id=student["group_id"],
+                             ip=ip_key.split("ip:", 1)[-1] if ip_key else None)
+                conn.commit()
                 raise HTTPException(status_code=403, detail="الحساب موقوف، كلم المشرف")
 
             incoming_device = (data.device_id or "").strip()
@@ -725,6 +751,11 @@ def login_with_code(data: CodeLoginIn, request: Request = None):
                 elif bound_device != incoming_device:
                     # الكود متربط بجهاز تاني بالفعل - نمنع الدخول من جهاز مختلف
                     record_failed_login(conn, code_key)
+                    log_activity(conn, "student", student["id"], student["full_name"], "student",
+                                 "login_blocked_device",
+                                 "محاولة دخول بنفس الكود من جهاز مختلف عن الجهاز المسجل",
+                                 group_id=student["group_id"],
+                                 ip=ip_key.split("ip:", 1)[-1] if ip_key else None)
                     conn.commit()
                     raise HTTPException(
                         status_code=403,
@@ -758,6 +789,10 @@ def login_with_code(data: CodeLoginIn, request: Request = None):
         user = conn.execute("SELECT * FROM users WHERE access_code=?", (code,)).fetchone()
         if user:
             if not user["is_active"]:
+                log_activity(conn, "user", user["id"], user["full_name"], user["role"],
+                             "login_blocked_inactive", "محاولة دخول بكود صحيح لحساب موقوف",
+                             ip=ip_key.split("ip:", 1)[-1] if ip_key else None)
+                conn.commit()
                 raise HTTPException(status_code=403, detail="الحساب موقوف، كلم الأدمن")
             clear_failed_logins(conn, code_key)
             if ip_key:
@@ -1764,14 +1799,14 @@ def get_group_content_by_month(
             if session.get("group_id") != group_id:
                 raise HTTPException(status_code=403, detail="مش مسموح لك تشوف محتوى مجموعة تانية")
             effective_student_id = session["id"]
-            paid_months = set(get_paid_months(conn, effective_student_id))
+            paid_months = paid_months_for_student(conn, effective_student_id)
         elif session["role"] == "supervisor":
             assert_supervisor_owns_group(conn, session, group_id)
             effective_student_id = student_id
-            paid_months = set(get_paid_months(conn, effective_student_id)) if effective_student_id else None
+            paid_months = paid_months_for_student(conn, effective_student_id) if effective_student_id else None
         elif session["role"] in ("admin", "head_supervisor", "teacher"):
             effective_student_id = student_id
-            paid_months = set(get_paid_months(conn, effective_student_id)) if effective_student_id else None
+            paid_months = paid_months_for_student(conn, effective_student_id) if effective_student_id else None
         else:
             raise HTTPException(status_code=403, detail="مفيش صلاحية للوصول لده")
 
@@ -4266,6 +4301,196 @@ def get_activity_log(
             "page_size": page_size,
             "items": items,
         }
+
+
+# ---------------------------------------------------------------------------
+# كشف التلاعب - Fraud / Anomaly Detection
+# بيجمع كذا مؤشر مشبوه في مكان واحد للأدمن:
+#   1) unpaid_login       - طالب دخل المنصة بدون ما يكون سدد شهر الدخول ده
+#   2) shared_code        - نفس كود الطالب اتستخدم من أكتر من IP في نفس الفترة (اشتباه مشاركة الكود)
+#   3) device_blocked     - محاولة دخول اترفضت لأنها من جهاز مختلف عن الجهاز المسجل للكود
+#   4) inactive_blocked   - محاولة دخول (بيانات صحيحة) لحساب موقوف
+#   5) repeated_failed    - محاولات دخول فاشلة متكررة على نفس الكود/اليوزر/الـ IP
+# ---------------------------------------------------------------------------
+
+FRAUD_TYPE_LABELS = {
+    "unpaid_login": "دخول بدون اشتراك مسدد",
+    "shared_code": "اشتباه مشاركة كود الدخول",
+    "device_blocked": "محاولة دخول من جهاز مختلف",
+    "inactive_blocked": "محاولة دخول لحساب موقوف",
+    "repeated_failed": "محاولات دخول فاشلة متكررة",
+}
+
+
+@app.get("/api/admin/fraud-alerts/types")
+def get_fraud_alert_types(session=Depends(require_roles("admin", "head_supervisor"))):
+    """قايمة أنواع التنبيهات المتاحة للفلترة، بأسمائها العربية"""
+    return [{"key": k, "label": v} for k, v in FRAUD_TYPE_LABELS.items()]
+
+
+@app.get("/api/admin/fraud-alerts")
+def get_fraud_alerts(
+    days: int = 14,
+    type: Optional[str] = None,   # مفتاح من FRAUD_TYPE_LABELS
+    q: Optional[str] = None,      # بحث بالاسم
+    page: int = 1,
+    page_size: int = 50,
+    session=Depends(require_roles("admin", "head_supervisor")),
+):
+    """
+    يرجع كل المؤشرات المشبوهة مجمّعة ومرتبة زمنيًا (الأحدث أولاً)، مع ملخص عددي لكل نوع.
+    كل التنبيهات مبنية على بيانات موجودة بالفعل (سجل الأنشطة + المدفوعات + محاولات
+    الدخول الفاشلة) - مفيش جدول جديد، فالميزة دي شغالة فورًا على أي بيانات قديمة.
+    """
+    days = min(max(1, days), 90)
+    page = max(1, page)
+    page_size = min(max(1, page_size), 200)
+    cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+
+    alerts = []
+
+    with get_connection() as conn:
+        # 1) دخول طلاب من غير اشتراك مسدد لشهر الدخول نفسه (بيتجاهل الطلاب "الفري")
+        rows = conn.execute("""
+            SELECT al.actor_id as student_id, al.actor_name, al.ip_address, al.created_at,
+                   s.group_id, g.name as group_name, s.is_free, s.is_active, p.is_paid
+            FROM activity_log al
+            LEFT JOIN students s ON s.id = al.actor_id
+            LEFT JOIN groups g ON g.id = s.group_id
+            LEFT JOIN payments p ON p.student_id = al.actor_id AND p.month = substr(al.created_at, 1, 7)
+            WHERE al.actor_type='student' AND al.action='login' AND al.created_at >= ?
+            ORDER BY al.created_at DESC
+        """, (cutoff,)).fetchall()
+        for r in rows:
+            if not r["student_id"] or r["is_free"] or r["is_paid"]:
+                continue
+            alerts.append({
+                "type": "unpaid_login",
+                "type_label": FRAUD_TYPE_LABELS["unpaid_login"],
+                "severity": "high",
+                "title": f'"{r["actor_name"]}" دخل المنصة بدون سداد شهر {r["created_at"][:7]}',
+                "description": f'المجموعة: {r["group_name"] or "—"}',
+                "actor_type": "student",
+                "actor_id": r["student_id"],
+                "actor_name": r["actor_name"],
+                "group_id": r["group_id"],
+                "group_name": r["group_name"],
+                "ip_address": r["ip_address"],
+                "created_at": r["created_at"],
+            })
+
+        # 2) نفس كود الطالب اتستخدم من أكتر من IP خلال نفس الفترة (اشتباه مشاركة الكود)
+        rows = conn.execute("""
+            SELECT al.actor_id as student_id, al.actor_name, s.group_id, g.name as group_name,
+                   COUNT(DISTINCT al.ip_address) as ip_count,
+                   GROUP_CONCAT(DISTINCT al.ip_address) as ips,
+                   MAX(al.created_at) as last_login
+            FROM activity_log al
+            LEFT JOIN students s ON s.id = al.actor_id
+            LEFT JOIN groups g ON g.id = s.group_id
+            WHERE al.actor_type='student' AND al.action='login' AND al.created_at >= ?
+                  AND al.ip_address IS NOT NULL AND al.ip_address != ''
+            GROUP BY al.actor_id
+            HAVING COUNT(DISTINCT al.ip_address) >= 2
+            ORDER BY ip_count DESC
+        """, (cutoff,)).fetchall()
+        for r in rows:
+            alerts.append({
+                "type": "shared_code",
+                "type_label": FRAUD_TYPE_LABELS["shared_code"],
+                "severity": "high" if r["ip_count"] >= 3 else "medium",
+                "title": f'"{r["actor_name"]}" دخل من {r["ip_count"]} أجهزة/شبكات مختلفة',
+                "description": f'الـ IPs: {r["ips"]}',
+                "actor_type": "student",
+                "actor_id": r["student_id"],
+                "actor_name": r["actor_name"],
+                "group_id": r["group_id"],
+                "group_name": r["group_name"],
+                "ip_address": None,
+                "created_at": r["last_login"],
+            })
+
+        # 3) و 4) محاولات دخول اترفضت (جهاز مختلف / حساب موقوف) - مسجّلة مباشرة في وقت المحاولة
+        rows = conn.execute("""
+            SELECT al.*, g.name as group_name
+            FROM activity_log al
+            LEFT JOIN groups g ON g.id = al.group_id
+            WHERE al.action IN ('login_blocked_device', 'login_blocked_inactive') AND al.created_at >= ?
+            ORDER BY al.created_at DESC
+        """, (cutoff,)).fetchall()
+        for r in rows:
+            alert_type = "device_blocked" if r["action"] == "login_blocked_device" else "inactive_blocked"
+            alerts.append({
+                "type": alert_type,
+                "type_label": FRAUD_TYPE_LABELS[alert_type],
+                "severity": "medium",
+                "title": f'"{r["actor_name"]}" - {FRAUD_TYPE_LABELS[alert_type]}',
+                "description": r["description"] or "",
+                "actor_type": r["actor_type"],
+                "actor_id": r["actor_id"],
+                "actor_name": r["actor_name"],
+                "group_id": r["group_id"],
+                "group_name": r["group_name"],
+                "ip_address": r["ip_address"],
+                "created_at": r["created_at"],
+            })
+
+        # 5) محاولات دخول فاشلة متكررة (من جدول login_attempts - بيتنضف تلقائي كل 6 ساعات،
+        # فده بيعكس النشاط المشبوه الحديث بس مش الفترة الكاملة المختارة بالأيام)
+        rows = conn.execute("""
+            SELECT identifier, COUNT(*) as attempts, MAX(created_at) as last_attempt
+            FROM login_attempts
+            GROUP BY identifier
+            HAVING COUNT(*) >= 3
+            ORDER BY attempts DESC
+        """).fetchall()
+        for r in rows:
+            ident = r["identifier"]
+            if ident.startswith("code:"):
+                kind, value = "كود دخول", ident.split(":", 1)[-1]
+            elif ident.startswith("ip:"):
+                kind, value = "IP", ident.split(":", 1)[-1]
+            elif ident.startswith("user:"):
+                kind, value = "يوزرنيم", ident.split(":", 1)[-1]
+            else:
+                kind, value = "غير معروف", ident
+            alerts.append({
+                "type": "repeated_failed",
+                "type_label": FRAUD_TYPE_LABELS["repeated_failed"],
+                "severity": "high" if r["attempts"] >= LOGIN_ATTEMPT_MAX else "medium",
+                "title": f'{r["attempts"]} محاولة دخول فاشلة على {kind} ({value})',
+                "description": f'آخر محاولة: {r["last_attempt"]}',
+                "actor_type": None,
+                "actor_id": None,
+                "actor_name": value,
+                "group_id": None,
+                "group_name": None,
+                "ip_address": value if ident.startswith("ip:") else None,
+                "created_at": r["last_attempt"],
+            })
+
+    if type:
+        alerts = [a for a in alerts if a["type"] == type]
+    if q:
+        like = q.strip().lower()
+        alerts = [a for a in alerts if like in (a["actor_name"] or "").lower()]
+
+    alerts.sort(key=lambda a: a["created_at"] or "", reverse=True)
+
+    summary = {k: 0 for k in FRAUD_TYPE_LABELS}
+    for a in alerts:
+        summary[a["type"]] = summary.get(a["type"], 0) + 1
+
+    total = len(alerts)
+    start = (page - 1) * page_size
+    end = start + page_size
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "summary": summary,
+        "alerts": alerts[start:end],
+    }
 
 
 # ---------------------------------------------------------------------------
