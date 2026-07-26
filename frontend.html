@@ -1094,6 +1094,7 @@ const NAV_BY_ROLE = {
     {id:"attendance", label:"الحضور والغياب", icon:"calendar-check"},
     {id:"student_search", label:"بحث عن طالب", icon:"search"},
     {id:"activity_log", label:"سجل الأنشطة", icon:"history"},
+    {id:"fraud_alerts", label:"كشف التلاعب", icon:"shield-alert"},
   ],
   teacher: [
     {id:"dashboard", label:"الرئيسية", icon:"layout-dashboard"},
@@ -1112,6 +1113,7 @@ const NAV_BY_ROLE = {
     {id:"teacher_ranking", label:"الترتيب المتقدم", icon:"trophy"},
     {id:"supervisors", label:"المشرفين", icon:"shield-check"},
     {id:"activity_log", label:"سجل الأنشطة", icon:"history"},
+    {id:"fraud_alerts", label:"كشف التلاعب", icon:"shield-alert"},
   ],
   supervisor: [
     {id:"mygroup", label:"مجموعتي", icon:"users"},
@@ -1268,6 +1270,7 @@ const PAGE_TITLES = {
   student_videos:"فيديوهات المجموعة", myvideos:"فيديوهاتي", hs_videos:"كل الفيديوهات",
   subscriptions_report:"تقرير الاشتراكات الشهري",
   activity_log:"سجل الأنشطة",
+  fraud_alerts:"كشف التلاعب",
 };
 
 async function renderPage(page){
@@ -1316,6 +1319,7 @@ async function renderPage(page){
       hs_videos: renderHeadSupervisorVideosPage,
       subscriptions_report: renderSubscriptionsReportPage,
       activity_log: renderActivityLogPage,
+      fraud_alerts: renderFraudAlertsPage,
     };
     const fn = renderers[page];
     if (fn) await fn();
@@ -7461,6 +7465,192 @@ async function loadActivityLog(){
 function changeActivityLogPage(delta){
   ACTIVITY_LOG_STATE.page = Math.max(1, ACTIVITY_LOG_STATE.page + delta);
   loadActivityLog();
+}
+
+/* =====================================================================
+   كشف التلاعب (Fraud / Anomaly Detection) - أدمن / مشرف المشرفين
+   مؤشرات مشبوهة: دخول من غير اشتراك، مشاركة كود بين أكتر من جهاز، محاولات
+   دخول اترفضت (جهاز مختلف / حساب موقوف)، محاولات دخول فاشلة متكررة
+===================================================================== */
+let FRAUD_TYPES_CACHE = null;
+let FRAUD_ALERTS_STATE = { page: 1, type: "", q: "", days: 14 };
+
+const FRAUD_SEVERITY_BADGES = {
+  high: {label:"خطورة عالية", cls:"badge-red"},
+  medium: {label:"خطورة متوسطة", cls:"badge-amber"},
+  low: {label:"خطورة منخفضة", cls:"badge-gray"},
+};
+
+const FRAUD_TYPE_ICONS = {
+  unpaid_login: "credit-card",
+  shared_code: "users",
+  device_blocked: "smartphone",
+  inactive_blocked: "user-x",
+  repeated_failed: "repeat",
+};
+
+async function renderFraudAlertsPage(){
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `<div class="empty-state"><div class="empty-title">بتحمّل...</div></div>`;
+
+  if (!FRAUD_TYPES_CACHE){
+    try{ FRAUD_TYPES_CACHE = await api("/api/admin/fraud-alerts/types"); }
+    catch(e){ FRAUD_TYPES_CACHE = []; }
+  }
+
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>كشف التلاعب</h1><p>مؤشرات مشبوهة بتتجمّع تلقائيًا من سجل الدخول والمدفوعات - زي طالب دخل من غير اشتراك، أو نفس الكود بيتستخدم من أكتر من جهاز</p></div>
+    </div>
+    <div id="fa_summary" class="stats-grid" style="margin-bottom:14px;"></div>
+    <div class="table-card" style="padding:16px;margin-bottom:14px;">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+        <div style="min-width:190px;">
+          <label class="form-label">نوع التنبيه</label>
+          <select id="fa_type" class="form-input" onchange="onFraudAlertsFilterChange()">
+            <option value="">كل الأنواع</option>
+            ${FRAUD_TYPES_CACHE.map(t=>`<option value="${t.key}">${escapeHtml(t.label)}</option>`).join("")}
+          </select>
+        </div>
+        <div style="min-width:150px;">
+          <label class="form-label">الفترة</label>
+          <select id="fa_days" class="form-input" onchange="onFraudAlertsFilterChange()">
+            <option value="7">آخر 7 أيام</option>
+            <option value="14" selected>آخر 14 يوم</option>
+            <option value="30">آخر 30 يوم</option>
+            <option value="90">آخر 90 يوم</option>
+          </select>
+        </div>
+        <div style="flex:1;min-width:220px;">
+          <label class="form-label">بحث بالاسم</label>
+          <div class="search-wrap">
+            <i data-lucide="search" class="search-ic" style="width:14px;height:14px;"></i>
+            <input id="fa_q" class="form-input" placeholder="اسم الطالب أو المستخدم..." oninput="debounceFraudAlertsSearch()" style="padding-right:38px;">
+          </div>
+        </div>
+        <button class="btn btn-ghost" onclick="resetFraudAlertsFilters()"><i data-lucide="rotate-ccw" style="width:14px;height:14px;"></i> إعادة تعيين</button>
+      </div>
+    </div>
+    <div class="table-card">
+      <div id="fa_results" style="padding:20px 16px;"><div class="loading-row"><span class="spinner"></span> بيتحمّل...</div></div>
+    </div>
+  `;
+  icons();
+  await loadFraudAlerts();
+}
+
+function onFraudAlertsFilterChange(){
+  FRAUD_ALERTS_STATE.type = document.getElementById("fa_type").value;
+  FRAUD_ALERTS_STATE.days = document.getElementById("fa_days").value;
+  FRAUD_ALERTS_STATE.page = 1;
+  loadFraudAlerts();
+}
+
+let _faSearchTimer = null;
+function debounceFraudAlertsSearch(){
+  clearTimeout(_faSearchTimer);
+  _faSearchTimer = setTimeout(()=>{
+    FRAUD_ALERTS_STATE.q = document.getElementById("fa_q").value.trim();
+    FRAUD_ALERTS_STATE.page = 1;
+    loadFraudAlerts();
+  }, 350);
+}
+
+function resetFraudAlertsFilters(){
+  FRAUD_ALERTS_STATE = { page: 1, type: "", q: "", days: 14 };
+  renderFraudAlertsPage();
+}
+
+function renderFraudSummaryCards(summary){
+  const el = document.getElementById("fa_summary");
+  if (!el) return;
+  const cards = [
+    {key:"unpaid_login", icon:"credit-card", cls:"red"},
+    {key:"shared_code", icon:"users", cls:"amber"},
+    {key:"device_blocked", icon:"smartphone", cls:"blue"},
+    {key:"inactive_blocked", icon:"user-x", cls:"green"},
+    {key:"repeated_failed", icon:"repeat", cls:"teal"},
+  ];
+  el.innerHTML = cards.map(cd=>{
+    const label = (FRAUD_TYPES_CACHE.find(t=>t.key===cd.key)||{}).label || cd.key;
+    return `
+      <div class="stat-card" style="cursor:pointer;" onclick="document.getElementById('fa_type').value='${cd.key}';onFraudAlertsFilterChange();">
+        <div class="stat-top"><div class="stat-icon ${cd.cls}"><i data-lucide="${cd.icon}" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${summary[cd.key]||0}</div><div class="stat-label">${escapeHtml(label)}</div>
+      </div>`;
+  }).join("");
+  icons();
+}
+
+async function loadFraudAlerts(){
+  const el = document.getElementById("fa_results");
+  if (!el) return;
+  el.innerHTML = `<div class="loading-row"><span class="spinner"></span> بيتحمّل...</div>`;
+
+  const params = { page: FRAUD_ALERTS_STATE.page, page_size: 50, days: FRAUD_ALERTS_STATE.days };
+  if (FRAUD_ALERTS_STATE.type) params.type = FRAUD_ALERTS_STATE.type;
+  if (FRAUD_ALERTS_STATE.q) params.q = FRAUD_ALERTS_STATE.q;
+  const qs = new URLSearchParams(params).toString();
+
+  let data;
+  try{
+    data = await api(`/api/admin/fraud-alerts?${qs}`);
+  }catch(e){
+    el.innerHTML = `<div class="empty-state"><div class="empty-title">حصل خطأ أثناء تحميل التنبيهات</div></div>`;
+    return;
+  }
+
+  renderFraudSummaryCards(data.summary || {});
+
+  if (!data.alerts.length){
+    el.innerHTML = `<div class="empty-state"><div class="empty-icon"><i data-lucide="shield-check" style="width:22px;height:22px;"></i></div><div class="empty-title">مفيش أي مؤشرات مشبوهة في الفترة دي 🎉</div></div>`;
+    icons();
+    return;
+  }
+
+  const totalPages = Math.max(1, Math.ceil(data.total / data.page_size));
+
+  el.innerHTML = `
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th>الوقت</th><th>النوع</th><th>الخطورة</th><th>التفاصيل</th><th>المجموعة</th><th>IP</th>
+      </tr></thead>
+      <tbody>
+        ${data.alerts.map(a=>{
+          const sev = FRAUD_SEVERITY_BADGES[a.severity] || {label:a.severity, cls:"badge-gray"};
+          return `
+          <tr>
+            <td style="white-space:nowrap;font-size:12.5px;color:var(--text-3);">${formatActivityLogDate(a.created_at)}</td>
+            <td style="display:flex;align-items:center;gap:6px;white-space:nowrap;">
+              <i data-lucide="${FRAUD_TYPE_ICONS[a.type]||'alert-triangle'}" style="width:14px;height:14px;color:var(--text-3);"></i>
+              ${escapeHtml(a.type_label)}
+            </td>
+            <td><span class="badge ${sev.cls}">${sev.label}</span></td>
+            <td style="max-width:380px;">
+              <div style="font-weight:600;">${escapeHtml(a.title)}</div>
+              ${a.description ? `<div style="font-size:12px;color:var(--text-3);margin-top:2px;">${escapeHtml(a.description)}</div>` : ""}
+            </td>
+            <td>${a.group_name ? `<span class="badge badge-teal">${escapeHtml(a.group_name)}</span>` : "—"}</td>
+            <td style="font-size:12px;color:var(--text-3);white-space:nowrap;">${escapeHtml(a.ip_address || "—")}</td>
+          </tr>`;
+        }).join("")}
+      </tbody>
+    </table></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 4px 4px;flex-wrap:wrap;gap:8px;">
+      <div style="font-size:12.5px;color:var(--text-3);">إجمالي ${data.total} تنبيه</div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button class="btn btn-ghost" ${data.page<=1?"disabled":""} onclick="changeFraudAlertsPage(-1)"><i data-lucide="chevron-right" style="width:14px;height:14px;"></i> السابق</button>
+        <span style="font-size:12.5px;color:var(--text-3);">صفحة ${data.page} من ${totalPages}</span>
+        <button class="btn btn-ghost" ${data.page>=totalPages?"disabled":""} onclick="changeFraudAlertsPage(1)">التالي <i data-lucide="chevron-left" style="width:14px;height:14px;"></i></button>
+      </div>
+    </div>
+  `;
+  icons();
+}
+
+function changeFraudAlertsPage(delta){
+  FRAUD_ALERTS_STATE.page = Math.max(1, FRAUD_ALERTS_STATE.page + delta);
+  loadFraudAlerts();
 }
 
 
