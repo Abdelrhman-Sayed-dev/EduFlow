@@ -300,6 +300,7 @@ class PaymentIn(BaseModel):
     month: str  # صيغة YYYY-MM
     amount: Optional[float] = None
     is_paid: bool = False
+    is_free: bool = False  # فري لشهر الدفعة ده بس (مختلف عن فري الطالب الدائم)
     paid_date: Optional[str] = None
     notes: Optional[str] = Field(None, max_length=2000)
 
@@ -334,16 +335,17 @@ def current_month_str():
 def is_student_subscribed(conn, student_id: int) -> bool:
     """
     هل الطالب مسموحله يشوف المحتوى؟ - ده اللي بيتحكم في السماح بمشاهدة المحتوى من عدمه.
-    الطالب "الفري" (معفى من السداد) بيتحسب مشترك دايمًا من غير ما يحتاج يسدد أي حاجة.
+    - الطالب "الفري الدائم" (students.is_free) بيتحسب مشترك دايمًا في كل الشهور.
+    - أو لو الشهر الحالي بالذات مسدد أو اتمنح فري لشهر واحد بس (payments.is_free).
     """
     student = conn.execute("SELECT is_free FROM students WHERE id=?", (student_id,)).fetchone()
     if student and student["is_free"]:
         return True
     row = conn.execute(
-        "SELECT is_paid FROM payments WHERE student_id=? AND month=?",
+        "SELECT is_paid, is_free FROM payments WHERE student_id=? AND month=?",
         (student_id, current_month_str())
     ).fetchone()
-    return bool(row and row["is_paid"])
+    return bool(row and (row["is_paid"] or row["is_free"]))
 
 
 def paid_months_for_student(conn, student_id: int) -> Optional[set]:
@@ -2861,7 +2863,7 @@ def get_payments(group_id: Optional[int] = None, month: Optional[str] = None,
 
         query = """
             SELECT s.id as student_id, s.full_name, s.group_id, s.is_free, g.name as group_name, g.monthly_fee as group_monthly_fee,
-                   p.id as payment_id, p.amount, p.is_paid, p.paid_date, p.notes
+                   p.id as payment_id, p.amount, p.is_paid, p.is_free as month_free, p.paid_date, p.notes
             FROM students s
             JOIN groups g ON g.id = s.group_id
             LEFT JOIN payments p ON p.student_id = s.id AND p.month = ?
@@ -2889,26 +2891,33 @@ def set_payment(data: PaymentIn, session=Depends(require_roles("admin", "head_su
         if session["role"] == "supervisor":
             assert_supervisor_owns_group(conn, session, student["group_id"])
 
+        # الفري لشهر معين بيلغي حالة السداد لنفس الشهر - مينفعش الاتنين مع بعض
+        is_free = data.is_free
+        is_paid = data.is_paid and not is_free
+
         amount = data.amount
-        if amount is None:
+        if amount is None and not is_free:
             grp = conn.execute("SELECT monthly_fee FROM groups WHERE id=?", (student["group_id"],)).fetchone()
             amount = grp["monthly_fee"] if grp else None
 
         paid_date = data.paid_date
-        if data.is_paid and not paid_date:
+        if is_paid and not paid_date:
             from datetime import date
             paid_date = date.today().isoformat()
+        if is_free:
+            paid_date = None
 
         conn.execute("""
-            INSERT INTO payments (student_id, month, amount, is_paid, paid_date, notes)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO payments (student_id, month, amount, is_paid, is_free, paid_date, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(student_id, month)
-            DO UPDATE SET amount=excluded.amount, is_paid=excluded.is_paid,
+            DO UPDATE SET amount=excluded.amount, is_paid=excluded.is_paid, is_free=excluded.is_free,
                           paid_date=excluded.paid_date, notes=excluded.notes
-        """, (data.student_id, data.month, amount, int(data.is_paid), paid_date, data.notes))
+        """, (data.student_id, data.month, amount, int(is_paid), int(is_free), paid_date, data.notes))
+        desc = "فري (الشهر ده بس)" if is_free else ("مسدد" if is_paid else "غير مسدد")
         log_session_activity(
             conn, session, "payment",
-            f"تسجيل دفعة لطالب #{data.student_id} - شهر {data.month}: {'مسدد' if data.is_paid else 'غير مسدد'}",
+            f"تسجيل دفعة لطالب #{data.student_id} - شهر {data.month}: {desc}",
             group_id=student["group_id"]
         )
         return {"message": "تم حفظ بيانات الدفع"}
@@ -2986,7 +2995,7 @@ def get_subscriptions_summary(month: str, session=Depends(require_roles("admin",
 
         for g in groups:
             students = conn.execute("""
-                SELECT s.id as student_id, s.full_name, s.is_free, p.is_paid, p.amount, p.paid_date
+                SELECT s.id as student_id, s.full_name, s.is_free, p.is_paid, p.is_free as month_free, p.amount, p.paid_date
                 FROM students s
                 LEFT JOIN payments p ON p.student_id = s.id AND p.month = ?
                 WHERE s.group_id = ? AND s.is_active = 1
@@ -2998,8 +3007,9 @@ def get_subscriptions_summary(month: str, session=Depends(require_roles("admin",
             free_count = 0
             group_amount = 0.0
             for s in students:
-                is_free = bool(s["is_free"])
-                is_paid = bool(s["is_paid"])
+                # فري دائم (كل الشهور) أو فري لشهر التقرير ده بالذات - الاتنين بيتحسبوا "فري"
+                is_free = bool(s["is_free"]) or bool(s["month_free"])
+                is_paid = bool(s["is_paid"]) and not is_free
                 if is_free:
                     free_count += 1
                 elif is_paid:
@@ -4350,10 +4360,11 @@ def get_fraud_alerts(
     alerts = []
 
     with get_connection() as conn:
-        # 1) دخول طلاب من غير اشتراك مسدد لشهر الدخول نفسه (بيتجاهل الطلاب "الفري")
+        # 1) دخول طلاب من غير اشتراك مسدد لشهر الدخول نفسه (بيتجاهل الطلاب الفري
+        # الدائم أو اللي اتمنحلهم فري لشهر الدخول ده بالذات)
         rows = conn.execute("""
             SELECT al.actor_id as student_id, al.actor_name, al.ip_address, al.created_at,
-                   s.group_id, g.name as group_name, s.is_free, s.is_active, p.is_paid
+                   s.group_id, g.name as group_name, s.is_free, s.is_active, p.is_paid, p.is_free as month_free
             FROM activity_log al
             LEFT JOIN students s ON s.id = al.actor_id
             LEFT JOIN groups g ON g.id = s.group_id
@@ -4362,7 +4373,7 @@ def get_fraud_alerts(
             ORDER BY al.created_at DESC
         """, (cutoff,)).fetchall()
         for r in rows:
-            if not r["student_id"] or r["is_free"] or r["is_paid"]:
+            if not r["student_id"] or r["is_free"] or r["is_paid"] or r["month_free"]:
                 continue
             alerts.append({
                 "type": "unpaid_login",

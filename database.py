@@ -57,16 +57,15 @@ def verify_password(password: str, stored_hash: str) -> tuple[bool, bool]:
 
 def get_first_subscription_date(conn, student_id: int):
     """
-    تاريخ أول اشتراك فعلي (أول دفعة مسددة) للطالب - هو نقطة البداية العامة لعرض
-    أي محتوى/بيانات للطالب في المنصة (فلتر عام Global Filter على كل الصفحات).
-    بيرجع التاريخ بصيغة 'YYYY-MM-DD'، أو None لو الطالب لسه معندوش أي اشتراك مسدد
-    (في الحالة دي المفروض ميتعرضلوش أي محتوى قديم أصلاً لحد ما يتسدد أول اشتراك له).
+    تاريخ أول اشتراك فعلي (أول دفعة مسددة أو أول شهر اتمنح فري) للطالب - للعرض
+    بس في الواجهة (زي "مشترك من...").
+    بيرجع التاريخ بصيغة 'YYYY-MM-DD'، أو None لو الطالب لسه معندوش أي اشتراك مسدد.
     """
     row = conn.execute(
         """
         SELECT MIN(COALESCE(paid_date, created_at)) as first_date
         FROM payments
-        WHERE student_id = ? AND is_paid = 1
+        WHERE student_id = ? AND (is_paid = 1 OR is_free = 1)
         """,
         (student_id,),
     ).fetchone()
@@ -77,12 +76,13 @@ def get_first_subscription_date(conn, student_id: int):
 
 def get_paid_months(conn, student_id: int):
     """
-    بيرجع قايمة الشهور (YYYY-MM) اللي الطالب سددها فعليًا بس - بتُستخدم عشان
-    نعرضله بس محتوى الشهور دي (لو فيه فجوة سداد، الشهر ده بيتخفي حتى لو فيه
-    شهور مدفوعة بعده).
+    بيرجع قايمة الشهور (YYYY-MM) اللي الطالب مسموحله يشوف محتواها - إما لأنه
+    سددها فعليًا (is_paid=1) أو اتمنحله فري لشهر معين بس (is_free=1، مختلف عن
+    الفري الدائم في جدول الطلاب). بتُستخدم عشان نعرضله بس محتوى الشهور دي (لو
+    فيه فجوة سداد، الشهر ده بيتخفي حتى لو فيه شهور مدفوعة بعده).
     """
     rows = conn.execute(
-        "SELECT month FROM payments WHERE student_id=? AND is_paid=1 ORDER BY month",
+        "SELECT month FROM payments WHERE student_id=? AND (is_paid=1 OR is_free=1) ORDER BY month",
         (student_id,),
     ).fetchall()
     return [r["month"] for r in rows]
@@ -466,6 +466,10 @@ def init_db():
             UNIQUE(student_id, month)
         )
         """)
+        # فري خاص بشهر معين بس (مختلف عن students.is_free اللي بيبقى فري دائم في
+        # كل الشهور) - لو الطالب فري في شهر معين، بيشوف محتوى الشهر ده بس من
+        # غير سداد، من غير ما يأثر على باقي الشهور
+        _safe_alter(cur, "ALTER TABLE payments ADD COLUMN is_free INTEGER NOT NULL DEFAULT 0")
 
         # جدول الكويزات - كويز عام على مستوى المرحلة الدراسية (بيشوفه كل مشرفي المرحلة)
         # أو مرتبط بمجموعة معينة (النظام القديم، لسه متاح للتوافق)
