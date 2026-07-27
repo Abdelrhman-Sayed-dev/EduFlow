@@ -182,6 +182,13 @@ tbody tr:hover{background:var(--primary-10);}
 .action-btn:hover{background:var(--surface-3);color:var(--text);border-color:var(--border-2);}
 .action-btn.edit:hover{background:var(--info-bg);color:var(--info);border-color:var(--info-bg);}
 .action-btn.del:hover{background:var(--danger-bg);color:var(--danger);border-color:var(--danger-bg);}
+.qb-options{display:flex;flex-direction:column;gap:8px;}
+.qb-option-btn{text-align:right;padding:11px 14px;border:1.5px solid var(--border);border-radius:var(--radius-md);background:var(--surface);cursor:pointer;font-family:'Cairo',sans-serif;font-size:13px;font-weight:600;color:var(--text);transition:border-color .12s var(--ease),background .12s var(--ease);}
+.qb-option-btn:hover:not(:disabled){border-color:var(--primary);}
+.qb-option-btn:disabled{cursor:default;}
+.qb-option-btn.correct{border-color:var(--success);background:var(--success-bg);color:#065F46;}
+.qb-option-btn.wrong{border-color:var(--danger);background:var(--danger-bg);color:#991B1B;}
+.qb-feedback-explain{margin-top:10px;background:var(--surface-2);border-right:3px solid var(--primary);border-radius:var(--radius-md);padding:10px 14px;font-size:13px;line-height:1.7;}
 
 /* CLEAR LABELED ACTION BUTTONS - تعديل / تفعيل-إيقاف / حذف */
 .act-btn{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 11px;border-radius:99px;border:1px solid transparent;font-size:12px;font-weight:700;cursor:pointer;font-family:'Cairo',sans-serif;white-space:nowrap;transition:all .12s var(--ease);}
@@ -1091,6 +1098,7 @@ const NAV_BY_ROLE = {
     {id:"teachers", label:"المدرسين", icon:"presentation"},
     {id:"schedule", label:"جدول المواعيد", icon:"calendar-clock"},
     {id:"quizzes", label:"الكويزات والامتحانات", icon:"file-check-2"},
+    {id:"qbank_admin", label:"بنك الأسئلة", icon:"library"},
     {id:"attendance", label:"الحضور والغياب", icon:"calendar-check"},
     {id:"student_search", label:"بحث عن طالب", icon:"search"},
     {id:"activity_log", label:"سجل الأنشطة", icon:"history"},
@@ -1108,6 +1116,7 @@ const NAV_BY_ROLE = {
     {id:"dashboard", label:"الرئيسية", icon:"layout-dashboard"},
     {id:"hs_videos", label:"الفيديوهات", icon:"video"},
     {id:"hs_quizzes", label:"إدارة الكويزات والامتحانات", icon:"file-check-2"},
+    {id:"qbank_analytics", label:"تحليل بنك الأسئلة", icon:"library"},
     {id:"teacher_analytics", label:"التحليلات", icon:"bar-chart-3"},
     {id:"teacher_compare", label:"مقارنة المجموعات", icon:"git-compare"},
     {id:"teacher_ranking", label:"الترتيب المتقدم", icon:"trophy"},
@@ -1128,6 +1137,7 @@ const NAV_BY_ROLE = {
   student: [
     {id:"mydashboard", label:"لوحتي", icon:"layout-dashboard"},
     {id:"mycontent", label:"محتوى مجموعتي بالشهور", icon:"calendar-range"},
+    {id:"qbank_student", label:"بنك الأسئلة", icon:"library"},
     {id:"myhomework", label:"واجباتي", icon:"clipboard-list"},
     {id:"myscores", label:"درجاتي", icon:"file-check-2"},
     {id:"myattendance", label:"حضوري", icon:"calendar-check"},
@@ -1141,6 +1151,7 @@ const ROLE_LABELS = {admin:"الأدمن العام", teacher:"المدرس", su
 const STUDENT_BOTTOM_NAV = [
   {id:"mydashboard", label:"الرئيسية", icon:"home"},
   {id:"mycontent", label:"محتوى الشهور", icon:"calendar-range"},
+  {id:"qbank_student", label:"بنك الأسئلة", icon:"library"},
   {id:"myrequests", label:"طلباتي", icon:"send"},
   {id:"student_more", label:"المزيد", icon:"layout-grid"},
 ];
@@ -1271,6 +1282,7 @@ const PAGE_TITLES = {
   subscriptions_report:"تقرير الاشتراكات الشهري",
   activity_log:"سجل الأنشطة",
   fraud_alerts:"كشف التلاعب",
+  qbank_admin:"بنك الأسئلة", qbank_analytics:"تحليل بنك الأسئلة", qbank_student:"بنك الأسئلة",
 };
 
 async function renderPage(page){
@@ -1320,6 +1332,9 @@ async function renderPage(page){
       subscriptions_report: renderSubscriptionsReportPage,
       activity_log: renderActivityLogPage,
       fraud_alerts: renderFraudAlertsPage,
+      qbank_admin: renderQbankAdminPage,
+      qbank_analytics: ()=>renderQbankAnalyticsPage(),
+      qbank_student: renderQbankStudentPage,
     };
     const fn = renderers[page];
     if (fn) await fn();
@@ -6174,6 +6189,11 @@ async function renderStudentMorePage(){
   c.innerHTML = `
     <div class="page-header"><div><h1>المزيد</h1><p>باقي صفحاتك وإعدادات حسابك</p></div></div>
     <div class="table-card" style="padding:6px 12px;margin-bottom:14px;">
+      <div class="student-more-item" onclick="navigateTo('qbank_student')">
+        <div class="student-more-ic"><i data-lucide="library" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">بنك الأسئلة</div><div style="font-size:11.5px;color:var(--text-3);">حل أسئلة اختيارية، واحفظ اللي يهمك في المفضلة</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
       <div class="student-more-item" onclick="navigateTo('myhomework')">
         <div class="student-more-ic"><i data-lucide="clipboard-list" style="width:18px;height:18px;"></i></div>
         <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">واجباتي</div><div style="font-size:11.5px;color:var(--text-3);">الواجبات المطلوبة منك وتسليمك ليها</div></div>
@@ -7676,8 +7696,484 @@ function changeFraudAlertsPage(delta){
   loadFraudAlerts();
 }
 
+/* =====================================================================
+   بنك الأسئلة - Question Bank (Admin)
+===================================================================== */
+let QBANK_ADMIN_STATE = {stageId: null, chapter: null, questions: []};
 
+async function renderQbankAdminPage(){
+  const c = document.getElementById("pageContainer");
+  const stages = await loadStages();
+  CACHE_STAGES = stages;
+  QBANK_ADMIN_STATE.stageId = null;
+  QBANK_ADMIN_STATE.chapter = null;
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>بنك الأسئلة</h1><p>ارفع شيت إكسيل بالأسئلة، أو أضف سؤال يدويًا، وتابع أكتر الأسئلة اللي بيغلط فيها الطلاب</p></div>
+      <div class="header-actions">
+        <button class="btn btn-ghost btn-sm" onclick="navigateTo('qbank_analytics')"><i data-lucide="bar-chart-3" style="width:14px;height:14px;"></i> تحليل الأخطاء الشائعة</button>
+        <button class="btn btn-ghost btn-sm" onclick="openQbankUploadModal()"><i data-lucide="upload" style="width:14px;height:14px;"></i> رفع ملف إكسيل</button>
+        <button class="btn btn-primary btn-sm" onclick="openQbankQuestionModal()"><i data-lucide="plus" style="width:14px;height:14px;"></i> إضافة سؤال</button>
+      </div>
+    </div>
+    <div class="table-card" style="padding:12px 14px;margin-bottom:14px;">
+      <div class="form-row-2">
+        <div class="form-group" style="margin:0;"><label class="form-label">المرحلة الدراسية</label>
+          <select class="form-select" id="qbAdminStageFilter" onchange="qbAdminStageChanged()">
+            <option value="">كل المراحل</option>
+            ${stages.map(s=>`<option value="${s.id}">${escapeHtml(s.name)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="form-group" style="margin:0;"><label class="form-label">الباب</label>
+          <select class="form-select" id="qbAdminChapterFilter" onchange="qbAdminChapterChanged()">
+            <option value="">كل الأبواب</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div id="qbAdminTableWrap"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>
+  `;
+  icons();
+  await qbAdminLoadQuestions();
+}
 
+async function qbAdminStageChanged(){
+  const stageId = document.getElementById("qbAdminStageFilter").value;
+  QBANK_ADMIN_STATE.stageId = stageId || null;
+  QBANK_ADMIN_STATE.chapter = null;
+  const chapterSelect = document.getElementById("qbAdminChapterFilter");
+  const chapters = await api(`/api/qbank/chapters${stageId?`?stage_id=${stageId}`:""}`);
+  const names = [...new Set(chapters.map(c=>c.chapter))];
+  chapterSelect.innerHTML = `<option value="">كل الأبواب</option>` + names.map(n=>`<option value="${jsAttr(n)}">${escapeHtml(n)}</option>`).join("");
+  await qbAdminLoadQuestions();
+}
+
+function qbAdminChapterChanged(){
+  QBANK_ADMIN_STATE.chapter = document.getElementById("qbAdminChapterFilter").value || null;
+  qbAdminLoadQuestions();
+}
+
+async function qbAdminLoadQuestions(){
+  const wrap = document.getElementById("qbAdminTableWrap");
+  wrap.innerHTML = `<div class="empty-state"><div class="empty-title">بتحمّل...</div></div>`;
+  const params = new URLSearchParams();
+  if (QBANK_ADMIN_STATE.stageId) params.set("stage_id", QBANK_ADMIN_STATE.stageId);
+  if (QBANK_ADMIN_STATE.chapter) params.set("chapter", QBANK_ADMIN_STATE.chapter);
+  const questions = await api(`/api/qbank/questions?${params.toString()}`);
+  QBANK_ADMIN_STATE.questions = questions;
+  if (!questions.length){
+    wrap.innerHTML = `<div class="empty-state"><div class="empty-icon"><i data-lucide="library" style="width:26px;height:26px;"></i></div><div class="empty-title">لا يوجد أسئلة بعد</div><div class="empty-desc">ابدأ برفع شيت إكسيل أو إضافة سؤال يدويًا.</div></div>`;
+    icons();
+    return;
+  }
+  wrap.innerHTML = `
+    <div class="table-card">
+      <div class="table-wrap"><table>
+        <thead><tr><th>السؤال</th><th>المرحلة</th><th>الباب / الدرس</th><th>محاولات</th><th>نسبة الغلط</th><th></th></tr></thead>
+        <tbody>
+          ${questions.map(q=>{
+            const wrongRate = q.attempts ? Math.round((q.wrong_attempts/q.attempts)*100) : null;
+            const rateBadge = wrongRate==null ? "badge-gray" : (wrongRate>=50 ? "badge-red" : (wrongRate>=25 ? "badge-amber" : "badge-green"));
+            return `<tr>
+              <td class="td-name" style="max-width:320px;">${escapeHtml(q.question_text)}</td>
+              <td>${q.stage_name?`<span class="badge badge-blue">${escapeHtml(q.stage_name)}</span>`:"—"}</td>
+              <td><span class="badge badge-gray">${escapeHtml(q.chapter)}</span><div style="font-size:11px;color:var(--text-3);margin-top:3px;">${escapeHtml(q.lesson)}</div></td>
+              <td>${q.attempts}</td>
+              <td>${wrongRate!=null ? `<span class="badge ${rateBadge}">${wrongRate}%</span>` : "—"}</td>
+              <td class="td-actions">
+                <button class="action-btn edit" onclick='openQbankQuestionModal(${JSON.stringify(q).replace(/'/g,"&#39;")})'><i data-lucide="pencil" style="width:14px;height:14px;"></i></button>
+                <button class="action-btn del" onclick="deleteQbankQuestion(${q.id})"><i data-lucide="trash-2" style="width:15px;height:15px;"></i></button>
+              </td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table></div>
+    </div>
+  `;
+  icons();
+}
+
+function openQbankUploadModal(){
+  openModal("رفع ملف إكسيل ببنك الأسئلة", `
+    <div class="form-group">
+      <label class="form-label">المرحلة الدراسية <span class="req">*</span></label>
+      <select class="form-select" id="f_qb_upload_stage">${(CACHE_STAGES||[]).map(s=>`<option value="${s.id}">${escapeHtml(s.name)}</option>`).join("")}</select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">ملف الإكسيل (xlsx) <span class="req">*</span></label>
+      <input class="form-input" id="f_qb_upload_file" type="file" accept=".xlsx,.xlsm">
+      <div class="form-hint">أعمدة الشيت المطلوبة بالترتيب ده (بأي ترتيب فعليًا، المهم أسماء الأعمدة): الباب، الدرس، السؤال، الإجابة الصحيحة، إجابة خاطئة 1، إجابة خاطئة 2، إجابة خاطئة 3، التفسير (اختياري)</div>
+    </div>
+    <div id="qbUploadResultWrap"></div>
+  `, `
+    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+    <button class="btn btn-primary" id="qbUploadSubmitBtn" onclick="submitQbankUpload()"><i data-lucide="upload" style="width:14px;height:14px;"></i> رفع الملف</button>
+  `);
+}
+
+async function submitQbankUpload(){
+  const stageId = document.getElementById("f_qb_upload_stage").value;
+  const fileInput = document.getElementById("f_qb_upload_file");
+  const file = fileInput.files[0];
+  if (!stageId){ showToast("لازم تحدد المرحلة الدراسية", "error"); return; }
+  if (!file){ showToast("لازم تختار ملف إكسيل", "error"); return; }
+
+  const submitBtn = document.getElementById("qbUploadSubmitBtn");
+  submitBtn.disabled = true;
+  const form = new FormData();
+  form.append("stage_id", stageId);
+  form.append("file", file);
+
+  let data;
+  try{
+    const res = await fetch(API + "/api/qbank/upload", {
+      method: "POST",
+      headers: TOKEN ? {"Authorization": "Bearer " + TOKEN} : {},
+      body: form,
+    });
+    data = await res.json();
+    if (!res.ok){
+      showToast(data.detail || "حصل خطأ أثناء الرفع", "error");
+      submitBtn.disabled = false;
+      return;
+    }
+  }catch(e){
+    showToast("في مشكلة في الاتصال بالسيرفر", "error");
+    submitBtn.disabled = false;
+    return;
+  }
+
+  showToast(data.message, "success");
+  const resultWrap = document.getElementById("qbUploadResultWrap");
+  if (resultWrap){
+    resultWrap.innerHTML = `
+      <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:10px 14px;margin-top:8px;font-size:13px;">
+        تم إضافة <b>${data.inserted}</b> سؤال${data.skipped ? `، وتم تجاهل <b>${data.skipped}</b> صف فيه بيانات ناقصة` : ""}.
+        ${data.errors && data.errors.length ? `<div style="margin-top:6px;color:var(--danger);font-size:12px;">${data.errors.map(e=>escapeHtml(e)).join("<br>")}</div>` : ""}
+      </div>`;
+  }
+  submitBtn.disabled = false;
+  qbAdminLoadQuestions();
+}
+
+function openQbankQuestionModal(question){
+  const isEdit = !!question;
+  openModal(isEdit ? "تعديل السؤال" : "إضافة سؤال جديد", `
+    <input type="hidden" id="f_qb_id" value="${isEdit?question.id:""}">
+    <div class="form-row-2">
+      <div class="form-group"><label class="form-label">المرحلة الدراسية <span class="req">*</span></label>
+        <select class="form-select" id="f_qb_stage">${(CACHE_STAGES||[]).map(s=>`<option value="${s.id}" ${isEdit&&question.stage_id==s.id?"selected":""}>${escapeHtml(s.name)}</option>`).join("")}</select>
+      </div>
+      <div class="form-group"><label class="form-label">الباب <span class="req">*</span></label><input class="form-input" id="f_qb_chapter" value="${isEdit?jsAttr(question.chapter):""}"></div>
+    </div>
+    <div class="form-group"><label class="form-label">الدرس <span class="req">*</span></label><input class="form-input" id="f_qb_lesson" value="${isEdit?jsAttr(question.lesson):""}"></div>
+    <div class="form-group"><label class="form-label">نص السؤال <span class="req">*</span></label><textarea class="form-textarea" id="f_qb_question">${isEdit?question.question_text:""}</textarea></div>
+    <div class="form-group"><label class="form-label">الإجابة الصحيحة <span class="req">*</span></label><input class="form-input" id="f_qb_correct" style="border-color:var(--success);" value="${isEdit?jsAttr(question.correct_answer):""}"></div>
+    <div class="form-group"><label class="form-label">إجابة خاطئة 1 <span class="req">*</span></label><input class="form-input" id="f_qb_wrong1" value="${isEdit?jsAttr(question.wrong_answer_1):""}"></div>
+    <div class="form-group"><label class="form-label">إجابة خاطئة 2 <span class="req">*</span></label><input class="form-input" id="f_qb_wrong2" value="${isEdit?jsAttr(question.wrong_answer_2):""}"></div>
+    <div class="form-group"><label class="form-label">إجابة خاطئة 3 <span class="req">*</span></label><input class="form-input" id="f_qb_wrong3" value="${isEdit?jsAttr(question.wrong_answer_3):""}"></div>
+    <div class="form-group"><label class="form-label">التفسير (بيظهر للطالب لو جاوب غلط)</label><textarea class="form-textarea" id="f_qb_explanation">${isEdit&&question.explanation?question.explanation:""}</textarea></div>
+  `, `
+    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+    <button class="btn btn-primary" onclick="submitQbankQuestion(${isEdit})"><i data-lucide="check" style="width:14px;height:14px;"></i> ${isEdit?"حفظ التعديلات":"إضافة"}</button>
+  `, {width:"560px"});
+}
+
+async function submitQbankQuestion(isEdit){
+  const body = {
+    stage_id: parseInt(document.getElementById("f_qb_stage").value),
+    chapter: document.getElementById("f_qb_chapter").value.trim(),
+    lesson: document.getElementById("f_qb_lesson").value.trim(),
+    question_text: document.getElementById("f_qb_question").value.trim(),
+    correct_answer: document.getElementById("f_qb_correct").value.trim(),
+    wrong_answer_1: document.getElementById("f_qb_wrong1").value.trim(),
+    wrong_answer_2: document.getElementById("f_qb_wrong2").value.trim(),
+    wrong_answer_3: document.getElementById("f_qb_wrong3").value.trim(),
+    explanation: document.getElementById("f_qb_explanation").value.trim() || null,
+  };
+  if (!body.chapter || !body.lesson || !body.question_text || !body.correct_answer ||
+      !body.wrong_answer_1 || !body.wrong_answer_2 || !body.wrong_answer_3){
+    showToast("لازم تملأ كل الحقول المطلوبة (ماعدا التفسير)", "error");
+    return;
+  }
+  const id = document.getElementById("f_qb_id").value;
+  if (isEdit && id){
+    await api(`/api/qbank/questions/${id}`, {method:"PUT", body: JSON.stringify(body)});
+    showToast("تم تعديل السؤال", "success");
+  } else {
+    await api("/api/qbank/questions", {method:"POST", body: JSON.stringify(body)});
+    showToast("تم إضافة السؤال", "success");
+  }
+  closeOverlay("genericModal");
+  qbAdminLoadQuestions();
+}
+
+async function deleteQbankQuestion(id){
+  if (!confirm("متأكد إنك عايز تحذف السؤال ده؟")) return;
+  await api(`/api/qbank/questions/${id}`, {method:"DELETE"});
+  showToast("تم حذف السؤال", "success");
+  qbAdminLoadQuestions();
+}
+
+/* =====================================================================
+   بنك الأسئلة - تحليل الأخطاء الشائعة (Admin / Head Supervisor)
+===================================================================== */
+async function renderQbankAnalyticsPage(){
+  const c = document.getElementById("pageContainer");
+  const stages = await loadStages();
+  CACHE_STAGES = stages;
+  c.innerHTML = `
+    <div class="page-header"><div><h1>تحليل الأخطاء الشائعة في بنك الأسئلة</h1><p>أكتر الأبواب والأسئلة اللي بيغلط فيها الطلاب - عشان تركز شرحك عليها</p></div></div>
+    <div class="table-card" style="padding:12px 14px;margin-bottom:14px;">
+      <div class="form-group" style="margin:0;max-width:320px;"><label class="form-label">المرحلة الدراسية</label>
+        <select class="form-select" id="qbAnalyticsStageFilter" onchange="loadQbankAnalytics()">
+          <option value="">كل المراحل</option>
+          ${stages.map(s=>`<option value="${s.id}">${escapeHtml(s.name)}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+    <div id="qbAnalyticsWrap"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>
+  `;
+  icons();
+  await loadQbankAnalytics();
+}
+
+async function loadQbankAnalytics(){
+  const wrap = document.getElementById("qbAnalyticsWrap");
+  wrap.innerHTML = `<div class="empty-state"><div class="empty-title">بتحمّل...</div></div>`;
+  const stageId = document.getElementById("qbAnalyticsStageFilter")?.value || "";
+  const data = await api(`/api/qbank/analytics${stageId?`?stage_id=${stageId}`:""}`);
+
+  if (!data.weak_chapters.length && !data.top_missed_questions.length){
+    wrap.innerHTML = `<div class="empty-state"><div class="empty-icon"><i data-lucide="bar-chart-3" style="width:26px;height:26px;"></i></div><div class="empty-title">لسه مفيش بيانات كفاية</div><div class="empty-desc">لازم الطلاب يحلوا أسئلة في بنك الأسئلة الأول عشان يظهر التحليل.</div></div>`;
+    return;
+  }
+
+  wrap.innerHTML = `
+    <div class="table-card" style="margin-bottom:16px;">
+      <div class="toolbar"><b style="font-size:14px;">🔴 أكتر الأبواب اللي فيها غلط</b></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>الباب</th><th>المرحلة</th><th>عدد المحاولات</th><th>عدد الأخطاء</th><th>نسبة الغلط</th></tr></thead>
+        <tbody>
+          ${data.weak_chapters.map(ch=>`
+            <tr>
+              <td class="td-name">${escapeHtml(ch.chapter)}</td>
+              <td>${ch.stage_name?`<span class="badge badge-blue">${escapeHtml(ch.stage_name)}</span>`:"—"}</td>
+              <td>${ch.total_attempts}</td>
+              <td>${ch.wrong_attempts}</td>
+              <td><span class="badge ${ch.wrong_rate>=50?'badge-red':(ch.wrong_rate>=25?'badge-amber':'badge-green')}">${ch.wrong_rate}%</span></td>
+            </tr>`).join("") || `<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:20px;">لا يوجد بيانات</td></tr>`}
+        </tbody>
+      </table></div>
+    </div>
+    <div class="table-card">
+      <div class="toolbar"><b style="font-size:14px;">❌ أكتر الأسئلة اللي بيتغلط فيها</b></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>السؤال</th><th>الباب / الدرس</th><th>عدد المحاولات</th><th>عدد الأخطاء</th><th>نسبة الغلط</th></tr></thead>
+        <tbody>
+          ${data.top_missed_questions.map(q=>`
+            <tr>
+              <td class="td-name" style="max-width:320px;">${escapeHtml(q.question_text)}</td>
+              <td><span class="badge badge-gray">${escapeHtml(q.chapter)}</span><div style="font-size:11px;color:var(--text-3);margin-top:3px;">${escapeHtml(q.lesson)}</div></td>
+              <td>${q.total_attempts}</td>
+              <td>${q.wrong_attempts}</td>
+              <td><span class="badge ${q.wrong_rate>=50?'badge-red':(q.wrong_rate>=25?'badge-amber':'badge-green')}">${q.wrong_rate}%</span></td>
+            </tr>`).join("") || `<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:20px;">لا يوجد بيانات</td></tr>`}
+        </tbody>
+      </table></div>
+    </div>
+  `;
+  icons();
+}
+
+/* =====================================================================
+   بنك الأسئلة - واجهة الطالب
+===================================================================== */
+let QBANK_STUDENT_STATE = {chapter: null, lesson: null, filter: "all", chapters: []};
+
+async function renderQbankStudentPage(){
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `<div class="empty-state"><div class="empty-title">بتحمّل...</div></div>`;
+  const [stats, chapters] = await Promise.all([
+    api("/api/qbank/student/stats"),
+    api("/api/qbank/student/chapters"),
+  ]);
+  QBANK_STUDENT_STATE = {chapter: null, lesson: null, filter: "all", chapters};
+  const chapterNames = [...new Set(chapters.map(ch=>ch.chapter))];
+  const correctRate = stats.total_attempts ? Math.round((stats.correct_attempts / stats.total_attempts) * 100) : 0;
+
+  c.innerHTML = `
+    <div class="page-header"><div><h1>بنك الأسئلة</h1><p>حل أسئلة اختيارية على مادتك، واحفظ اللي يهمك في المفضلة أو هتحلها لاحقًا</p></div></div>
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon blue"><i data-lucide="list-checks" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${stats.total_questions}</div><div class="stat-label">إجمالي الأسئلة المتاحة</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon green"><i data-lucide="check-circle-2" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${stats.solved_questions}</div><div class="stat-label">أسئلة حليتها</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon amber"><i data-lucide="percent" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${correctRate}%</div><div class="stat-label">نسبة إجاباتك الصح</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon teal"><i data-lucide="star" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${stats.favorites_count}</div><div class="stat-label">في المفضلة</div></div>
+    </div>
+    <div class="table-card" style="padding:12px 14px;margin-bottom:14px;">
+      <div class="seg-toggle" id="qbFilterToggle" style="width:100%;flex-wrap:wrap;">
+        <button type="button" class="seg-btn active-green" data-val="all" onclick="qbSetFilter('all')" style="flex:1;">الكل</button>
+        <button type="button" class="seg-btn" data-val="unsolved" onclick="qbSetFilter('unsolved')" style="flex:1;">لسه محلتهاش</button>
+        <button type="button" class="seg-btn" data-val="wrong" onclick="qbSetFilter('wrong')" style="flex:1;">غلطت فيها</button>
+        <button type="button" class="seg-btn" data-val="favorites" onclick="qbSetFilter('favorites')" style="flex:1;">المفضلة</button>
+        <button type="button" class="seg-btn" data-val="solve_later" onclick="qbSetFilter('solve_later')" style="flex:1;">هحلها لاحقًا</button>
+      </div>
+      <div class="form-row-2" style="margin-top:12px;">
+        <div class="form-group" style="margin:0;"><label class="form-label">الباب</label>
+          <select class="form-select" id="qbChapterSelect" onchange="qbChapterChanged()">
+            <option value="">كل الأبواب</option>
+            ${chapterNames.map(ch=>`<option value="${jsAttr(ch)}">${escapeHtml(ch)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="form-group" style="margin:0;"><label class="form-label">الدرس</label>
+          <select class="form-select" id="qbLessonSelect" onchange="qbLessonChanged()">
+            <option value="">كل الدروس</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div id="qbQuestionsWrap"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>
+  `;
+  icons();
+  await qbLoadQuestions();
+}
+
+function qbSetFilter(val){
+  QBANK_STUDENT_STATE.filter = val;
+  document.querySelectorAll("#qbFilterToggle .seg-btn").forEach(b=>b.classList.toggle("active-green", b.dataset.val===val));
+  qbLoadQuestions();
+}
+
+function qbChapterChanged(){
+  const chapter = document.getElementById("qbChapterSelect").value;
+  QBANK_STUDENT_STATE.chapter = chapter || null;
+  QBANK_STUDENT_STATE.lesson = null;
+  const lessonSelect = document.getElementById("qbLessonSelect");
+  const lessons = chapter ? [...new Set(QBANK_STUDENT_STATE.chapters.filter(c=>c.chapter===chapter).map(c=>c.lesson))] : [];
+  lessonSelect.innerHTML = `<option value="">كل الدروس</option>` + lessons.map(l=>`<option value="${jsAttr(l)}">${escapeHtml(l)}</option>`).join("");
+  qbLoadQuestions();
+}
+
+function qbLessonChanged(){
+  QBANK_STUDENT_STATE.lesson = document.getElementById("qbLessonSelect").value || null;
+  qbLoadQuestions();
+}
+
+async function qbLoadQuestions(){
+  const wrap = document.getElementById("qbQuestionsWrap");
+  wrap.innerHTML = `<div class="empty-state"><div class="empty-title">بتحمّل...</div></div>`;
+  const params = new URLSearchParams();
+  if (QBANK_STUDENT_STATE.chapter) params.set("chapter", QBANK_STUDENT_STATE.chapter);
+  if (QBANK_STUDENT_STATE.lesson) params.set("lesson", QBANK_STUDENT_STATE.lesson);
+  if (QBANK_STUDENT_STATE.filter && QBANK_STUDENT_STATE.filter !== "all") params.set("filter", QBANK_STUDENT_STATE.filter);
+  const questions = await api(`/api/qbank/student/questions?${params.toString()}`);
+  if (!questions.length){
+    wrap.innerHTML = `<div class="empty-state"><div class="empty-icon"><i data-lucide="library" style="width:26px;height:26px;"></i></div><div class="empty-title">لا يوجد أسئلة</div><div class="empty-desc">جرب فلتر تاني، أو دوّر مع مدرسك على المحتوى ده.</div></div>`;
+    icons();
+    return;
+  }
+  wrap.innerHTML = questions.map(q=>qbQuestionCardHtml(q)).join("");
+  icons();
+}
+
+function qbQuestionCardHtml(q){
+  const answered = q.attempts > 0;
+  return `
+  <div class="table-card" id="qb_card_${q.id}" style="padding:16px;margin-bottom:14px;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <span class="badge badge-blue">${escapeHtml(q.chapter)}</span>
+        <span class="badge badge-gray">${escapeHtml(q.lesson)}</span>
+        ${answered ? `<span class="badge ${q.ever_correct?'badge-green':'badge-red'}">${q.ever_correct?'حليتها صح ✅':'حليتها غلط قبل كده'}</span>` : ""}
+      </div>
+      <div style="display:flex;gap:6px;">
+        <button class="action-btn" title="أضف للمفضلة" onclick="qbToggleFavorite(${q.id})" id="qb_fav_${q.id}">
+          <i data-lucide="star" style="width:15px;height:15px;${q.is_favorite?'fill:var(--warning);color:var(--warning);':''}"></i>
+        </button>
+        <button class="action-btn" title="هحلها لاحقًا" onclick="qbToggleSolveLater(${q.id})" id="qb_later_${q.id}">
+          <i data-lucide="bookmark" style="width:15px;height:15px;${q.is_solve_later?'fill:var(--primary);color:var(--primary);':''}"></i>
+        </button>
+      </div>
+    </div>
+    <div style="font-size:14.5px;font-weight:700;color:var(--text);margin:12px 0;">${escapeHtml(q.question_text)}</div>
+    <div class="qb-options" id="qb_options_${q.id}">
+      ${q.options.map(opt=>`
+        <button type="button" class="qb-option-btn" data-opt="${jsAttr(opt)}" onclick="qbAnswer(${q.id}, this)">${escapeHtml(opt)}</button>
+      `).join("")}
+    </div>
+    <div id="qb_feedback_${q.id}"></div>
+  </div>`;
+}
+
+async function qbAnswer(qid, btnEl){
+  const optionsWrap = document.getElementById(`qb_options_${qid}`);
+  if (optionsWrap.dataset.locked === "1") return;
+  const selected = btnEl.dataset.opt;
+  optionsWrap.dataset.locked = "1";
+  optionsWrap.querySelectorAll(".qb-option-btn").forEach(b=>b.disabled = true);
+
+  let res;
+  try{
+    res = await api(`/api/qbank/student/questions/${qid}/answer`, {method:"POST", body: JSON.stringify({selected_answer: selected})});
+  }catch(e){
+    optionsWrap.dataset.locked = "";
+    optionsWrap.querySelectorAll(".qb-option-btn").forEach(b=>b.disabled = false);
+    return;
+  }
+
+  optionsWrap.querySelectorAll(".qb-option-btn").forEach(b=>{
+    if (b.dataset.opt === res.correct_answer) b.classList.add("correct");
+    else if (b === btnEl && !res.is_correct) b.classList.add("wrong");
+  });
+
+  const feedback = document.getElementById(`qb_feedback_${qid}`);
+  feedback.innerHTML = `
+    <div style="margin-top:10px;font-weight:700;font-size:13px;color:${res.is_correct?'var(--success)':'var(--danger)'};">
+      ${res.is_correct ? '✅ إجابة صح!' : '❌ إجابة غلط'}
+    </div>
+    ${!res.is_correct && res.explanation ? `<div class="qb-feedback-explain"><b>التفسير:</b> ${escapeHtml(res.explanation)}</div>` : ""}
+    <button class="btn btn-ghost btn-sm" style="margin-top:10px;" onclick="qbRetry(${qid})"><i data-lucide="rotate-ccw" style="width:13px;height:13px;"></i> جرب تاني</button>
+  `;
+  icons();
+}
+
+function qbRetry(qid){
+  const optionsWrap = document.getElementById(`qb_options_${qid}`);
+  optionsWrap.dataset.locked = "";
+  optionsWrap.querySelectorAll(".qb-option-btn").forEach(b=>{
+    b.disabled = false;
+    b.classList.remove("correct", "wrong");
+  });
+  document.getElementById(`qb_feedback_${qid}`).innerHTML = "";
+}
+
+async function qbToggleFavorite(qid){
+  const res = await api(`/api/qbank/student/questions/${qid}/favorite`, {method:"POST"});
+  const icon = document.querySelector(`#qb_fav_${qid} i`);
+  if (icon){
+    icon.style.fill = res.is_favorite ? "var(--warning)" : "";
+    icon.style.color = res.is_favorite ? "var(--warning)" : "";
+  }
+  if (QBANK_STUDENT_STATE.filter === "favorites" && !res.is_favorite){
+    qbLoadQuestions();
+  }
+}
+
+async function qbToggleSolveLater(qid){
+  const res = await api(`/api/qbank/student/questions/${qid}/solve-later`, {method:"POST"});
+  const icon = document.querySelector(`#qb_later_${qid} i`);
+  if (icon){
+    icon.style.fill = res.is_solve_later ? "var(--primary)" : "";
+    icon.style.color = res.is_solve_later ? "var(--primary)" : "";
+  }
+  if (QBANK_STUDENT_STATE.filter === "solve_later" && !res.is_solve_later){
+    qbLoadQuestions();
+  }
+}
 
 </script>
 

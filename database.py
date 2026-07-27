@@ -661,6 +661,74 @@ def init_db():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_type, user_id, is_read)")
 
         # ---------------------------------------------------------------
+        # بنك الأسئلة - Question Bank
+        # كل سؤال تابع لمرحلة دراسية + مُصنّف بـ "الباب" و"الدرس"، وله إجابة
+        # صحيحة واحدة + 3 إجابات خاطئة + تفسير يظهر للطالب لو جاوب غلط.
+        # الأدمن بيرفع الأسئلة دفعة واحدة عن طريق شيت إكسيل (endpoint رفع خاص).
+        # ---------------------------------------------------------------
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS qb_questions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            stage_id INTEGER NOT NULL,
+            chapter TEXT NOT NULL,
+            lesson TEXT NOT NULL,
+            question_text TEXT NOT NULL,
+            correct_answer TEXT NOT NULL,
+            wrong_answer_1 TEXT NOT NULL,
+            wrong_answer_2 TEXT NOT NULL,
+            wrong_answer_3 TEXT NOT NULL,
+            explanation TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_by INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (stage_id) REFERENCES stages(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_qb_questions_filter ON qb_questions(stage_id, chapter, lesson)")
+
+        # سجل إجابات الطلاب على أسئلة بنك الأسئلة - كل محاولة بسجل مستقل
+        # (بيسمح بمحاولات متكررة لنفس السؤال) عشان نقدر نحلل نقط الضعف المشتركة
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS qb_answers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id INTEGER NOT NULL,
+            question_id INTEGER NOT NULL,
+            selected_answer TEXT NOT NULL,
+            is_correct INTEGER NOT NULL,
+            answered_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+            FOREIGN KEY (question_id) REFERENCES qb_questions(id) ON DELETE CASCADE
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_qb_answers_question ON qb_answers(question_id, is_correct)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_qb_answers_student ON qb_answers(student_id, question_id)")
+
+        # مفضلة الطالب في بنك الأسئلة
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS qb_favorites (
+            student_id INTEGER NOT NULL,
+            question_id INTEGER NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (student_id, question_id),
+            FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+            FOREIGN KEY (question_id) REFERENCES qb_questions(id) ON DELETE CASCADE
+        )
+        """)
+
+        # أسئلة "هحلها لاحقًا" - عشان الطالب يرجعلها تاني
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS qb_solve_later (
+            student_id INTEGER NOT NULL,
+            question_id INTEGER NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (student_id, question_id),
+            FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+            FOREIGN KEY (question_id) REFERENCES qb_questions(id) ON DELETE CASCADE
+        )
+        """)
+
+        # ---------------------------------------------------------------
         # سجل الأنشطة (Activity Log) - بيسجل كل عمليات تسجيل الدخول/الخروج
         # وأهم الإجراءات (رفع سبورة، أخذ حضور، رصد درجة...) عشان الأدمن
         # يقدر يراجع مين عمل إيه وإمتى

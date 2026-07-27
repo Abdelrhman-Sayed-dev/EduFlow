@@ -10,11 +10,14 @@ backend.py
 """
 
 import os
+import io
+import random
 import base64
 import uuid
 import asyncio
 import calendar
 from datetime import datetime, timedelta
+from openpyxl import load_workbook
 from fastapi import FastAPI, HTTPException, Header, Depends, Request, UploadFile, File, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse, Response
@@ -171,6 +174,22 @@ class QuizIn(BaseModel):
     image_data: Optional[str] = None  # صورة الكويز/الامتحان (base64)
     version_label: Optional[str] = Field(None, max_length=100)  # اسم النموذج لو فيه أكتر من نموذج امتحان
     quiz_type: str = "quiz"  # "quiz" كويز عادي أو "exam" امتحان شامل
+
+
+class QBQuestionIn(BaseModel):
+    stage_id: int
+    chapter: str = Field(..., max_length=200)
+    lesson: str = Field(..., max_length=200)
+    question_text: str = Field(..., max_length=3000)
+    correct_answer: str = Field(..., max_length=1000)
+    wrong_answer_1: str = Field(..., max_length=1000)
+    wrong_answer_2: str = Field(..., max_length=1000)
+    wrong_answer_3: str = Field(..., max_length=1000)
+    explanation: Optional[str] = Field(None, max_length=3000)
+
+
+class QBAnswerIn(BaseModel):
+    selected_answer: str = Field(..., max_length=1000)
 
 
 class NotificationOut(BaseModel):
@@ -2474,6 +2493,448 @@ def set_score(score: QuizScoreIn, session=Depends(require_roles("admin", "head_s
             group_id=student["group_id"]
         )
         return {"message": "تم حفظ الدرجة"}
+
+
+# ---------------------------------------------------------------------------
+# بنك الأسئلة - Question Bank
+# ---------------------------------------------------------------------------
+
+QB_UPLOAD_COLUMNS = {
+    # أسماء الأعمدة المتوقعة في شيت الإكسيل (بيتقارن بعد إزالة المسافات وتصغير الحروف)
+    "الباب": "chapter",
+    "الدرس": "lesson",
+    "السؤال": "question_text",
+    "الاجابة الصحيحة": "correct_answer",
+    "الإجابة الصحيحة": "correct_answer",
+    "اجابة خاطئة 1": "wrong_answer_1",
+    "إجابة خاطئة 1": "wrong_answer_1",
+    "اجابة خاطئة 2": "wrong_answer_2",
+    "إجابة خاطئة 2": "wrong_answer_2",
+    "اجابة خاطئة 3": "wrong_answer_3",
+    "إجابة خاطئة 3": "wrong_answer_3",
+    "التفسير": "explanation",
+}
+
+
+def _student_stage_id(conn, session) -> Optional[int]:
+    """يرجّع رقم المرحلة الدراسية للطالب الحالي من الجلسة"""
+    grp = conn.execute(
+        "SELECT stage_id FROM groups WHERE id=(SELECT group_id FROM students WHERE id=?)",
+        (session["id"],)
+    ).fetchone()
+    return grp["stage_id"] if grp else None
+
+
+def _qb_question_out(row, student_extra=None):
+    """يجهز شكل السؤال للإرسال للطالب: الإجابات الأربعة متلخبطة من غير ما تتكشف
+    مين الصح. student_extra (اختياري) بيضيف حالة المفضلة/لاحقًا/آخر نتيجة"""
+    options = [row["correct_answer"], row["wrong_answer_1"], row["wrong_answer_2"], row["wrong_answer_3"]]
+    random.shuffle(options)
+    out = {
+        "id": row["id"],
+        "stage_id": row["stage_id"],
+        "chapter": row["chapter"],
+        "lesson": row["lesson"],
+        "question_text": row["question_text"],
+        "options": options,
+    }
+    if student_extra:
+        out.update(student_extra)
+    return out
+
+
+@app.get("/api/qbank/chapters")
+def qb_get_chapters(stage_id: Optional[int] = None, session=Depends(require_roles("admin", "head_supervisor"))):
+    """قايمة الأبواب/الدروس الموجودة فعليًا في بنك الأسئلة - لواجهة الإدارة"""
+    with get_connection() as conn:
+        query = "SELECT DISTINCT chapter, lesson, stage_id FROM qb_questions WHERE is_active=1"
+        params = []
+        if stage_id:
+            query += " AND stage_id=?"
+            params.append(stage_id)
+        query += " ORDER BY chapter, lesson"
+        rows = conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+
+@app.post("/api/qbank/upload")
+async def qb_upload_excel(
+    file: UploadFile = File(...),
+    stage_id: int = Form(...),
+    session=Depends(require_roles("admin")),
+):
+    """رفع شيت إكسيل ببنك أسئلة كامل - الأعمدة المطلوبة: الباب / الدرس / السؤال /
+    الإجابة الصحيحة / إجابة خاطئة 1 / إجابة خاطئة 2 / إجابة خاطئة 3 / التفسير (اختياري)"""
+    if not file.filename.lower().endswith((".xlsx", ".xlsm")):
+        raise HTTPException(status_code=400, detail="لازم ترفع ملف إكسيل بصيغة xlsx")
+
+    content = await file.read()
+    try:
+        wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        sheet = wb.active
+    except Exception:
+        raise HTTPException(status_code=400, detail="تعذر قراءة ملف الإكسيل، تأكد إن الملف سليم")
+
+    rows_iter = sheet.iter_rows(values_only=True)
+    try:
+        header = next(rows_iter)
+    except StopIteration:
+        raise HTTPException(status_code=400, detail="الشيت فاضي")
+
+    col_map = {}  # رقم العمود -> اسم الحقل
+    for idx, cell in enumerate(header):
+        if not cell:
+            continue
+        key = str(cell).strip()
+        field = QB_UPLOAD_COLUMNS.get(key)
+        if field:
+            col_map[idx] = field
+
+    required_fields = {"chapter", "lesson", "question_text", "correct_answer",
+                        "wrong_answer_1", "wrong_answer_2", "wrong_answer_3"}
+    if not required_fields.issubset(set(col_map.values())):
+        raise HTTPException(
+            status_code=400,
+            detail="أعمدة الشيت ناقصة. المطلوب: الباب، الدرس، السؤال، الإجابة الصحيحة، "
+                   "إجابة خاطئة 1، إجابة خاطئة 2، إجابة خاطئة 3 (والتفسير اختياري)"
+        )
+
+    with get_connection() as conn:
+        stage = conn.execute("SELECT id FROM stages WHERE id=?", (stage_id,)).fetchone()
+        if not stage:
+            raise HTTPException(status_code=404, detail="المرحلة الدراسية غير موجودة")
+
+        inserted, skipped = 0, 0
+        errors = []
+        for row_num, row in enumerate(rows_iter, start=2):
+            if row is None or all(c is None or str(c).strip() == "" for c in row):
+                continue
+            data = {}
+            for idx, field in col_map.items():
+                val = row[idx] if idx < len(row) else None
+                data[field] = str(val).strip() if val is not None else ""
+
+            missing = [f for f in required_fields if not data.get(f)]
+            if missing:
+                skipped += 1
+                errors.append(f"صف {row_num}: بيانات ناقصة")
+                continue
+
+            conn.execute("""
+                INSERT INTO qb_questions (stage_id, chapter, lesson, question_text,
+                                           correct_answer, wrong_answer_1, wrong_answer_2,
+                                           wrong_answer_3, explanation, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (stage_id, data["chapter"], data["lesson"], data["question_text"],
+                  data["correct_answer"], data["wrong_answer_1"], data["wrong_answer_2"],
+                  data["wrong_answer_3"], data.get("explanation") or None, session["id"]))
+            inserted += 1
+
+        log_session_activity(conn, session, "qbank_upload",
+                              f"رفع {inserted} سؤال جديد لبنك الأسئلة")
+
+        return {
+            "message": f"تم رفع {inserted} سؤال بنجاح" + (f" (تم تجاهل {skipped} صف)" if skipped else ""),
+            "inserted": inserted,
+            "skipped": skipped,
+            "errors": errors[:20],
+        }
+
+
+@app.get("/api/qbank/questions")
+def qb_list_questions(stage_id: Optional[int] = None, chapter: Optional[str] = None,
+                       lesson: Optional[str] = None, q: Optional[str] = None,
+                       session=Depends(require_roles("admin", "head_supervisor"))):
+    """قايمة أسئلة بنك الأسئلة لواجهة إدارة الأدمن (بالإجابات كاملة)"""
+    query = """
+        SELECT qq.*, st.name as stage_name,
+               (SELECT COUNT(*) FROM qb_answers a WHERE a.question_id=qq.id) as attempts,
+               (SELECT COUNT(*) FROM qb_answers a WHERE a.question_id=qq.id AND a.is_correct=0) as wrong_attempts
+        FROM qb_questions qq
+        LEFT JOIN stages st ON st.id = qq.stage_id
+        WHERE qq.is_active=1
+    """
+    params = []
+    if stage_id:
+        query += " AND qq.stage_id=?"
+        params.append(stage_id)
+    if chapter:
+        query += " AND qq.chapter=?"
+        params.append(chapter)
+    if lesson:
+        query += " AND qq.lesson=?"
+        params.append(lesson)
+    if q:
+        query += " AND qq.question_text LIKE ?"
+        params.append(f"%{q}%")
+    query += " ORDER BY qq.id DESC"
+
+    with get_connection() as conn:
+        rows = conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+
+@app.post("/api/qbank/questions")
+def qb_add_question(question: QBQuestionIn, session=Depends(require_roles("admin"))):
+    """إضافة سؤال واحد يدويًا (بدل/بجانب رفع الإكسيل)"""
+    with get_connection() as conn:
+        stage = conn.execute("SELECT id FROM stages WHERE id=?", (question.stage_id,)).fetchone()
+        if not stage:
+            raise HTTPException(status_code=404, detail="المرحلة الدراسية غير موجودة")
+        cur = conn.execute("""
+            INSERT INTO qb_questions (stage_id, chapter, lesson, question_text, correct_answer,
+                                       wrong_answer_1, wrong_answer_2, wrong_answer_3, explanation, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (question.stage_id, question.chapter, question.lesson, question.question_text,
+              question.correct_answer, question.wrong_answer_1, question.wrong_answer_2,
+              question.wrong_answer_3, question.explanation, session["id"]))
+        return {"id": cur.lastrowid, "message": "تم إضافة السؤال"}
+
+
+@app.put("/api/qbank/questions/{question_id}")
+def qb_update_question(question_id: int, question: QBQuestionIn, session=Depends(require_roles("admin"))):
+    with get_connection() as conn:
+        existing = conn.execute("SELECT id FROM qb_questions WHERE id=?", (question_id,)).fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="السؤال غير موجود")
+        conn.execute("""
+            UPDATE qb_questions SET stage_id=?, chapter=?, lesson=?, question_text=?, correct_answer=?,
+                                     wrong_answer_1=?, wrong_answer_2=?, wrong_answer_3=?, explanation=?
+            WHERE id=?
+        """, (question.stage_id, question.chapter, question.lesson, question.question_text,
+              question.correct_answer, question.wrong_answer_1, question.wrong_answer_2,
+              question.wrong_answer_3, question.explanation, question_id))
+        return {"message": "تم تعديل السؤال"}
+
+
+@app.delete("/api/qbank/questions/{question_id}")
+def qb_delete_question(question_id: int, session=Depends(require_roles("admin"))):
+    with get_connection() as conn:
+        existing = conn.execute("SELECT id FROM qb_questions WHERE id=?", (question_id,)).fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="السؤال غير موجود")
+        conn.execute("DELETE FROM qb_questions WHERE id=?", (question_id,))
+        return {"message": "تم حذف السؤال"}
+
+
+@app.get("/api/qbank/analytics")
+def qb_analytics(stage_id: Optional[int] = None, session=Depends(require_roles("admin", "head_supervisor"))):
+    """
+    تحليل نقط الضعف المشتركة بين الطلاب: أكتر الأبواب/الدروس اللي بيغلط فيها
+    الطلاب، وأكتر الأسئلة اللي بتتغلط، عشان الأدمن يركز الشرح عليها.
+    """
+    with get_connection() as conn:
+        chapter_query = """
+            SELECT qq.stage_id, st.name as stage_name, qq.chapter,
+                   COUNT(a.id) as total_attempts,
+                   SUM(CASE WHEN a.is_correct=0 THEN 1 ELSE 0 END) as wrong_attempts
+            FROM qb_answers a
+            JOIN qb_questions qq ON qq.id = a.question_id
+            LEFT JOIN stages st ON st.id = qq.stage_id
+            WHERE 1=1
+        """
+        params = []
+        if stage_id:
+            chapter_query += " AND qq.stage_id=?"
+            params.append(stage_id)
+        chapter_query += " GROUP BY qq.stage_id, qq.chapter HAVING total_attempts > 0 ORDER BY (wrong_attempts * 1.0 / total_attempts) DESC, wrong_attempts DESC"
+        chapter_rows = conn.execute(chapter_query, params).fetchall()
+        weak_chapters = []
+        for r in chapter_rows:
+            rate = round((r["wrong_attempts"] / r["total_attempts"]) * 100, 1) if r["total_attempts"] else 0
+            weak_chapters.append({
+                "stage_id": r["stage_id"], "stage_name": r["stage_name"], "chapter": r["chapter"],
+                "total_attempts": r["total_attempts"], "wrong_attempts": r["wrong_attempts"],
+                "wrong_rate": rate,
+            })
+
+        question_query = """
+            SELECT qq.id, qq.chapter, qq.lesson, qq.question_text, qq.stage_id, st.name as stage_name,
+                   COUNT(a.id) as total_attempts,
+                   SUM(CASE WHEN a.is_correct=0 THEN 1 ELSE 0 END) as wrong_attempts
+            FROM qb_answers a
+            JOIN qb_questions qq ON qq.id = a.question_id
+            LEFT JOIN stages st ON st.id = qq.stage_id
+            WHERE 1=1
+        """
+        params2 = []
+        if stage_id:
+            question_query += " AND qq.stage_id=?"
+            params2.append(stage_id)
+        question_query += """ GROUP BY qq.id HAVING total_attempts > 0
+                              ORDER BY wrong_attempts DESC, (wrong_attempts * 1.0 / total_attempts) DESC LIMIT 30"""
+        question_rows = conn.execute(question_query, params2).fetchall()
+        top_missed_questions = []
+        for r in question_rows:
+            rate = round((r["wrong_attempts"] / r["total_attempts"]) * 100, 1) if r["total_attempts"] else 0
+            top_missed_questions.append({
+                "id": r["id"], "chapter": r["chapter"], "lesson": r["lesson"],
+                "question_text": r["question_text"], "stage_id": r["stage_id"], "stage_name": r["stage_name"],
+                "total_attempts": r["total_attempts"], "wrong_attempts": r["wrong_attempts"], "wrong_rate": rate,
+            })
+
+        return {"weak_chapters": weak_chapters, "top_missed_questions": top_missed_questions}
+
+
+# --- واجهة الطالب في بنك الأسئلة ---
+
+@app.get("/api/qbank/student/chapters")
+def qb_student_chapters(session=Depends(require_roles("student"))):
+    """قايمة الأبواب والدروس المتاحة لمرحلة الطالب، مع عدد الأسئلة في كل درس"""
+    with get_connection() as conn:
+        stage_id = _student_stage_id(conn, session)
+        if not stage_id:
+            return []
+        rows = conn.execute("""
+            SELECT chapter, lesson, COUNT(*) as questions_count
+            FROM qb_questions WHERE stage_id=? AND is_active=1
+            GROUP BY chapter, lesson ORDER BY chapter, lesson
+        """, (stage_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+@app.get("/api/qbank/student/questions")
+def qb_student_questions(chapter: Optional[str] = None, lesson: Optional[str] = None,
+                          filter: Optional[str] = None, session=Depends(require_roles("student"))):
+    """
+    أسئلة بنك الأسئلة لمرحلة الطالب، مع فلاتر:
+    filter=favorites (المفضلة) / solve_later (هحلها لاحقًا) / wrong (اللي غلط فيها) / unsolved (لسه ماحلهاش)
+    """
+    with get_connection() as conn:
+        stage_id = _student_stage_id(conn, session)
+        if not stage_id:
+            return []
+
+        query = "SELECT * FROM qb_questions WHERE stage_id=? AND is_active=1"
+        params = [stage_id]
+        if chapter:
+            query += " AND chapter=?"
+            params.append(chapter)
+        if lesson:
+            query += " AND lesson=?"
+            params.append(lesson)
+
+        if filter == "favorites":
+            query += " AND id IN (SELECT question_id FROM qb_favorites WHERE student_id=?)"
+            params.append(session["id"])
+        elif filter == "solve_later":
+            query += " AND id IN (SELECT question_id FROM qb_solve_later WHERE student_id=?)"
+            params.append(session["id"])
+        elif filter == "wrong":
+            query += """ AND id IN (
+                SELECT question_id FROM qb_answers WHERE student_id=? AND is_correct=0
+            )"""
+            params.append(session["id"])
+        elif filter == "unsolved":
+            query += " AND id NOT IN (SELECT question_id FROM qb_answers WHERE student_id=?)"
+            params.append(session["id"])
+
+        query += " ORDER BY id"
+        rows = conn.execute(query, params).fetchall()
+
+        fav_ids = {r["question_id"] for r in conn.execute(
+            "SELECT question_id FROM qb_favorites WHERE student_id=?", (session["id"],)).fetchall()}
+        later_ids = {r["question_id"] for r in conn.execute(
+            "SELECT question_id FROM qb_solve_later WHERE student_id=?", (session["id"],)).fetchall()}
+        answered_rows = conn.execute("""
+            SELECT question_id, MAX(is_correct) as ever_correct, COUNT(*) as attempts
+            FROM qb_answers WHERE student_id=? GROUP BY question_id
+        """, (session["id"],)).fetchall()
+        answered_map = {r["question_id"]: dict(r) for r in answered_rows}
+
+        result = []
+        for row in rows:
+            extra = {
+                "is_favorite": row["id"] in fav_ids,
+                "is_solve_later": row["id"] in later_ids,
+                "attempts": answered_map.get(row["id"], {}).get("attempts", 0),
+                "ever_correct": bool(answered_map.get(row["id"], {}).get("ever_correct", 0)),
+            }
+            result.append(_qb_question_out(row, extra))
+        return result
+
+
+@app.post("/api/qbank/student/questions/{question_id}/answer")
+def qb_student_answer(question_id: int, payload: QBAnswerIn, session=Depends(require_roles("student"))):
+    """الطالب بيبعت إجابته المختارة - بيرجعله صح/غلط + التفسير لو غلط"""
+    with get_connection() as conn:
+        question = conn.execute("SELECT * FROM qb_questions WHERE id=? AND is_active=1", (question_id,)).fetchone()
+        if not question:
+            raise HTTPException(status_code=404, detail="السؤال غير موجود")
+        stage_id = _student_stage_id(conn, session)
+        if question["stage_id"] != stage_id:
+            raise HTTPException(status_code=403, detail="السؤال ده مش لمرحلتك")
+
+        is_correct = payload.selected_answer.strip() == question["correct_answer"].strip()
+        conn.execute("""
+            INSERT INTO qb_answers (student_id, question_id, selected_answer, is_correct)
+            VALUES (?, ?, ?, ?)
+        """, (session["id"], question_id, payload.selected_answer, 1 if is_correct else 0))
+
+        return {
+            "is_correct": is_correct,
+            "correct_answer": question["correct_answer"],
+            "explanation": question["explanation"] if not is_correct else None,
+        }
+
+
+@app.post("/api/qbank/student/questions/{question_id}/favorite")
+def qb_toggle_favorite(question_id: int, session=Depends(require_roles("student"))):
+    with get_connection() as conn:
+        existing = conn.execute(
+            "SELECT 1 FROM qb_favorites WHERE student_id=? AND question_id=?", (session["id"], question_id)
+        ).fetchone()
+        if existing:
+            conn.execute("DELETE FROM qb_favorites WHERE student_id=? AND question_id=?", (session["id"], question_id))
+            return {"is_favorite": False}
+        conn.execute("INSERT INTO qb_favorites (student_id, question_id) VALUES (?, ?)", (session["id"], question_id))
+        return {"is_favorite": True}
+
+
+@app.post("/api/qbank/student/questions/{question_id}/solve-later")
+def qb_toggle_solve_later(question_id: int, session=Depends(require_roles("student"))):
+    with get_connection() as conn:
+        existing = conn.execute(
+            "SELECT 1 FROM qb_solve_later WHERE student_id=? AND question_id=?", (session["id"], question_id)
+        ).fetchone()
+        if existing:
+            conn.execute("DELETE FROM qb_solve_later WHERE student_id=? AND question_id=?", (session["id"], question_id))
+            return {"is_solve_later": False}
+        conn.execute("INSERT INTO qb_solve_later (student_id, question_id) VALUES (?, ?)", (session["id"], question_id))
+        return {"is_solve_later": True}
+
+
+@app.get("/api/qbank/student/stats")
+def qb_student_stats(session=Depends(require_roles("student"))):
+    """إحصائية سريعة للطالب: عدد الأسئلة المحلولة، نسبة الصح، حالة كل باب"""
+    with get_connection() as conn:
+        stage_id = _student_stage_id(conn, session)
+        total_questions = conn.execute(
+            "SELECT COUNT(*) as c FROM qb_questions WHERE stage_id=? AND is_active=1", (stage_id,)
+        ).fetchone()["c"] if stage_id else 0
+
+        solved_row = conn.execute("""
+            SELECT COUNT(DISTINCT question_id) as solved,
+                   SUM(CASE WHEN is_correct=1 THEN 1 ELSE 0 END) as correct_attempts,
+                   COUNT(*) as total_attempts
+            FROM qb_answers WHERE student_id=?
+        """, (session["id"],)).fetchone()
+
+        favorites_count = conn.execute(
+            "SELECT COUNT(*) as c FROM qb_favorites WHERE student_id=?", (session["id"],)
+        ).fetchone()["c"]
+        solve_later_count = conn.execute(
+            "SELECT COUNT(*) as c FROM qb_solve_later WHERE student_id=?", (session["id"],)
+        ).fetchone()["c"]
+
+        return {
+            "total_questions": total_questions,
+            "solved_questions": solved_row["solved"] or 0,
+            "total_attempts": solved_row["total_attempts"] or 0,
+            "correct_attempts": solved_row["correct_attempts"] or 0,
+            "favorites_count": favorites_count,
+            "solve_later_count": solve_later_count,
+        }
 
 
 @app.get("/api/students/{student_id}/scores")
