@@ -189,6 +189,7 @@ tbody tr:hover{background:var(--primary-10);}
 .qb-option-btn.correct{border-color:var(--success);background:var(--success-bg);color:#065F46;}
 .qb-option-btn.wrong{border-color:var(--danger);background:var(--danger-bg);color:#991B1B;}
 .qb-feedback-explain{margin-top:10px;background:var(--surface-2);border-right:3px solid var(--primary);border-radius:var(--radius-md);padding:10px 14px;font-size:13px;line-height:1.7;}
+.qb-tab-count{font-size:10.5px;opacity:.75;margin-right:2px;}
 
 /* CLEAR LABELED ACTION BUTTONS - تعديل / تفعيل-إيقاف / حذف */
 .act-btn{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 11px;border-radius:99px;border:1px solid transparent;font-size:12px;font-weight:700;cursor:pointer;font-family:'Cairo',sans-serif;white-space:nowrap;transition:all .12s var(--ease);}
@@ -7794,15 +7795,19 @@ async function qbAdminLoadQuestions(){
 }
 
 function openQbankUploadModal(){
-  openModal("رفع ملف إكسيل ببنك الأسئلة", `
+  openModal("رفع أسئلة لبنك الأسئلة", `
+    <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+      <div style="font-size:12.5px;color:var(--text-2);">لسه ماعندكش شيت؟ حمّل نموذج فاضي، املاه، وارفعه على طول.</div>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="downloadQbankTemplate()"><i data-lucide="download" style="width:14px;height:14px;"></i> تحميل نموذج (CSV)</button>
+    </div>
     <div class="form-group">
       <label class="form-label">المرحلة الدراسية <span class="req">*</span></label>
       <select class="form-select" id="f_qb_upload_stage">${(CACHE_STAGES||[]).map(s=>`<option value="${s.id}">${escapeHtml(s.name)}</option>`).join("")}</select>
     </div>
     <div class="form-group">
-      <label class="form-label">ملف الإكسيل (xlsx) <span class="req">*</span></label>
-      <input class="form-input" id="f_qb_upload_file" type="file" accept=".xlsx,.xlsm">
-      <div class="form-hint">أعمدة الشيت المطلوبة بالترتيب ده (بأي ترتيب فعليًا، المهم أسماء الأعمدة): الباب، الدرس، السؤال، الإجابة الصحيحة، إجابة خاطئة 1، إجابة خاطئة 2، إجابة خاطئة 3، التفسير (اختياري)</div>
+      <label class="form-label">ملف الأسئلة (Excel أو CSV) <span class="req">*</span></label>
+      <input class="form-input" id="f_qb_upload_file" type="file" accept=".xlsx,.xlsm,.csv">
+      <div class="form-hint">أعمدة الملف المطلوبة (بأي ترتيب، المهم أسماء الأعمدة): الباب، الدرس، السؤال، الإجابة الصحيحة، إجابة خاطئة 1، إجابة خاطئة 2، إجابة خاطئة 3، التفسير (اختياري)</div>
     </div>
     <div id="qbUploadResultWrap"></div>
   `, `
@@ -7811,12 +7816,31 @@ function openQbankUploadModal(){
   `);
 }
 
+function downloadQbankTemplate(){
+  const headers = ["الباب","الدرس","السؤال","الإجابة الصحيحة","إجابة خاطئة 1","إجابة خاطئة 2","إجابة خاطئة 3","التفسير"];
+  const example1 = ["الباب الأول","الدرس الأول","مثال: عاصمة مصر هي؟","القاهرة","الإسكندرية","أسوان","الأقصر","القاهرة هي عاصمة مصر منذ أن تأسست في العصر الفاطمي"];
+  const example2 = ["الباب الأول","الدرس الثاني","مثال: كام 5 × 3؟","15","8","10","18",""];
+  const escapeCsv = v => `"${String(v||"").replace(/"/g,'""')}"`;
+  const rows = [headers, example1, example2].map(r=>r.map(escapeCsv).join(","));
+  const csvContent = rows.join("\r\n");
+  const blob = new Blob(["\uFEFF" + csvContent], {type:"text/csv;charset=utf-8;"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "نموذج_بنك_الأسئلة.csv";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  showToast("اتحمّل النموذج، املاه وارفعه من نفس الشاشة", "success");
+}
+
 async function submitQbankUpload(){
   const stageId = document.getElementById("f_qb_upload_stage").value;
   const fileInput = document.getElementById("f_qb_upload_file");
   const file = fileInput.files[0];
   if (!stageId){ showToast("لازم تحدد المرحلة الدراسية", "error"); return; }
-  if (!file){ showToast("لازم تختار ملف إكسيل", "error"); return; }
+  if (!file){ showToast("لازم تختار ملف Excel أو CSV", "error"); return; }
 
   const submitBtn = document.getElementById("qbUploadSubmitBtn");
   submitBtn.disabled = true;
@@ -7989,7 +8013,7 @@ async function loadQbankAnalytics(){
 /* =====================================================================
    بنك الأسئلة - واجهة الطالب
 ===================================================================== */
-let QBANK_STUDENT_STATE = {chapter: null, lesson: null, filter: "all", chapters: []};
+let QBANK_STUDENT_STATE = {chapter: null, lesson: null, filter: "all", chapters: [], stats: null};
 
 async function renderQbankStudentPage(){
   const c = document.getElementById("pageContainer");
@@ -7998,48 +8022,74 @@ async function renderQbankStudentPage(){
     api("/api/qbank/student/stats"),
     api("/api/qbank/student/chapters"),
   ]);
-  QBANK_STUDENT_STATE = {chapter: null, lesson: null, filter: "all", chapters};
+  QBANK_STUDENT_STATE = {chapter: null, lesson: null, filter: "all", chapters, stats};
   const chapterNames = [...new Set(chapters.map(ch=>ch.chapter))];
-  const correctRate = stats.total_attempts ? Math.round((stats.correct_attempts / stats.total_attempts) * 100) : 0;
 
   c.innerHTML = `
     <div class="page-header"><div><h1>بنك الأسئلة</h1><p>حل أسئلة اختيارية على مادتك، واحفظ اللي يهمك في المفضلة أو هتحلها لاحقًا</p></div></div>
-    <div class="stats-grid">
-      <div class="stat-card"><div class="stat-top"><div class="stat-icon blue"><i data-lucide="list-checks" style="width:18px;height:18px;"></i></div></div>
-        <div class="stat-value">${stats.total_questions}</div><div class="stat-label">إجمالي الأسئلة المتاحة</div></div>
-      <div class="stat-card"><div class="stat-top"><div class="stat-icon green"><i data-lucide="check-circle-2" style="width:18px;height:18px;"></i></div></div>
-        <div class="stat-value">${stats.solved_questions}</div><div class="stat-label">أسئلة حليتها</div></div>
-      <div class="stat-card"><div class="stat-top"><div class="stat-icon amber"><i data-lucide="percent" style="width:18px;height:18px;"></i></div></div>
-        <div class="stat-value">${correctRate}%</div><div class="stat-label">نسبة إجاباتك الصح</div></div>
-      <div class="stat-card"><div class="stat-top"><div class="stat-icon teal"><i data-lucide="star" style="width:18px;height:18px;"></i></div></div>
-        <div class="stat-value">${stats.favorites_count}</div><div class="stat-label">في المفضلة</div></div>
+
+    <div class="table-card" style="margin-bottom:10px;overflow:hidden;">
+      <button type="button" onclick="qbToggleFilterPanel()" id="qbFilterToggleBtn" style="width:100%;display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:none;border:none;cursor:pointer;font-family:'Cairo',sans-serif;">
+        <span style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:var(--text);">
+          <i data-lucide="sliders-horizontal" style="width:15px;height:15px;color:var(--text-3);"></i>
+          فلترة بالباب والدرس
+          <span id="qbFilterActiveBadge" class="badge badge-blue" style="display:none;"></span>
+        </span>
+        <i data-lucide="chevron-down" style="width:16px;height:16px;color:var(--text-3);transition:transform .15s;" id="qbFilterChevron"></i>
+      </button>
+      <div id="qbFilterPanel" style="display:none;padding:0 14px 14px;">
+        <div class="form-row-2">
+          <div class="form-group" style="margin:0;"><label class="form-label">الباب</label>
+            <select class="form-select" id="qbChapterSelect" onchange="qbChapterChanged()">
+              <option value="">كل الأبواب</option>
+              ${chapterNames.map(ch=>`<option value="${jsAttr(ch)}">${escapeHtml(ch)}</option>`).join("")}
+            </select>
+          </div>
+          <div class="form-group" id="qbLessonGroup" style="margin:0;display:none;"><label class="form-label">الدرس</label>
+            <select class="form-select" id="qbLessonSelect" onchange="qbLessonChanged()">
+              <option value="">كل الدروس</option>
+            </select>
+          </div>
+        </div>
+      </div>
     </div>
+
     <div class="table-card" style="padding:12px 14px;margin-bottom:14px;">
       <div class="seg-toggle" id="qbFilterToggle" style="width:100%;flex-wrap:wrap;">
         <button type="button" class="seg-btn active-green" data-val="all" onclick="qbSetFilter('all')" style="flex:1;">الكل</button>
-        <button type="button" class="seg-btn" data-val="unsolved" onclick="qbSetFilter('unsolved')" style="flex:1;">لسه محلتهاش</button>
-        <button type="button" class="seg-btn" data-val="wrong" onclick="qbSetFilter('wrong')" style="flex:1;">غلطت فيها</button>
-        <button type="button" class="seg-btn" data-val="favorites" onclick="qbSetFilter('favorites')" style="flex:1;">المفضلة</button>
-        <button type="button" class="seg-btn" data-val="solve_later" onclick="qbSetFilter('solve_later')" style="flex:1;">هحلها لاحقًا</button>
-      </div>
-      <div class="form-row-2" style="margin-top:12px;">
-        <div class="form-group" style="margin:0;"><label class="form-label">الباب</label>
-          <select class="form-select" id="qbChapterSelect" onchange="qbChapterChanged()">
-            <option value="">كل الأبواب</option>
-            ${chapterNames.map(ch=>`<option value="${jsAttr(ch)}">${escapeHtml(ch)}</option>`).join("")}
-          </select>
-        </div>
-        <div class="form-group" style="margin:0;"><label class="form-label">الدرس</label>
-          <select class="form-select" id="qbLessonSelect" onchange="qbLessonChanged()">
-            <option value="">كل الدروس</option>
-          </select>
-        </div>
+        <button type="button" class="seg-btn" data-val="unsolved" onclick="qbSetFilter('unsolved')" style="flex:1;">لسه محلتهاش <span class="qb-tab-count" data-count="unsolved">(${stats.unsolved_count})</span></button>
+        <button type="button" class="seg-btn" data-val="wrong" onclick="qbSetFilter('wrong')" style="flex:1;">أخطائي <span class="qb-tab-count" data-count="wrong">(${stats.wrong_count})</span></button>
+        <button type="button" class="seg-btn" data-val="favorites" onclick="qbSetFilter('favorites')" style="flex:1;">المفضلة <span class="qb-tab-count" data-count="favorites">(${stats.favorites_count})</span></button>
+        <button type="button" class="seg-btn" data-val="solve_later" onclick="qbSetFilter('solve_later')" style="flex:1;">للمراجعة <span class="qb-tab-count" data-count="solve_later">(${stats.solve_later_count})</span></button>
       </div>
     </div>
+
     <div id="qbQuestionsWrap"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>
   `;
   icons();
   await qbLoadQuestions();
+}
+
+function qbToggleFilterPanel(){
+  const panel = document.getElementById("qbFilterPanel");
+  const chevron = document.getElementById("qbFilterChevron");
+  const isOpen = panel.style.display !== "none";
+  panel.style.display = isOpen ? "none" : "block";
+  if (chevron) chevron.style.transform = isOpen ? "" : "rotate(180deg)";
+}
+
+function qbUpdateFilterBadge(){
+  const badge = document.getElementById("qbFilterActiveBadge");
+  if (!badge) return;
+  let count = 0;
+  if (QBANK_STUDENT_STATE.chapter) count++;
+  if (QBANK_STUDENT_STATE.lesson) count++;
+  if (count){
+    badge.style.display = "";
+    badge.textContent = count;
+  } else {
+    badge.style.display = "none";
+  }
 }
 
 function qbSetFilter(val){
@@ -8052,14 +8102,23 @@ function qbChapterChanged(){
   const chapter = document.getElementById("qbChapterSelect").value;
   QBANK_STUDENT_STATE.chapter = chapter || null;
   QBANK_STUDENT_STATE.lesson = null;
+  const lessonGroup = document.getElementById("qbLessonGroup");
   const lessonSelect = document.getElementById("qbLessonSelect");
-  const lessons = chapter ? [...new Set(QBANK_STUDENT_STATE.chapters.filter(c=>c.chapter===chapter).map(c=>c.lesson))] : [];
-  lessonSelect.innerHTML = `<option value="">كل الدروس</option>` + lessons.map(l=>`<option value="${jsAttr(l)}">${escapeHtml(l)}</option>`).join("");
+  if (chapter){
+    const lessons = [...new Set(QBANK_STUDENT_STATE.chapters.filter(c=>c.chapter===chapter).map(c=>c.lesson))];
+    lessonSelect.innerHTML = `<option value="">كل الدروس</option>` + lessons.map(l=>`<option value="${jsAttr(l)}">${escapeHtml(l)}</option>`).join("");
+    lessonGroup.style.display = "";
+  } else {
+    lessonGroup.style.display = "none";
+    lessonSelect.innerHTML = `<option value="">كل الدروس</option>`;
+  }
+  qbUpdateFilterBadge();
   qbLoadQuestions();
 }
 
 function qbLessonChanged(){
   QBANK_STUDENT_STATE.lesson = document.getElementById("qbLessonSelect").value || null;
+  qbUpdateFilterBadge();
   qbLoadQuestions();
 }
 
@@ -8094,7 +8153,7 @@ function qbQuestionCardHtml(q){
         <button class="action-btn" title="أضف للمفضلة" onclick="qbToggleFavorite(${q.id})" id="qb_fav_${q.id}">
           <i data-lucide="star" style="width:15px;height:15px;${q.is_favorite?'fill:var(--warning);color:var(--warning);':''}"></i>
         </button>
-        <button class="action-btn" title="هحلها لاحقًا" onclick="qbToggleSolveLater(${q.id})" id="qb_later_${q.id}">
+        <button class="action-btn" title="للمراجعة لاحقًا" onclick="qbToggleSolveLater(${q.id})" id="qb_later_${q.id}">
           <i data-lucide="bookmark" style="width:15px;height:15px;${q.is_solve_later?'fill:var(--primary);color:var(--primary);':''}"></i>
         </button>
       </div>
@@ -8139,6 +8198,7 @@ async function qbAnswer(qid, btnEl){
     <button class="btn btn-ghost btn-sm" style="margin-top:10px;" onclick="qbRetry(${qid})"><i data-lucide="rotate-ccw" style="width:13px;height:13px;"></i> جرب تاني</button>
   `;
   icons();
+  qbRefreshTabCounts();
 }
 
 function qbRetry(qid){
@@ -8158,6 +8218,7 @@ async function qbToggleFavorite(qid){
     icon.style.fill = res.is_favorite ? "var(--warning)" : "";
     icon.style.color = res.is_favorite ? "var(--warning)" : "";
   }
+  qbRefreshTabCounts();
   if (QBANK_STUDENT_STATE.filter === "favorites" && !res.is_favorite){
     qbLoadQuestions();
   }
@@ -8170,9 +8231,26 @@ async function qbToggleSolveLater(qid){
     icon.style.fill = res.is_solve_later ? "var(--primary)" : "";
     icon.style.color = res.is_solve_later ? "var(--primary)" : "";
   }
+  qbRefreshTabCounts();
   if (QBANK_STUDENT_STATE.filter === "solve_later" && !res.is_solve_later){
     qbLoadQuestions();
   }
+}
+
+async function qbRefreshTabCounts(){
+  try{
+    const stats = await api("/api/qbank/student/stats");
+    QBANK_STUDENT_STATE.stats = stats;
+    qbSetTabCountText("unsolved", stats.unsolved_count);
+    qbSetTabCountText("wrong", stats.wrong_count);
+    qbSetTabCountText("favorites", stats.favorites_count);
+    qbSetTabCountText("solve_later", stats.solve_later_count);
+  }catch(e){ /* تجاهل - العداد هيتظبط تاني لما الطالب يفتح الصفحة تاني */ }
+}
+
+function qbSetTabCountText(key, value){
+  const el = document.querySelector(`.qb-tab-count[data-count="${key}"]`);
+  if (el) el.textContent = `(${value})`;
 }
 
 </script>

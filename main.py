@@ -11,6 +11,7 @@ backend.py
 
 import os
 import io
+import csv
 import random
 import base64
 import uuid
@@ -2563,23 +2564,40 @@ async def qb_upload_excel(
     stage_id: int = Form(...),
     session=Depends(require_roles("admin")),
 ):
-    """رفع شيت إكسيل ببنك أسئلة كامل - الأعمدة المطلوبة: الباب / الدرس / السؤال /
-    الإجابة الصحيحة / إجابة خاطئة 1 / إجابة خاطئة 2 / إجابة خاطئة 3 / التفسير (اختياري)"""
-    if not file.filename.lower().endswith((".xlsx", ".xlsm")):
-        raise HTTPException(status_code=400, detail="لازم ترفع ملف إكسيل بصيغة xlsx")
+    """رفع شيت أسئلة كامل - بصيغة Excel (xlsx) أو CSV. الأعمدة المطلوبة: الباب / الدرس /
+    السؤال / الإجابة الصحيحة / إجابة خاطئة 1 / إجابة خاطئة 2 / إجابة خاطئة 3 / التفسير (اختياري)"""
+    filename_lower = file.filename.lower()
+    if not filename_lower.endswith((".xlsx", ".xlsm", ".csv")):
+        raise HTTPException(status_code=400, detail="لازم ترفع ملف بصيغة xlsx أو csv")
 
     content = await file.read()
-    try:
-        wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-        sheet = wb.active
-    except Exception:
-        raise HTTPException(status_code=400, detail="تعذر قراءة ملف الإكسيل، تأكد إن الملف سليم")
+    header = None
+    data_rows = []
 
-    rows_iter = sheet.iter_rows(values_only=True)
-    try:
-        header = next(rows_iter)
-    except StopIteration:
-        raise HTTPException(status_code=400, detail="الشيت فاضي")
+    if filename_lower.endswith(".csv"):
+        try:
+            text = content.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            try:
+                text = content.decode("windows-1256")
+            except Exception:
+                raise HTTPException(status_code=400, detail="تعذر قراءة ملف الـ CSV، جرب تحفظه بترميز UTF-8")
+        all_rows = list(csv.reader(io.StringIO(text)))
+        if not all_rows:
+            raise HTTPException(status_code=400, detail="الملف فاضي")
+        header, data_rows = all_rows[0], all_rows[1:]
+    else:
+        try:
+            wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+            sheet = wb.active
+        except Exception:
+            raise HTTPException(status_code=400, detail="تعذر قراءة ملف الإكسيل، تأكد إن الملف سليم")
+        rows_iter_raw = sheet.iter_rows(values_only=True)
+        try:
+            header = list(next(rows_iter_raw))
+        except StopIteration:
+            raise HTTPException(status_code=400, detail="الشيت فاضي")
+        data_rows = list(rows_iter_raw)
 
     col_map = {}  # رقم العمود -> اسم الحقل
     for idx, cell in enumerate(header):
@@ -2595,7 +2613,7 @@ async def qb_upload_excel(
     if not required_fields.issubset(set(col_map.values())):
         raise HTTPException(
             status_code=400,
-            detail="أعمدة الشيت ناقصة. المطلوب: الباب، الدرس، السؤال، الإجابة الصحيحة، "
+            detail="أعمدة الملف ناقصة. المطلوب: الباب، الدرس، السؤال، الإجابة الصحيحة، "
                    "إجابة خاطئة 1، إجابة خاطئة 2، إجابة خاطئة 3 (والتفسير اختياري)"
         )
 
@@ -2606,7 +2624,7 @@ async def qb_upload_excel(
 
         inserted, skipped = 0, 0
         errors = []
-        for row_num, row in enumerate(rows_iter, start=2):
+        for row_num, row in enumerate(data_rows, start=2):
             if row is None or all(c is None or str(c).strip() == "" for c in row):
                 continue
             data = {}
@@ -2906,7 +2924,7 @@ def qb_toggle_solve_later(question_id: int, session=Depends(require_roles("stude
 
 @app.get("/api/qbank/student/stats")
 def qb_student_stats(session=Depends(require_roles("student"))):
-    """إحصائية سريعة للطالب: عدد الأسئلة المحلولة، نسبة الصح، حالة كل باب"""
+    """إحصائية سريعة للطالب: عدد الأسئلة المحلولة، الأخطاء، المفضلة، هحلها لاحقًا"""
     with get_connection() as conn:
         stage_id = _student_stage_id(conn, session)
         total_questions = conn.execute(
@@ -2914,22 +2932,38 @@ def qb_student_stats(session=Depends(require_roles("student"))):
         ).fetchone()["c"] if stage_id else 0
 
         solved_row = conn.execute("""
-            SELECT COUNT(DISTINCT question_id) as solved,
-                   SUM(CASE WHEN is_correct=1 THEN 1 ELSE 0 END) as correct_attempts,
+            SELECT COUNT(DISTINCT a.question_id) as solved,
+                   SUM(CASE WHEN a.is_correct=1 THEN 1 ELSE 0 END) as correct_attempts,
                    COUNT(*) as total_attempts
-            FROM qb_answers WHERE student_id=?
-        """, (session["id"],)).fetchone()
+            FROM qb_answers a
+            JOIN qb_questions qq ON qq.id = a.question_id
+            WHERE a.student_id=? AND qq.stage_id=? AND qq.is_active=1
+        """, (session["id"], stage_id)).fetchone()
 
-        favorites_count = conn.execute(
-            "SELECT COUNT(*) as c FROM qb_favorites WHERE student_id=?", (session["id"],)
-        ).fetchone()["c"]
-        solve_later_count = conn.execute(
-            "SELECT COUNT(*) as c FROM qb_solve_later WHERE student_id=?", (session["id"],)
-        ).fetchone()["c"]
+        wrong_count = conn.execute("""
+            SELECT COUNT(DISTINCT a.question_id) as c
+            FROM qb_answers a
+            JOIN qb_questions qq ON qq.id = a.question_id
+            WHERE a.student_id=? AND a.is_correct=0 AND qq.stage_id=? AND qq.is_active=1
+        """, (session["id"], stage_id)).fetchone()["c"]
 
+        favorites_count = conn.execute("""
+            SELECT COUNT(*) as c FROM qb_favorites f
+            JOIN qb_questions qq ON qq.id = f.question_id
+            WHERE f.student_id=? AND qq.stage_id=? AND qq.is_active=1
+        """, (session["id"], stage_id)).fetchone()["c"]
+        solve_later_count = conn.execute("""
+            SELECT COUNT(*) as c FROM qb_solve_later s
+            JOIN qb_questions qq ON qq.id = s.question_id
+            WHERE s.student_id=? AND qq.stage_id=? AND qq.is_active=1
+        """, (session["id"], stage_id)).fetchone()["c"]
+
+        solved = solved_row["solved"] or 0
         return {
             "total_questions": total_questions,
-            "solved_questions": solved_row["solved"] or 0,
+            "solved_questions": solved,
+            "unsolved_count": max(total_questions - solved, 0),
+            "wrong_count": wrong_count,
             "total_attempts": solved_row["total_attempts"] or 0,
             "correct_attempts": solved_row["correct_attempts"] or 0,
             "favorites_count": favorites_count,
