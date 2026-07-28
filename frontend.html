@@ -902,9 +902,16 @@ function confirmAction(title, desc, onConfirm){
 function todayStr(){ return new Date().toISOString().slice(0,10); }
 
 function showImageLightbox(src, filename){
-  document.getElementById("lightboxImg").src = src;
+  const img = document.getElementById("lightboxImg");
+  img.src = src;
   window._lightboxCurrentSrc = src;
   window._lightboxCurrentName = filename || "board-image.jpg";
+  // الطالب يقدر يفتح الصورة فُل سكرين بس - مفيش زرار تحميل ولا حفظ بالراىت كليك
+  const isStudent = SESSION && SESSION.role === "student";
+  const downloadBtn = document.getElementById("lightboxDownloadBtn");
+  if (downloadBtn) downloadBtn.style.display = isStudent ? "none" : "";
+  img.oncontextmenu = isStudent ? (e)=>{ e.preventDefault(); return false; } : null;
+  img.draggable = !isStudent;
   openOverlay("imageLightbox");
 }
 
@@ -5884,10 +5891,10 @@ function renderMonthlySessionBlock(s, monthIdx){
             <div class="cards-grid">
               ${s.board_images.map((im,i)=>`
                 <div class="session-card">
-                  <img class="thumb" src="${im.image_data}" onclick="showImageLightbox('${im.image_data}', 'حصة-${s.session_number}-صورة-${i+1}.jpg')">
+                  <img class="thumb" src="${im.image_data}" onclick="showImageLightbox('${im.image_data}', 'حصة-${s.session_number}-صورة-${i+1}.jpg')" oncontextmenu="return false" draggable="false">
                   <div class="info">
                     <b>${im.session_date||''}</b>
-                    <button class="action-btn" title="تحميل" onclick="downloadImageDirect('${im.image_data}','حصة-${s.session_number}-صورة-${i+1}.jpg')"><i data-lucide="download" style="width:14px;height:14px;"></i></button>
+                    <button class="action-btn" title="عرض بالحجم الكامل" onclick="showImageLightbox('${im.image_data}', 'حصة-${s.session_number}-صورة-${i+1}.jpg')"><i data-lucide="maximize" style="width:14px;height:14px;"></i></button>
                   </div>
                 </div>
               `).join("")}
@@ -6458,10 +6465,10 @@ async function renderMyBoardPage(){
             <div class="cards-grid" style="padding:14px 16px;">
               ${sec.imgs.map((im,i)=>`
                 <div class="session-card">
-                  <img class="thumb" src="${im.image_data}" onclick="showImageLightbox('${im.image_data}', 'حصة-${sn}-صورة-${i+1}.jpg')">
+                  <img class="thumb" src="${im.image_data}" onclick="showImageLightbox('${im.image_data}', 'حصة-${sn}-صورة-${i+1}.jpg')" oncontextmenu="return false" draggable="false">
                   <div class="info">
                     <b>${im.session_date||''}</b>
-                    <button class="action-btn" title="تحميل" onclick="downloadImageDirect('${im.image_data}','حصة-${sn}-صورة-${i+1}.jpg')"><i data-lucide="download" style="width:14px;height:14px;"></i></button>
+                    <button class="action-btn" title="عرض بالحجم الكامل" onclick="showImageLightbox('${im.image_data}', 'حصة-${sn}-صورة-${i+1}.jpg')"><i data-lucide="maximize" style="width:14px;height:14px;"></i></button>
                   </div>
                 </div>
               `).join("")}
@@ -6472,15 +6479,6 @@ async function renderMyBoardPage(){
     </div>
   `;
   icons();
-}
-
-function downloadImageDirect(src, filename){
-  const a = document.createElement("a");
-  a.href = src;
-  a.download = filename || "board-image.jpg";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
 }
 
 /* =====================================================================
