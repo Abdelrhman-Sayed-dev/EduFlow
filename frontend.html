@@ -8021,7 +8021,16 @@ let QBANK_STUDENT_STATE = {chapter: null, lesson: null, filter: "all", chapters:
 
 async function renderQbankStudentPage(){
   const c = document.getElementById("pageContainer");
-  c.innerHTML = `<div class="empty-state"><div class="empty-title">بتحمّل...</div></div>`;
+  c.innerHTML = `
+    <div class="page-header"><div><h1>بنك الأسئلة</h1><p>حل أسئلة اختيارية على مادتك، واحفظ اللي يهمك في المفضلة أو هتحلها لاحقًا</p></div></div>
+    <div class="empty-state">
+      <div class="empty-icon"><i data-lucide="hammer" style="width:26px;height:26px;"></i></div>
+      <div class="empty-title">الميزة دي لسه تحت الإنشاء 🚧</div>
+      <div class="empty-desc">بنك الأسئلة هيبقى متاح قريبًا، تابعنا هيتم تفعيله أول ما يخلص</div>
+    </div>
+  `;
+  if(window.lucide) lucide.createIcons();
+  return;
   const [stats, chapters] = await Promise.all([
     api("/api/qbank/student/stats"),
     api("/api/qbank/student/chapters"),
