@@ -731,6 +731,67 @@ body.is-student .bottom-nav, body.is-supervisor .bottom-nav, body.is-teacher .bo
   <button class="lightbox-download-btn" id="lightboxDownloadBtn" onclick="event.stopPropagation();downloadLightboxImage()"><i data-lucide="download" style="width:15px;height:15px;"></i> تحميل الصورة</button>
 </div>
 
+<!-- شاشة خوض الامتحان الآمنة - overlay كامل الشاشة مستقل عن باقي الواجهة،
+     بيتفعّل بس أثناء الامتحان عشان يمنع أي تنقل أو تشتيت -->
+<div id="examOverlay" class="exam-overlay" style="display:none;">
+  <div class="exam-topbar">
+    <div class="exam-topbar-title" id="examTopbarTitle">امتحان</div>
+    <div class="exam-topbar-mid">
+      <div class="exam-progress-track"><div class="exam-progress-fill" id="examProgressFill"></div></div>
+      <div class="exam-progress-label" id="examProgressLabel">سؤال 1 من 1</div>
+    </div>
+    <div class="exam-timer" id="examTimer"><i data-lucide="timer" style="width:15px;height:15px;"></i><span id="examTimerText">--:--</span></div>
+  </div>
+  <div class="exam-violation-banner" id="examViolationBanner" style="display:none;"></div>
+  <div class="exam-body" id="examBody">
+    <div class="empty-state"><div class="empty-title">بيتحمّل...</div></div>
+  </div>
+  <div class="exam-fullscreen-prompt" id="examFullscreenPrompt" style="display:none;">
+    <div class="exam-fullscreen-prompt-box">
+      <i data-lucide="maximize" style="width:30px;height:30px;color:var(--warning);"></i>
+      <div style="font-weight:800;font-size:15px;margin:10px 0 4px;">خرجت من وضع ملء الشاشة</div>
+      <div style="font-size:12.5px;color:var(--text-3);margin-bottom:14px;">ده بيتحسب مخالفة على امتحانك. ارجع لملء الشاشة عشان تكمل</div>
+      <button class="btn btn-primary" onclick="examReenterFullscreen()"><i data-lucide="maximize" style="width:14px;height:14px;"></i> الرجوع لملء الشاشة</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* =====================================================================
+   أنماط شاشة الامتحان الآمنة - مُلحقة هنا عشان ما نلمسش ملف الـ CSS الرئيسي
+===================================================================== */
+(function injectExamStyles(){
+  const css = `
+  .exam-overlay{position:fixed;inset:0;z-index:9999;background:var(--bg, #f4f5f7);display:flex;flex-direction:column;font-family:'Cairo',sans-serif;}
+  .exam-overlay,.exam-overlay *{user-select:none;-webkit-user-select:none;}
+  .exam-topbar{display:flex;align-items:center;gap:14px;padding:12px 18px;background:var(--surface,#fff);border-bottom:1px solid var(--border,#e5e7eb);flex-shrink:0;}
+  .exam-topbar-title{font-weight:800;font-size:14px;white-space:nowrap;}
+  .exam-topbar-mid{flex:1;display:flex;flex-direction:column;gap:4px;min-width:0;}
+  .exam-progress-track{height:6px;border-radius:4px;background:var(--surface-3,#eee);overflow:hidden;}
+  .exam-progress-fill{height:100%;background:var(--primary,#6366f1);border-radius:4px;transition:width .25s;}
+  .exam-progress-label{font-size:11px;color:var(--text-3,#888);}
+  .exam-timer{display:flex;align-items:center;gap:6px;font-weight:800;font-size:14px;padding:6px 12px;border-radius:8px;background:var(--surface-3,#f0f0f0);white-space:nowrap;}
+  .exam-timer.warn{background:var(--danger-bg,#fee2e2);color:var(--danger,#dc2626);}
+  .exam-violation-banner{background:var(--danger,#dc2626);color:#fff;text-align:center;padding:8px 12px;font-size:13px;font-weight:700;flex-shrink:0;}
+  .exam-body{flex:1;overflow-y:auto;display:flex;align-items:flex-start;justify-content:center;padding:24px 16px;}
+  .exam-question-card{width:100%;max-width:640px;background:var(--surface,#fff);border-radius:16px;padding:26px 22px;box-shadow:var(--shadow-md,0 2px 10px rgba(0,0,0,.06));}
+  .exam-question-text{font-size:17px;font-weight:800;line-height:1.6;margin-bottom:22px;}
+  .exam-option-btn{display:block;width:100%;text-align:right;padding:14px 16px;margin-bottom:10px;border-radius:12px;border:2px solid var(--border,#e5e7eb);background:var(--surface,#fff);font-family:'Cairo',sans-serif;font-size:14.5px;font-weight:600;cursor:pointer;transition:.15s;}
+  .exam-option-btn:hover{border-color:var(--primary,#6366f1);}
+  .exam-option-btn.selected{border-color:var(--primary,#6366f1);background:var(--primary-10,#eef2ff);}
+  .exam-option-btn:disabled{cursor:not-allowed;opacity:.7;}
+  .exam-actions{display:flex;justify-content:space-between;align-items:center;margin-top:20px;gap:10px;}
+  .exam-fullscreen-prompt{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10001;display:flex;align-items:center;justify-content:center;}
+  .exam-fullscreen-prompt-box{background:var(--surface,#fff);border-radius:16px;padding:26px;text-align:center;max-width:320px;}
+  .exam-result-card{width:100%;max-width:640px;background:var(--surface,#fff);border-radius:16px;padding:28px 22px;text-align:center;}
+  `;
+  const style = document.createElement("style");
+  style.id = "examInjectedStyles";
+  style.textContent = css;
+  document.head.appendChild(style);
+})();
+</script>
+
 <script>
 /* =====================================================================
    إعدادات عامة + أدوات مساعدة
@@ -1104,6 +1165,7 @@ const NAV_BY_ROLE = {
     {id:"schedule", label:"جدول المواعيد", icon:"calendar-clock"},
     {id:"quizzes", label:"الكويزات والامتحانات", icon:"file-check-2"},
     {id:"qbank_admin", label:"بنك الأسئلة", icon:"library"},
+    {id:"online_exams_admin", label:"الامتحانات الإلكترونية", icon:"shield-check"},
     {id:"attendance", label:"الحضور والغياب", icon:"calendar-check"},
     {id:"student_search", label:"بحث عن طالب", icon:"search"},
     {id:"activity_log", label:"سجل الأنشطة", icon:"history"},
@@ -1121,6 +1183,7 @@ const NAV_BY_ROLE = {
     {id:"dashboard", label:"الرئيسية", icon:"layout-dashboard"},
     {id:"hs_videos", label:"الفيديوهات", icon:"video"},
     {id:"hs_quizzes", label:"إدارة الكويزات والامتحانات", icon:"file-check-2"},
+    {id:"online_exams_admin", label:"الامتحانات الإلكترونية", icon:"shield-check"},
     {id:"qbank_analytics", label:"تحليل بنك الأسئلة", icon:"library"},
     {id:"teacher_analytics", label:"التحليلات", icon:"bar-chart-3"},
     {id:"teacher_compare", label:"مقارنة المجموعات", icon:"git-compare"},
@@ -1142,6 +1205,7 @@ const NAV_BY_ROLE = {
   student: [
     {id:"mydashboard", label:"لوحتي", icon:"layout-dashboard"},
     {id:"mycontent", label:"محتوى مجموعتي بالشهور", icon:"calendar-range"},
+    {id:"myexams", label:"كويزات", icon:"shield-check"},
     {id:"qbank_student", label:"بنك الأسئلة", icon:"library"},
     {id:"myhomework", label:"واجباتي", icon:"clipboard-list"},
     {id:"myscores", label:"درجاتي", icon:"file-check-2"},
@@ -1156,7 +1220,7 @@ const ROLE_LABELS = {admin:"الأدمن العام", teacher:"المدرس", su
 const STUDENT_BOTTOM_NAV = [
   {id:"mydashboard", label:"الرئيسية", icon:"home"},
   {id:"mycontent", label:"محتوى الشهور", icon:"calendar-range"},
-  {id:"qbank_student", label:"بنك الأسئلة", icon:"library"},
+  {id:"myexams", label:"كويزات", icon:"shield-check"},
   {id:"myrequests", label:"طلباتي", icon:"send"},
   {id:"student_more", label:"المزيد", icon:"layout-grid"},
 ];
@@ -1288,6 +1352,7 @@ const PAGE_TITLES = {
   activity_log:"سجل الأنشطة",
   fraud_alerts:"كشف التلاعب",
   qbank_admin:"بنك الأسئلة", qbank_analytics:"تحليل بنك الأسئلة", qbank_student:"بنك الأسئلة",
+  online_exams_admin:"إدارة الامتحانات الإلكترونية", myexams:"كويزات",
 };
 
 async function renderPage(page){
@@ -1340,6 +1405,8 @@ async function renderPage(page){
       qbank_admin: renderQbankAdminPage,
       qbank_analytics: ()=>renderQbankAnalyticsPage(),
       qbank_student: renderQbankStudentPage,
+      online_exams_admin: renderOnlineExamsAdminPage,
+      myexams: renderMyExamsPage,
     };
     const fn = renderers[page];
     if (fn) await fn();
@@ -8314,6 +8381,749 @@ function qbSetTabCountText(key, value){
   if (el) el.textContent = `(${value})`;
 }
 
+/* =====================================================================
+   كويزات الطالب - قائمة الامتحانات المتاحة
+===================================================================== */
+const EXAM_STATUS_LABELS = {
+  available: {label:"متاح - ابدأ الآن", cls:"badge-green"},
+  in_progress: {label:"شغال - كمّل", cls:"badge-blue"},
+  submitted: {label:"تم التسليم", cls:"badge-gray"},
+  terminated: {label:"تم الإنهاء (مخالفات)", cls:"badge-red"},
+  upcoming: {label:"لسه معملش بدأ", cls:"badge-gray"},
+  closed: {label:"انتهى الوقت", cls:"badge-red"},
+  not_ready: {label:"لسه مفيهوش أسئلة", cls:"badge-gray"},
+};
+
+async function renderMyExamsPage(){
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `<div class="page-header"><div><h1>كويزات</h1><p>امتحاناتك الإلكترونية - سؤال واحد في كل مرة، والوقت بيتحسب من السيرفر</p></div></div>
+    <div id="myExamsWrap"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>`;
+  icons();
+  const wrap = document.getElementById("myExamsWrap");
+  let exams;
+  try{ exams = await api("/api/exams/student/list"); }catch(e){ return; }
+  if (!exams.length){
+    wrap.innerHTML = `<div class="empty-state"><div class="empty-icon"><i data-lucide="shield-check" style="width:26px;height:26px;"></i></div><div class="empty-title">مفيش امتحانات دلوقتي</div><div class="empty-desc">أول ما مشرفك يرفع امتحان هيظهر هنا</div></div>`;
+    icons();
+    return;
+  }
+  wrap.innerHTML = exams.map(examMyCardHtml).join("");
+  icons();
+}
+
+function examMyCardHtml(e){
+  const st = EXAM_STATUS_LABELS[e.status] || {label:e.status, cls:"badge-gray"};
+  let actionBtn = "";
+  if (e.status === "available"){
+    actionBtn = `<button class="btn btn-primary btn-sm" onclick="confirmStartExam(${e.id}, '${jsAttr(e.title)}', ${e.duration_minutes}, ${e.questions_count}, ${e.max_violations})"><i data-lucide="play" style="width:13px;height:13px;"></i> ابدأ الامتحان</button>`;
+  } else if (e.status === "in_progress"){
+    actionBtn = `<button class="btn btn-primary btn-sm" onclick="resumeExam(${e.id})"><i data-lucide="rotate-cw" style="width:13px;height:13px;"></i> كمّل الامتحان</button>`;
+  } else if ((e.status === "submitted" || e.status === "terminated") && e.attempt_id){
+    actionBtn = `<button class="btn btn-ghost btn-sm" onclick="viewExamResult(${e.attempt_id})"><i data-lucide="bar-chart-3" style="width:13px;height:13px;"></i> شوف نتيجتك</button>`;
+  }
+  const scoreHtml = (e.percentage !== undefined) ?
+    `<div style="font-weight:800;font-size:13px;color:${e.percentage>=50?'var(--success)':'var(--danger)'};">${e.score}/${e.total_points} (${e.percentage}%)</div>` : "";
+  return `
+  <div class="table-card" style="padding:16px;margin-bottom:12px;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:200px;">
+        <div style="font-weight:800;font-size:15px;margin-bottom:4px;">${escapeHtml(e.title)}</div>
+        ${e.description ? `<div style="font-size:12.5px;color:var(--text-3);margin-bottom:8px;">${escapeHtml(e.description)}</div>` : ""}
+        <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--text-3);">
+          <span><i data-lucide="help-circle" style="width:12px;height:12px;"></i> ${e.questions_count} سؤال</span>
+          <span><i data-lucide="timer" style="width:12px;height:12px;"></i> ${e.duration_minutes} دقيقة</span>
+          <span><i data-lucide="shield-alert" style="width:12px;height:12px;"></i> ${e.max_violations} مخالفات كحد أقصى</span>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px;">
+        <span class="badge ${st.cls}">${st.label}</span>
+        ${scoreHtml}
+        ${actionBtn}
+      </div>
+    </div>
+  </div>`;
+}
+
+function confirmStartExam(examId, title, duration, questionsCount, maxViolations){
+  openModal(
+    `بدء امتحان: ${escapeHtml(title)}`,
+    `<div style="font-size:13.5px;line-height:2;">
+      <p>الامتحان ده هياخد <b>${duration} دقيقة</b> وفيه <b>${questionsCount} سؤال</b>.</p>
+      <p>هتشوف سؤال واحد بس في كل مرة، وأول ما تجاوب وتدوس "التالي" مش هتقدر ترجع تعدّل.</p>
+      <p style="color:var(--danger);font-weight:700;">تنبيه: النظام بيراقب أي محاولة غش (خروج من الشاشة، تصغير، فتح أدوات المطور...) وبعد ${maxViolations} مخالفات هيتم إنهاء امتحانك تلقائيًا.</p>
+      <p>الامتحان هيفتح في وضع ملء الشاشة. جاهز؟</p>
+    </div>`,
+    `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+     <button class="btn btn-primary" onclick="closeOverlay('genericModal');beginExam(${examId})"><i data-lucide="play" style="width:14px;height:14px;"></i> ابدأ دلوقتي</button>`
+  );
+}
+
+async function beginExam(examId){
+  let res;
+  try{ res = await api(`/api/exams/${examId}/start`, {method:"POST"}); }catch(e){ return; }
+  await enterExamMode(res.attempt_id);
+}
+
+async function resumeExam(examId){
+  let res;
+  try{ res = await api(`/api/exams/${examId}/start`, {method:"POST"}); }catch(e){ return; }
+  await enterExamMode(res.attempt_id);
+}
+
+/* =====================================================================
+   وضع خوض الامتحان الآمن - Overlay مستقل + طبقات منع الغش
+   (كل التحقق الفعلي في الباك إند - الطبقات دي بس لتقليل محاولات الغش قدر
+   الإمكان، مش حماية 100% لأن ده مستحيل تقنيًا في متصفح عادي)
+===================================================================== */
+let EXAM_STATE = null;
+
+async function enterExamMode(attemptId){
+  EXAM_STATE = {
+    attemptId, selectedAnswer: null, locked: false,
+    timerInterval: null, remainingSeconds: null, active: true,
+  };
+  document.getElementById("sidebar")?.classList.remove("open");
+  document.getElementById("examOverlay").style.display = "flex";
+  document.body.classList.add("exam-mode-active");
+  icons();
+  attachExamGuards();
+  await requestExamFullscreen();
+  pushExamHistoryGuard();
+  await loadCurrentExamQuestion();
+}
+
+function exitExamMode(){
+  if (!EXAM_STATE) return;
+  EXAM_STATE.active = false;
+  if (EXAM_STATE.timerInterval) clearInterval(EXAM_STATE.timerInterval);
+  if (EXAM_STATE.devtoolsInterval) clearInterval(EXAM_STATE.devtoolsInterval);
+  detachExamGuards();
+  if (document.fullscreenElement){ try{ document.exitFullscreen(); }catch(e){} }
+  document.getElementById("examOverlay").style.display = "none";
+  document.body.classList.remove("exam-mode-active");
+  document.getElementById("examFullscreenPrompt").style.display = "none";
+  EXAM_STATE = null;
+}
+
+async function requestExamFullscreen(){
+  const el = document.documentElement;
+  try{
+    if (el.requestFullscreen) await el.requestFullscreen();
+    else if (el.webkitRequestFullscreen) await el.webkitRequestFullscreen();
+  }catch(e){ /* المتصفح رفض - هنسيب المخالفات تتكشف من fullscreenchange لو دخل بعدين خرج */ }
+}
+
+function examReenterFullscreen(){
+  document.getElementById("examFullscreenPrompt").style.display = "none";
+  requestExamFullscreen();
+}
+
+/* منع الرجوع بالـ Back: بنحط history state تاني كل مرة يحاول يرجع فيها */
+function pushExamHistoryGuard(){
+  history.pushState({examGuard:true}, "", location.href);
+}
+function examPopStateHandler(){
+  if (!EXAM_STATE || !EXAM_STATE.active) return;
+  history.pushState({examGuard:true}, "", location.href);
+  reportExamViolation("back_button_attempt");
+}
+
+function examBeforeUnloadHandler(e){
+  if (!EXAM_STATE || !EXAM_STATE.active) return;
+  e.preventDefault();
+  e.returnValue = "";
+}
+
+function examVisibilityHandler(){
+  if (!EXAM_STATE || !EXAM_STATE.active) return;
+  if (document.hidden) reportExamViolation("tab_switch_or_minimize");
+}
+
+function examBlurHandler(){
+  if (!EXAM_STATE || !EXAM_STATE.active) return;
+  // احتياطي بس - visibilitychange بيغطي أغلب الحالات، وده بيتفادى دبل-كاونت
+  // وقت فتح نافذة الفُل سكرين نفسها
+  if (document.hidden) return;
+  reportExamViolation("window_blur");
+}
+
+function examFullscreenChangeHandler(){
+  if (!EXAM_STATE || !EXAM_STATE.active) return;
+  if (!document.fullscreenElement){
+    document.getElementById("examFullscreenPrompt").style.display = "flex";
+    reportExamViolation("fullscreen_exit");
+  } else {
+    document.getElementById("examFullscreenPrompt").style.display = "none";
+  }
+}
+
+function examContextMenuHandler(e){ if (EXAM_STATE && EXAM_STATE.active) e.preventDefault(); }
+function examSelectStartHandler(e){ if (EXAM_STATE && EXAM_STATE.active) e.preventDefault(); }
+function examCopyCutHandler(e){ if (EXAM_STATE && EXAM_STATE.active) e.preventDefault(); }
+
+function examKeydownHandler(e){
+  if (!EXAM_STATE || !EXAM_STATE.active) return;
+  const key = (e.key || "").toLowerCase();
+  const isDevtoolsCombo = e.key === "F12" ||
+    (e.ctrlKey && e.shiftKey && ["i","j","c"].includes(key)) ||
+    (e.metaKey && e.altKey && ["i","j","c"].includes(key));
+  const isBlockedCombo = (e.ctrlKey || e.metaKey) && ["c","v","x","u","s","p","a"].includes(key);
+  if (isDevtoolsCombo){
+    e.preventDefault();
+    reportExamViolation("devtools_shortcut");
+  } else if (isBlockedCombo){
+    e.preventDefault();
+  }
+}
+
+/* كشف مبدئي (Best-effort فقط) لفتح Developer Tools عن طريق الفرق بين
+   أبعاد النافذة الخارجية والداخلية - مش مضمون 100% لكنه بيمسك أغلب الحالات
+   الشائعة (devtools مثبتة جوه المتصفح كـ panel) */
+function examCheckDevtoolsSize(){
+  if (!EXAM_STATE || !EXAM_STATE.active) return;
+  const threshold = 170;
+  const widthDiff = window.outerWidth - window.innerWidth;
+  const heightDiff = window.outerHeight - window.innerHeight;
+  if (widthDiff > threshold || heightDiff > threshold){
+    reportExamViolation("devtools_suspected");
+  }
+}
+
+function attachExamGuards(){
+  window.addEventListener("popstate", examPopStateHandler);
+  window.addEventListener("beforeunload", examBeforeUnloadHandler);
+  document.addEventListener("visibilitychange", examVisibilityHandler);
+  window.addEventListener("blur", examBlurHandler);
+  document.addEventListener("fullscreenchange", examFullscreenChangeHandler);
+  document.addEventListener("webkitfullscreenchange", examFullscreenChangeHandler);
+  document.addEventListener("contextmenu", examContextMenuHandler);
+  document.addEventListener("selectstart", examSelectStartHandler);
+  document.addEventListener("copy", examCopyCutHandler);
+  document.addEventListener("cut", examCopyCutHandler);
+  document.addEventListener("keydown", examKeydownHandler, true);
+  EXAM_STATE.devtoolsInterval = setInterval(examCheckDevtoolsSize, 2500);
+}
+
+function detachExamGuards(){
+  window.removeEventListener("popstate", examPopStateHandler);
+  window.removeEventListener("beforeunload", examBeforeUnloadHandler);
+  document.removeEventListener("visibilitychange", examVisibilityHandler);
+  window.removeEventListener("blur", examBlurHandler);
+  document.removeEventListener("fullscreenchange", examFullscreenChangeHandler);
+  document.removeEventListener("webkitfullscreenchange", examFullscreenChangeHandler);
+  document.removeEventListener("contextmenu", examContextMenuHandler);
+  document.removeEventListener("selectstart", examSelectStartHandler);
+  document.removeEventListener("copy", examCopyCutHandler);
+  document.removeEventListener("cut", examCopyCutHandler);
+  document.removeEventListener("keydown", examKeydownHandler, true);
+}
+
+let EXAM_VIOLATION_BUSY = false;
+async function reportExamViolation(type){
+  if (!EXAM_STATE || !EXAM_STATE.active || EXAM_VIOLATION_BUSY) return;
+  EXAM_VIOLATION_BUSY = true;
+  try{
+    const res = await api(`/api/exams/attempts/${EXAM_STATE.attemptId}/violation`, {
+      method:"POST", body: JSON.stringify({violation_type: type})
+    });
+    showExamViolationBanner(res.violations_count, res.max_violations);
+    if (res.terminated){
+      await handleExamFinished({finished:true, status:"terminated", ended_reason:"violations"});
+    }
+  }catch(e){ /* تجاهل - لو فشل الاتصال هيتحسب تلقائي وقت السؤال الجاي */ }
+  finally{ EXAM_VIOLATION_BUSY = false; }
+}
+
+function showExamViolationBanner(count, max){
+  const banner = document.getElementById("examViolationBanner");
+  banner.style.display = "block";
+  banner.innerHTML = `⚠️ تم رصد مخالفة (${count} من ${max}) - أي مخالفات زيادة هتؤدي لإنهاء الامتحان تلقائيًا`;
+  showToast("تم رصد مخالفة على امتحانك", "error");
+}
+
+/* =====================================================================
+   عرض السؤال الحالي + المؤقّت + الإجابة
+===================================================================== */
+async function loadCurrentExamQuestion(){
+  if (!EXAM_STATE) return;
+  let data;
+  try{ data = await api(`/api/exams/attempts/${EXAM_STATE.attemptId}/current`); }
+  catch(e){ return; }
+
+  if (data.finished){
+    await handleExamFinished(data);
+    return;
+  }
+
+  document.getElementById("examTopbarTitle").textContent = data.exam_title || "امتحان";
+  const pct = data.total ? Math.round((data.index / data.total) * 100) : 0;
+  document.getElementById("examProgressFill").style.width = pct + "%";
+  document.getElementById("examProgressLabel").textContent = `سؤال ${data.index + 1} من ${data.total}`;
+  if (data.violations_count > 0){
+    showExamViolationBanner(data.violations_count, data.max_violations);
+  }
+
+  EXAM_STATE.selectedAnswer = null;
+  EXAM_STATE.locked = false;
+  EXAM_STATE.currentQuestionId = data.question.id;
+  renderExamQuestionBody(data.question);
+  startExamTimer(data.remaining_seconds);
+  icons();
+}
+
+function renderExamQuestionBody(question){
+  const body = document.getElementById("examBody");
+  body.innerHTML = `
+    <div class="exam-question-card">
+      <div class="exam-question-text">${escapeHtml(question.text)}</div>
+      <div id="examOptionsWrap">
+        ${question.options.map(opt => `
+          <button type="button" class="exam-option-btn" data-opt="${jsAttr(opt)}" onclick="selectExamOption(this)">${escapeHtml(opt)}</button>
+        `).join("")}
+      </div>
+      <div class="exam-actions">
+        <button class="btn btn-ghost btn-sm" onclick="submitExamAnswer(true)"><i data-lucide="skip-forward" style="width:13px;height:13px;"></i> تخطي السؤال</button>
+        <button class="btn btn-primary" id="examNextBtn" onclick="submitExamAnswer(false)" disabled>التالي <i data-lucide="arrow-left" style="width:14px;height:14px;"></i></button>
+      </div>
+    </div>`;
+  icons();
+}
+
+function selectExamOption(btnEl){
+  if (!EXAM_STATE || EXAM_STATE.locked) return;
+  document.querySelectorAll("#examOptionsWrap .exam-option-btn").forEach(b=>b.classList.remove("selected"));
+  btnEl.classList.add("selected");
+  EXAM_STATE.selectedAnswer = btnEl.dataset.opt;
+  const nextBtn = document.getElementById("examNextBtn");
+  if (nextBtn) nextBtn.disabled = false;
+}
+
+async function submitExamAnswer(skip){
+  if (!EXAM_STATE || EXAM_STATE.locked) return;
+  EXAM_STATE.locked = true;
+  document.querySelectorAll("#examOptionsWrap .exam-option-btn").forEach(b=>b.disabled = true);
+  const nextBtn = document.getElementById("examNextBtn");
+  if (nextBtn) nextBtn.disabled = true;
+
+  let data;
+  try{
+    data = await api(`/api/exams/attempts/${EXAM_STATE.attemptId}/answer`, {
+      method:"POST",
+      body: JSON.stringify({
+        question_id: EXAM_STATE.currentQuestionId,
+        selected_answer: skip ? null : EXAM_STATE.selectedAnswer,
+      })
+    });
+  }catch(e){
+    EXAM_STATE.locked = false;
+    document.querySelectorAll("#examOptionsWrap .exam-option-btn").forEach(b=>b.disabled = false);
+    if (nextBtn) nextBtn.disabled = !EXAM_STATE.selectedAnswer;
+    return;
+  }
+
+  if (data.finished){
+    await handleExamFinished(data);
+  } else {
+    await loadCurrentExamQuestion();
+  }
+}
+
+function startExamTimer(seconds){
+  if (!EXAM_STATE) return;
+  if (EXAM_STATE.timerInterval) clearInterval(EXAM_STATE.timerInterval);
+  EXAM_STATE.remainingSeconds = seconds;
+  updateExamTimerDisplay();
+  EXAM_STATE.timerInterval = setInterval(()=>{
+    if (!EXAM_STATE) return;
+    EXAM_STATE.remainingSeconds = Math.max(0, EXAM_STATE.remainingSeconds - 1);
+    updateExamTimerDisplay();
+    if (EXAM_STATE.remainingSeconds <= 0){
+      clearInterval(EXAM_STATE.timerInterval);
+      // الوقت خلص محليًا - نطلب السؤال الحالي تاني، والسيرفر هو اللي هيقفل
+      // المحاولة فعليًا لأنه بيحسب من ساعته هو مش من المتصفح
+      loadCurrentExamQuestion();
+    }
+  }, 1000);
+}
+
+function updateExamTimerDisplay(){
+  const s = EXAM_STATE ? EXAM_STATE.remainingSeconds : 0;
+  const m = Math.floor(s / 60), sec = s % 60;
+  document.getElementById("examTimerText").textContent = `${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;
+  document.getElementById("examTimer").classList.toggle("warn", s <= 60);
+}
+
+async function handleExamFinished(data){
+  if (EXAM_STATE && EXAM_STATE.timerInterval) clearInterval(EXAM_STATE.timerInterval);
+  const reasonLabels = {
+    completed: {icon:"check-circle-2", color:"var(--success)", title:"تم تسليم الامتحان بنجاح ✅"},
+    time_up: {icon:"clock", color:"var(--warning)", title:"انتهى الوقت المخصص للامتحان ⏱️"},
+    violations: {icon:"shield-alert", color:"var(--danger)", title:"تم إنهاء الامتحان بسبب تجاوز عدد المخالفات ❌"},
+  };
+  const info = reasonLabels[data.ended_reason] || reasonLabels.completed;
+  const body = document.getElementById("examBody");
+
+  let resultHtml = "";
+  const result = data.result;
+  if (result && result.show_result_immediately !== false && result.percentage !== undefined){
+    resultHtml = `
+      <div style="font-size:34px;font-weight:900;margin:14px 0 4px;color:${result.percentage>=50?'var(--success)':'var(--danger)'};">${result.percentage}%</div>
+      <div style="font-size:14px;color:var(--text-3);margin-bottom:18px;">حصلت على ${result.score} من ${result.total_points}</div>
+      <div style="text-align:right;">
+        ${(result.breakdown||[]).map((b,i)=>`
+          <div style="padding:10px 0;border-top:1px solid var(--border,#eee);">
+            <div style="font-weight:700;font-size:13px;margin-bottom:6px;">${i+1}. ${escapeHtml(b.question_text)}</div>
+            <div style="font-size:12.5px;color:${b.is_correct?'var(--success)':'var(--danger)'};">
+              إجابتك: ${b.selected_answer ? escapeHtml(b.selected_answer) : "(متخطّي)"} ${b.is_correct ? "✅" : "❌"}
+            </div>
+            ${!b.is_correct ? `<div style="font-size:12.5px;color:var(--text-3);">الإجابة الصحيحة: ${escapeHtml(b.correct_answer)}</div>` : ""}
+            ${!b.is_correct && b.explanation ? `<div style="font-size:12px;color:var(--text-3);margin-top:3px;"><b>التفسير:</b> ${escapeHtml(b.explanation)}</div>` : ""}
+          </div>
+        `).join("")}
+      </div>`;
+  } else {
+    resultHtml = `<div style="font-size:13.5px;color:var(--text-3);margin:14px 0;">${result && result.message ? escapeHtml(result.message) : "تم التسليم بنجاح"}</div>`;
+  }
+
+  body.innerHTML = `
+    <div class="exam-result-card">
+      <i data-lucide="${info.icon}" style="width:36px;height:36px;color:${info.color};"></i>
+      <div style="font-weight:800;font-size:16px;margin-top:10px;">${info.title}</div>
+      ${resultHtml}
+      <button class="btn btn-primary" style="margin-top:18px;" onclick="finishExamAndExit()">تمام، رجوع لكويزاتي</button>
+    </div>`;
+  document.getElementById("examProgressLabel").textContent = "خلصت";
+  document.getElementById("examTimerText").textContent = "--:--";
+  document.getElementById("examViolationBanner").style.display = "none";
+  icons();
+}
+
+function finishExamAndExit(){
+  exitExamMode();
+  navigateTo("myexams");
+}
+
+async function viewExamResult(attemptId){
+  let data;
+  try{ data = await api(`/api/exams/attempts/${attemptId}/result`); }
+  catch(e){ return; }
+  const bodyHtml = (data.show_result_immediately !== false && data.percentage !== undefined) ? `
+    <div style="text-align:center;">
+      <div style="font-size:34px;font-weight:900;color:${data.percentage>=50?'var(--success)':'var(--danger)'};">${data.percentage}%</div>
+      <div style="font-size:13px;color:var(--text-3);margin-bottom:14px;">${data.score} من ${data.total_points}</div>
+    </div>
+    <div style="text-align:right;">
+      ${(data.breakdown||[]).map((b,i)=>`
+        <div style="padding:10px 0;border-top:1px solid var(--border,#eee);">
+          <div style="font-weight:700;font-size:13px;margin-bottom:6px;">${i+1}. ${escapeHtml(b.question_text)}</div>
+          <div style="font-size:12.5px;color:${b.is_correct?'var(--success)':'var(--danger)'};">
+            إجابتك: ${b.selected_answer ? escapeHtml(b.selected_answer) : "(متخطّي)"} ${b.is_correct ? "✅" : "❌"}
+          </div>
+          ${!b.is_correct ? `<div style="font-size:12.5px;color:var(--text-3);">الإجابة الصحيحة: ${escapeHtml(b.correct_answer)}</div>` : ""}
+        </div>
+      `).join("")}
+    </div>` : `<div style="text-align:center;font-size:13.5px;color:var(--text-3);">${escapeHtml(data.message || "النتيجة هتتعلن لاحقًا")}</div>`;
+  openModal("نتيجتك", bodyHtml, `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`, {width:"560px"});
+}
+
+</script>
+
+<script>
+/* =====================================================================
+   إدارة الامتحانات الإلكترونية (أدمن / مشرف المشرفين)
+===================================================================== */
+let ONLINE_EXAMS_CACHE = [];
+
+async function renderOnlineExamsAdminPage(){
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>الامتحانات الإلكترونية</h1><p>امتحانات آمنة بمراقبة وتحكم كامل من السيرفر - سؤال واحد في كل مرة، من غير رجوع</p></div>
+      <button class="btn btn-primary" onclick="openCreateExamModal()"><i data-lucide="plus" style="width:14px;height:14px;"></i> امتحان جديد</button>
+    </div>
+    <div id="examsAdminWrap"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>
+  `;
+  icons();
+  await loadOnlineExamsAdmin();
+}
+
+async function loadOnlineExamsAdmin(){
+  const wrap = document.getElementById("examsAdminWrap");
+  let exams;
+  try{ exams = await api("/api/exams"); }catch(e){ return; }
+  ONLINE_EXAMS_CACHE = exams;
+  if (!exams.length){
+    wrap.innerHTML = `<div class="empty-state"><div class="empty-icon"><i data-lucide="shield-check" style="width:26px;height:26px;"></i></div><div class="empty-title">مفيش امتحانات لسه</div><div class="empty-desc">دوس "امتحان جديد" عشان تبدأ</div></div>`;
+    icons();
+    return;
+  }
+  wrap.innerHTML = exams.map(examAdminCardHtml).join("");
+  icons();
+}
+
+function examAdminCardHtml(e){
+  const avg = e.avg_percentage != null ? Math.round(e.avg_percentage) : null;
+  return `
+  <div class="table-card" style="padding:16px;margin-bottom:12px;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:220px;">
+        <div style="font-weight:800;font-size:15px;margin-bottom:4px;">${escapeHtml(e.title)} ${!e.is_active ? '<span class="badge badge-gray">معطّل</span>' : ''}</div>
+        <div style="font-size:12px;color:var(--text-3);margin-bottom:6px;">${escapeHtml(e.stage_name || "")}</div>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--text-3);">
+          <span><i data-lucide="help-circle" style="width:12px;height:12px;"></i> ${e.questions_count} سؤال</span>
+          <span><i data-lucide="timer" style="width:12px;height:12px;"></i> ${e.duration_minutes} دقيقة</span>
+          <span><i data-lucide="users" style="width:12px;height:12px;"></i> ${e.submitted_count} سلّم، ${e.in_progress_count} لسه شغالين</span>
+          ${avg !== null ? `<span><i data-lucide="bar-chart-3" style="width:12px;height:12px;"></i> متوسط ${avg}%</span>` : ""}
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button class="btn btn-ghost btn-sm" onclick="openExamQuestionsManager(${e.id})"><i data-lucide="list-checks" style="width:13px;height:13px;"></i> الأسئلة</button>
+        <button class="btn btn-ghost btn-sm" onclick="openExamResultsModal(${e.id})"><i data-lucide="bar-chart-3" style="width:13px;height:13px;"></i> النتائج</button>
+        <button class="btn btn-ghost btn-sm" onclick="openEditExamModal(${e.id})"><i data-lucide="pencil" style="width:13px;height:13px;"></i></button>
+        <button class="btn btn-ghost btn-sm" onclick="deleteOnlineExam(${e.id}, '${jsAttr(e.title)}')" style="color:var(--danger);"><i data-lucide="trash-2" style="width:13px;height:13px;"></i></button>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function openCreateExamModal(){
+  const stages = await loadStages();
+  openModal(
+    "امتحان إلكتروني جديد",
+    examFormHtml(null, stages),
+    `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+     <button class="btn btn-primary" onclick="saveExamForm(null)">إنشاء الامتحان</button>`,
+    {width:"520px"}
+  );
+  icons();
+}
+
+async function openEditExamModal(examId){
+  const [stages, exam] = await Promise.all([loadStages(), api(`/api/exams/${examId}`)]);
+  openModal(
+    "تعديل الامتحان",
+    examFormHtml(exam, stages),
+    `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+     <button class="btn btn-primary" onclick="saveExamForm(${examId})">حفظ التعديلات</button>`,
+    {width:"520px"}
+  );
+  icons();
+}
+
+function examFormHtml(exam, stages){
+  const v = exam || {};
+  return `
+  <div class="form-group"><label class="form-label">عنوان الامتحان</label>
+    <input class="form-input" id="examFormTitle" value="${jsAttr(v.title||"")}" placeholder="مثال: امتحان الشهر الأول"></div>
+  <div class="form-group"><label class="form-label">وصف (اختياري)</label>
+    <textarea class="form-input" id="examFormDesc" rows="2">${escapeHtml(v.description||"")}</textarea></div>
+  <div class="form-row-2">
+    <div class="form-group"><label class="form-label">المرحلة الدراسية</label>
+      <select class="form-select" id="examFormStage">
+        ${stages.map(s=>`<option value="${s.id}" ${v.stage_id===s.id?'selected':''}>${escapeHtml(s.name)}</option>`).join("")}
+      </select></div>
+    <div class="form-group"><label class="form-label">مدة الامتحان (دقيقة)</label>
+      <input type="number" class="form-input" id="examFormDuration" min="1" value="${v.duration_minutes||30}"></div>
+  </div>
+  <div class="form-row-2">
+    <div class="form-group"><label class="form-label">أقصى عدد مخالفات قبل الإنهاء</label>
+      <input type="number" class="form-input" id="examFormMaxViolations" min="1" value="${v.max_violations||3}"></div>
+    <div class="form-group"><label class="form-label">الحالة</label>
+      <select class="form-select" id="examFormActive">
+        <option value="1" ${v.is_active!==0?'selected':''}>مفعّل</option>
+        <option value="0" ${v.is_active===0?'selected':''}>معطّل</option>
+      </select></div>
+  </div>
+  <div class="form-group">
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;">
+      <input type="checkbox" id="examFormShuffleQ" ${v.shuffle_questions!==0?'checked':''}> ترتيب عشوائي للأسئلة
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;margin-top:6px;">
+      <input type="checkbox" id="examFormShuffleO" ${v.shuffle_options!==0?'checked':''}> ترتيب عشوائي للاختيارات
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;margin-top:6px;">
+      <input type="checkbox" id="examFormShowResult" ${v.show_result_immediately!==0?'checked':''}> إظهار النتيجة للطالب فورًا بعد التسليم
+    </label>
+  </div>`;
+}
+
+async function saveExamForm(examId){
+  const payload = {
+    title: document.getElementById("examFormTitle").value.trim(),
+    description: document.getElementById("examFormDesc").value.trim() || null,
+    stage_id: parseInt(document.getElementById("examFormStage").value),
+    duration_minutes: parseInt(document.getElementById("examFormDuration").value),
+    max_violations: parseInt(document.getElementById("examFormMaxViolations").value),
+    shuffle_questions: document.getElementById("examFormShuffleQ").checked,
+    shuffle_options: document.getElementById("examFormShuffleO").checked,
+    show_result_immediately: document.getElementById("examFormShowResult").checked,
+    is_active: document.getElementById("examFormActive").value === "1",
+  };
+  if (!payload.title){ showToast("اكتب عنوان الامتحان", "error"); return; }
+  try{
+    if (examId) await api(`/api/exams/${examId}`, {method:"PUT", body: JSON.stringify(payload)});
+    else {
+      const res = await api("/api/exams", {method:"POST", body: JSON.stringify(payload)});
+      closeOverlay("genericModal");
+      showToast(res.message, "success");
+      await loadOnlineExamsAdmin();
+      openExamQuestionsManager(res.id);
+      return;
+    }
+  }catch(e){ return; }
+  closeOverlay("genericModal");
+  showToast("تم الحفظ", "success");
+  await loadOnlineExamsAdmin();
+}
+
+async function deleteOnlineExam(examId, title){
+  confirmAction("حذف الامتحان", `هتحذف "${title}" نهائيًا مع كل نتائج الطلاب فيه. متأكد؟`, async ()=>{
+    try{ await api(`/api/exams/${examId}`, {method:"DELETE"}); }catch(e){ return; }
+    showToast("تم حذف الامتحان", "success");
+    await loadOnlineExamsAdmin();
+  });
+}
+
+/* -------- إدارة أسئلة الامتحان -------- */
+let EXAM_QUESTIONS_CURRENT_ID = null;
+
+async function openExamQuestionsManager(examId){
+  EXAM_QUESTIONS_CURRENT_ID = examId;
+  const exam = await api(`/api/exams/${examId}`);
+  openModal(
+    `أسئلة: ${escapeHtml(exam.title)}`,
+    `
+    <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+      <button class="btn btn-ghost btn-sm" onclick="openAddExamQuestionForm()"><i data-lucide="plus" style="width:13px;height:13px;"></i> سؤال يدوي</button>
+      <label class="btn btn-ghost btn-sm" style="cursor:pointer;">
+        <i data-lucide="upload" style="width:13px;height:13px;"></i> رفع من إكسيل
+        <input type="file" accept=".xlsx,.xlsm,.csv" style="display:none;" onchange="uploadExamQuestionsFile(this)">
+      </label>
+    </div>
+    <div id="examQuestionsListWrap">${examQuestionsListHtml(exam.questions)}</div>
+    `,
+    `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`,
+    {width:"640px"}
+  );
+  icons();
+}
+
+function examQuestionsListHtml(questions){
+  if (!questions.length){
+    return `<div class="empty-state" style="padding:20px;"><div class="empty-title">لسه مفيش أسئلة</div></div>`;
+  }
+  return questions.map((q,i)=>`
+    <div class="table-card" style="padding:12px;margin-bottom:8px;">
+      <div style="display:flex;justify-content:space-between;gap:8px;">
+        <div style="flex:1;">
+          <div style="font-weight:700;font-size:13px;margin-bottom:6px;">${i+1}. ${escapeHtml(q.question_text)}</div>
+          <div style="font-size:12px;color:var(--success);">✓ ${escapeHtml(q.correct_answer)}</div>
+          <div style="font-size:12px;color:var(--text-3);">✗ ${escapeHtml(q.wrong_answer_1)} · ${escapeHtml(q.wrong_answer_2)} · ${escapeHtml(q.wrong_answer_3)}</div>
+        </div>
+        <button class="action-btn" onclick="deleteExamQuestion(${q.id})" style="color:var(--danger);flex-shrink:0;"><i data-lucide="trash-2" style="width:14px;height:14px;"></i></button>
+      </div>
+    </div>
+  `).join("");
+}
+
+function openAddExamQuestionForm(){
+  openModal(
+    "إضافة سؤال",
+    `
+    <div class="form-group"><label class="form-label">نص السؤال</label>
+      <textarea class="form-input" id="eqText" rows="2"></textarea></div>
+    <div class="form-group"><label class="form-label">الإجابة الصحيحة</label>
+      <input class="form-input" id="eqCorrect"></div>
+    <div class="form-group"><label class="form-label">إجابة خاطئة 1</label><input class="form-input" id="eqWrong1"></div>
+    <div class="form-group"><label class="form-label">إجابة خاطئة 2</label><input class="form-input" id="eqWrong2"></div>
+    <div class="form-group"><label class="form-label">إجابة خاطئة 3</label><input class="form-input" id="eqWrong3"></div>
+    <div class="form-group"><label class="form-label">تفسير (اختياري - يظهر لو جاوب غلط)</label>
+      <textarea class="form-input" id="eqExplain" rows="2"></textarea></div>
+    `,
+    `<button class="btn btn-ghost" onclick="openExamQuestionsManager(${EXAM_QUESTIONS_CURRENT_ID})">رجوع</button>
+     <button class="btn btn-primary" onclick="saveExamQuestion()">إضافة</button>`,
+    {width:"520px"}
+  );
+}
+
+async function saveExamQuestion(){
+  const payload = {
+    question_text: document.getElementById("eqText").value.trim(),
+    correct_answer: document.getElementById("eqCorrect").value.trim(),
+    wrong_answer_1: document.getElementById("eqWrong1").value.trim(),
+    wrong_answer_2: document.getElementById("eqWrong2").value.trim(),
+    wrong_answer_3: document.getElementById("eqWrong3").value.trim(),
+    explanation: document.getElementById("eqExplain").value.trim() || null,
+  };
+  if (!payload.question_text || !payload.correct_answer || !payload.wrong_answer_1 || !payload.wrong_answer_2 || !payload.wrong_answer_3){
+    showToast("لازم تملأ كل الحقول المطلوبة", "error"); return;
+  }
+  try{ await api(`/api/exams/${EXAM_QUESTIONS_CURRENT_ID}/questions`, {method:"POST", body: JSON.stringify(payload)}); }
+  catch(e){ return; }
+  showToast("تم إضافة السؤال", "success");
+  await openExamQuestionsManager(EXAM_QUESTIONS_CURRENT_ID);
+}
+
+async function deleteExamQuestion(questionId){
+  try{ await api(`/api/exams/${EXAM_QUESTIONS_CURRENT_ID}/questions/${questionId}`, {method:"DELETE"}); }
+  catch(e){ return; }
+  showToast("تم حذف السؤال", "success");
+  await openExamQuestionsManager(EXAM_QUESTIONS_CURRENT_ID);
+}
+
+async function uploadExamQuestionsFile(inputEl){
+  const file = inputEl.files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append("file", file);
+  try{
+    const res = await fetch(`${API}/api/exams/${EXAM_QUESTIONS_CURRENT_ID}/questions/upload`, {
+      method:"POST", headers: TOKEN ? {"Authorization":"Bearer "+TOKEN} : {}, body: fd
+    });
+    const data = await res.json();
+    if (!res.ok){ showToast(data.detail || "حصل خطأ", "error"); return; }
+    showToast(data.message, "success");
+  }catch(e){ showToast("مشكلة في رفع الملف", "error"); return; }
+  finally{ inputEl.value = ""; }
+  await openExamQuestionsManager(EXAM_QUESTIONS_CURRENT_ID);
+}
+
+/* -------- نتائج الطلاب -------- */
+async function openExamResultsModal(examId){
+  let results;
+  try{ results = await api(`/api/exams/${examId}/results`); }catch(e){ return; }
+  const exam = ONLINE_EXAMS_CACHE.find(e=>e.id===examId);
+  const rowsHtml = results.length ? results.map(r=>{
+    const pct = r.total_points ? Math.round((r.score||0)/r.total_points*100) : 0;
+    const statusLabels = {in_progress:"لسه شغال", submitted:"سلّم", terminated:"اتنهى (مخالفات)"};
+    return `
+    <tr>
+      <td>${escapeHtml(r.student_name)}</td>
+      <td>${escapeHtml(r.group_name||"")}</td>
+      <td>${statusLabels[r.status]||r.status}</td>
+      <td>${r.status!=='in_progress' ? `${r.score}/${r.total_points} (${pct}%)` : "-"}</td>
+      <td>${r.violations_count}</td>
+      <td><button class="btn btn-ghost btn-sm" onclick="resetExamAttempt(${examId}, ${r.id}, '${jsAttr(r.student_name)}')" style="color:var(--danger);">إعادة تعيين</button></td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="6" style="text-align:center;color:var(--text-3);">مفيش محاولات لسه</td></tr>`;
+
+  openModal(
+    `نتائج: ${exam ? escapeHtml(exam.title) : ""}`,
+    `<div class="table-wrap"><table><thead><tr>
+      <th>الطالب</th><th>المجموعة</th><th>الحالة</th><th>الدرجة</th><th>مخالفات</th><th></th>
+    </tr></thead><tbody>${rowsHtml}</tbody></table></div>`,
+    `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`,
+    {width:"720px"}
+  );
+}
+
+async function resetExamAttempt(examId, attemptId, studentName){
+  confirmAction("إعادة تعيين المحاولة", `هيتمسح تسليم "${studentName}" بالكامل ويقدر يبدأ الامتحان من جديد. متأكد؟`, async ()=>{
+    try{ await api(`/api/exams/${examId}/attempts/${attemptId}/reset`, {method:"POST"}); }catch(e){ return; }
+    showToast("تم إعادة التعيين", "success");
+    await openExamResultsModal(examId);
+  });
+}
 </script>
 
 </body>

@@ -13,6 +13,7 @@ import os
 import io
 import csv
 import random
+import json
 import base64
 import uuid
 import asyncio
@@ -191,6 +192,39 @@ class QBQuestionIn(BaseModel):
 
 class QBAnswerIn(BaseModel):
     selected_answer: str = Field(..., max_length=1000)
+
+
+class OnlineExamIn(BaseModel):
+    title: str = Field(..., max_length=200)
+    description: Optional[str] = Field(None, max_length=2000)
+    stage_id: int
+    duration_minutes: int = Field(..., ge=1, le=600)
+    max_violations: int = Field(3, ge=1, le=50)
+    shuffle_questions: bool = True
+    shuffle_options: bool = True
+    show_result_immediately: bool = True
+    start_at: Optional[str] = None
+    end_at: Optional[str] = None
+    is_active: bool = True
+
+
+class OnlineExamQuestionIn(BaseModel):
+    question_text: str = Field(..., max_length=3000)
+    correct_answer: str = Field(..., max_length=1000)
+    wrong_answer_1: str = Field(..., max_length=1000)
+    wrong_answer_2: str = Field(..., max_length=1000)
+    wrong_answer_3: str = Field(..., max_length=1000)
+    explanation: Optional[str] = Field(None, max_length=3000)
+    points: float = 1
+
+
+class OnlineExamAnswerIn(BaseModel):
+    question_id: int
+    selected_answer: Optional[str] = Field(None, max_length=1000)
+
+
+class OnlineExamViolationIn(BaseModel):
+    violation_type: str = Field(..., max_length=50)
 
 
 class NotificationOut(BaseModel):
@@ -2969,6 +3003,647 @@ def qb_student_stats(session=Depends(require_roles("student"))):
             "favorites_count": favorites_count,
             "solve_later_count": solve_later_count,
         }
+
+
+# ---------------------------------------------------------------------------
+# الامتحانات الإلكترونية الآمنة - Online Exams
+#
+# مبدأ التصميم: الباك إند هو مصدر الحقيقة الوحيد. الفرونت إند بيعرض بس سؤال
+# واحد في كل مرة وبيبعت الإجابة، لكن كل قرار (السؤال الحالي، ترتيب الأسئلة،
+# الوقت المتبقي، التصحيح، إنهاء المحاولة بسبب مخالفات) بيتحدد وبيتحقق منه هنا.
+# ---------------------------------------------------------------------------
+
+EXAM_UPLOAD_COLUMNS = {
+    "السؤال": "question_text",
+    "الاجابة الصحيحة": "correct_answer",
+    "الإجابة الصحيحة": "correct_answer",
+    "اجابة خاطئة 1": "wrong_answer_1",
+    "إجابة خاطئة 1": "wrong_answer_1",
+    "اجابة خاطئة 2": "wrong_answer_2",
+    "إجابة خاطئة 2": "wrong_answer_2",
+    "اجابة خاطئة 3": "wrong_answer_3",
+    "إجابة خاطئة 3": "wrong_answer_3",
+    "التفسير": "explanation",
+    "تفسير": "explanation",
+    "الدرجة": "points",
+    "درجة": "points",
+}
+
+
+def _oe_now_str() -> str:
+    return datetime.utcnow().isoformat(timespec="seconds")
+
+
+def _oe_get_exam(conn, exam_id: int):
+    exam = conn.execute("SELECT * FROM online_exams WHERE id=?", (exam_id,)).fetchone()
+    if not exam:
+        raise HTTPException(status_code=404, detail="الامتحان غير موجود")
+    return exam
+
+
+def _oe_get_owned_attempt(conn, attempt_id: int, session):
+    """يجيب المحاولة ويتأكد إنها فعلاً بتاعة الطالب اللي طالب بيها - حماية من
+    إن طالب يحاول يدخل على محاولة طالب تاني عن طريق تغيير الرقم في الرابط"""
+    attempt = conn.execute("SELECT * FROM online_exam_attempts WHERE id=?", (attempt_id,)).fetchone()
+    if not attempt:
+        raise HTTPException(status_code=404, detail="المحاولة غير موجودة")
+    if attempt["student_id"] != session["id"]:
+        raise HTTPException(status_code=403, detail="مش مسموح لك تدخل على المحاولة دي")
+    return attempt
+
+
+def _oe_shuffled_options(question, shuffle: bool, seed: str):
+    """بيرجع الاختيارات الأربعة، مترتبة عشوائيًا لكن بشكل ثابت لنفس الـ seed -
+    عشان لو الطالب عمل Refresh يشوف نفس ترتيب الاختيارات، مش ترتيب جديد كل مرة"""
+    options = [question["correct_answer"], question["wrong_answer_1"],
+               question["wrong_answer_2"], question["wrong_answer_3"]]
+    if shuffle:
+        random.Random(seed).shuffle(options)
+    return options
+
+
+def _oe_grade_and_close(conn, attempt, ended_reason: str, status: str = "submitted"):
+    """يحسب الدرجة النهائية للمحاولة (بس على الأسئلة اللي اتجابت فعلاً) ويقفلها"""
+    order = json.loads(attempt["question_order"])
+    q_rows = []
+    if order:
+        placeholders = ",".join("?" * len(order))
+        q_rows = conn.execute(
+            f"SELECT id, points FROM online_exam_questions WHERE id IN ({placeholders})", order
+        ).fetchall()
+    points_map = {r["id"]: r["points"] for r in q_rows}
+    total_points = sum(points_map.values()) if points_map else 0
+
+    ans_rows = conn.execute(
+        "SELECT question_id, is_correct FROM online_exam_answers WHERE attempt_id=?", (attempt["id"],)
+    ).fetchall()
+    score = sum(points_map.get(r["question_id"], 0) for r in ans_rows if r["is_correct"])
+
+    conn.execute("""
+        UPDATE online_exam_attempts
+        SET status=?, ended_reason=?, submitted_at=?, score=?, total_points=?
+        WHERE id=?
+    """, (status, ended_reason, _oe_now_str(), score, total_points, attempt["id"]))
+
+    return conn.execute("SELECT * FROM online_exam_attempts WHERE id=?", (attempt["id"],)).fetchone()
+
+
+def _oe_auto_close_if_expired(conn, attempt):
+    """لو الوقت خلص (حتى لو الطالب قافل الصفحة أو النت فاصل)، تقفل المحاولة
+    تلقائيًا أول ما يحصل أي طلب جديد ليها - الوقت بيتحسب من ساعة السيرفر بس"""
+    if attempt["status"] != "in_progress":
+        return attempt
+    if datetime.utcnow() >= datetime.fromisoformat(attempt["expires_at"]):
+        return _oe_grade_and_close(conn, attempt, "time_up", status="submitted")
+    return attempt
+
+
+def _oe_build_result(conn, attempt, exam):
+    order = json.loads(attempt["question_order"])
+    ans_rows = conn.execute(
+        "SELECT * FROM online_exam_answers WHERE attempt_id=?", (attempt["id"],)
+    ).fetchall()
+    ans_map = {r["question_id"]: r for r in ans_rows}
+    q_rows = []
+    if order:
+        placeholders = ",".join("?" * len(order))
+        q_rows = conn.execute(
+            f"SELECT * FROM online_exam_questions WHERE id IN ({placeholders})", order
+        ).fetchall()
+    q_map = {r["id"]: r for r in q_rows}
+
+    breakdown = []
+    for qid in order:
+        q = q_map.get(qid)
+        if not q:
+            continue
+        a = ans_map.get(qid)
+        breakdown.append({
+            "question_text": q["question_text"],
+            "selected_answer": a["selected_answer"] if a else None,
+            "correct_answer": q["correct_answer"],
+            "is_correct": bool(a["is_correct"]) if a else False,
+            "explanation": q["explanation"],
+            "points": q["points"],
+        })
+
+    total = attempt["total_points"] or 0
+    score = attempt["score"] or 0
+    percentage = round((score / total) * 100, 1) if total else 0
+    return {
+        "status": attempt["status"],
+        "ended_reason": attempt["ended_reason"],
+        "score": score,
+        "total_points": total,
+        "percentage": percentage,
+        "violations_count": attempt["violations_count"],
+        "max_violations": exam["max_violations"],
+        "breakdown": breakdown,
+    }
+
+
+# ----------------------- إدارة الامتحانات (أدمن / مشرف المشرفين) -----------------------
+
+@app.post("/api/exams")
+def create_online_exam(exam: OnlineExamIn, session=Depends(require_roles("admin", "head_supervisor"))):
+    with get_connection() as conn:
+        stage = conn.execute("SELECT id FROM stages WHERE id=?", (exam.stage_id,)).fetchone()
+        if not stage:
+            raise HTTPException(status_code=404, detail="المرحلة الدراسية غير موجودة")
+        cur = conn.execute("""
+            INSERT INTO online_exams (title, description, stage_id, duration_minutes, max_violations,
+                                       shuffle_questions, shuffle_options, show_result_immediately,
+                                       start_at, end_at, is_active, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (exam.title, exam.description, exam.stage_id, exam.duration_minutes, exam.max_violations,
+              1 if exam.shuffle_questions else 0, 1 if exam.shuffle_options else 0,
+              1 if exam.show_result_immediately else 0, exam.start_at, exam.end_at,
+              1 if exam.is_active else 0, session["id"]))
+        log_session_activity(conn, session, "exam_create", f"إنشاء امتحان إلكتروني جديد: {exam.title}")
+        return {"id": cur.lastrowid, "message": "تم إنشاء الامتحان، دلوقتي ضيف الأسئلة"}
+
+
+@app.get("/api/exams")
+def list_online_exams(stage_id: Optional[int] = None, session=Depends(require_roles("admin", "head_supervisor"))):
+    query = """
+        SELECT e.*, st.name as stage_name,
+               (SELECT COUNT(*) FROM online_exam_questions q WHERE q.exam_id=e.id) as questions_count,
+               (SELECT COUNT(*) FROM online_exam_attempts a WHERE a.exam_id=e.id AND a.status<>'in_progress') as submitted_count,
+               (SELECT COUNT(*) FROM online_exam_attempts a WHERE a.exam_id=e.id AND a.status='in_progress') as in_progress_count,
+               (SELECT AVG(a.score * 100.0 / NULLIF(a.total_points,0)) FROM online_exam_attempts a
+                    WHERE a.exam_id=e.id AND a.status<>'in_progress') as avg_percentage
+        FROM online_exams e
+        LEFT JOIN stages st ON st.id = e.stage_id
+        WHERE 1=1
+    """
+    params = []
+    if stage_id:
+        query += " AND e.stage_id=?"
+        params.append(stage_id)
+    query += " ORDER BY e.id DESC"
+    with get_connection() as conn:
+        rows = conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+
+@app.get("/api/exams/{exam_id}")
+def get_online_exam_detail(exam_id: int, session=Depends(require_roles("admin", "head_supervisor"))):
+    with get_connection() as conn:
+        exam = _oe_get_exam(conn, exam_id)
+        questions = conn.execute(
+            "SELECT * FROM online_exam_questions WHERE exam_id=? ORDER BY order_index, id", (exam_id,)
+        ).fetchall()
+        result = dict(exam)
+        result["questions"] = [dict(q) for q in questions]
+        return result
+
+
+@app.put("/api/exams/{exam_id}")
+def update_online_exam(exam_id: int, exam: OnlineExamIn, session=Depends(require_roles("admin", "head_supervisor"))):
+    with get_connection() as conn:
+        _oe_get_exam(conn, exam_id)
+        stage = conn.execute("SELECT id FROM stages WHERE id=?", (exam.stage_id,)).fetchone()
+        if not stage:
+            raise HTTPException(status_code=404, detail="المرحلة الدراسية غير موجودة")
+        conn.execute("""
+            UPDATE online_exams SET title=?, description=?, stage_id=?, duration_minutes=?, max_violations=?,
+                                     shuffle_questions=?, shuffle_options=?, show_result_immediately=?,
+                                     start_at=?, end_at=?, is_active=?
+            WHERE id=?
+        """, (exam.title, exam.description, exam.stage_id, exam.duration_minutes, exam.max_violations,
+              1 if exam.shuffle_questions else 0, 1 if exam.shuffle_options else 0,
+              1 if exam.show_result_immediately else 0, exam.start_at, exam.end_at,
+              1 if exam.is_active else 0, exam_id))
+        return {"message": "تم تعديل الامتحان"}
+
+
+@app.delete("/api/exams/{exam_id}")
+def delete_online_exam(exam_id: int, session=Depends(require_roles("admin", "head_supervisor"))):
+    with get_connection() as conn:
+        exam = _oe_get_exam(conn, exam_id)
+        conn.execute("DELETE FROM online_exams WHERE id=?", (exam_id,))
+        log_session_activity(conn, session, "exam_delete", f"حذف الامتحان: {exam['title']}")
+        return {"message": "تم حذف الامتحان"}
+
+
+@app.post("/api/exams/{exam_id}/questions")
+def add_online_exam_question(exam_id: int, q: OnlineExamQuestionIn,
+                              session=Depends(require_roles("admin", "head_supervisor"))):
+    with get_connection() as conn:
+        _oe_get_exam(conn, exam_id)
+        next_order = conn.execute(
+            "SELECT COALESCE(MAX(order_index), -1) + 1 as n FROM online_exam_questions WHERE exam_id=?", (exam_id,)
+        ).fetchone()["n"]
+        cur = conn.execute("""
+            INSERT INTO online_exam_questions (exam_id, question_text, correct_answer, wrong_answer_1,
+                                                wrong_answer_2, wrong_answer_3, explanation, order_index, points)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (exam_id, q.question_text, q.correct_answer, q.wrong_answer_1, q.wrong_answer_2,
+              q.wrong_answer_3, q.explanation, next_order, q.points))
+        return {"id": cur.lastrowid, "message": "تم إضافة السؤال"}
+
+
+@app.put("/api/exams/{exam_id}/questions/{question_id}")
+def update_online_exam_question(exam_id: int, question_id: int, q: OnlineExamQuestionIn,
+                                 session=Depends(require_roles("admin", "head_supervisor"))):
+    with get_connection() as conn:
+        existing = conn.execute(
+            "SELECT id FROM online_exam_questions WHERE id=? AND exam_id=?", (question_id, exam_id)
+        ).fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="السؤال غير موجود")
+        conn.execute("""
+            UPDATE online_exam_questions SET question_text=?, correct_answer=?, wrong_answer_1=?,
+                                              wrong_answer_2=?, wrong_answer_3=?, explanation=?, points=?
+            WHERE id=?
+        """, (q.question_text, q.correct_answer, q.wrong_answer_1, q.wrong_answer_2,
+              q.wrong_answer_3, q.explanation, q.points, question_id))
+        return {"message": "تم تعديل السؤال"}
+
+
+@app.delete("/api/exams/{exam_id}/questions/{question_id}")
+def delete_online_exam_question(exam_id: int, question_id: int,
+                                 session=Depends(require_roles("admin", "head_supervisor"))):
+    with get_connection() as conn:
+        existing = conn.execute(
+            "SELECT id FROM online_exam_questions WHERE id=? AND exam_id=?", (question_id, exam_id)
+        ).fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="السؤال غير موجود")
+        conn.execute("DELETE FROM online_exam_questions WHERE id=?", (question_id,))
+        return {"message": "تم حذف السؤال"}
+
+
+@app.post("/api/exams/{exam_id}/questions/upload")
+async def upload_online_exam_questions(
+    exam_id: int,
+    file: UploadFile = File(...),
+    session=Depends(require_roles("admin", "head_supervisor")),
+):
+    """رفع أسئلة الامتحان دفعة واحدة من ملف Excel/CSV. الأعمدة المطلوبة: السؤال،
+    الإجابة الصحيحة، إجابة خاطئة 1، إجابة خاطئة 2، إجابة خاطئة 3 (والتفسير والدرجة اختياريين)"""
+    filename_lower = file.filename.lower()
+    if not filename_lower.endswith((".xlsx", ".xlsm", ".csv")):
+        raise HTTPException(status_code=400, detail="لازم ترفع ملف بصيغة xlsx أو csv")
+
+    content = await file.read()
+    header, data_rows = None, []
+    if filename_lower.endswith(".csv"):
+        try:
+            text = content.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            try:
+                text = content.decode("windows-1256")
+            except Exception:
+                raise HTTPException(status_code=400, detail="تعذر قراءة ملف الـ CSV، جرب تحفظه بترميز UTF-8")
+        all_rows = list(csv.reader(io.StringIO(text)))
+        if not all_rows:
+            raise HTTPException(status_code=400, detail="الملف فاضي")
+        header, data_rows = all_rows[0], all_rows[1:]
+    else:
+        try:
+            wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+            sheet = wb.active
+        except Exception:
+            raise HTTPException(status_code=400, detail="تعذر قراءة ملف الإكسيل، تأكد إن الملف سليم")
+        rows_iter_raw = sheet.iter_rows(values_only=True)
+        try:
+            header = list(next(rows_iter_raw))
+        except StopIteration:
+            raise HTTPException(status_code=400, detail="الشيت فاضي")
+        data_rows = list(rows_iter_raw)
+
+    col_map = {}
+    for idx, cell in enumerate(header):
+        if not cell:
+            continue
+        field = EXAM_UPLOAD_COLUMNS.get(str(cell).strip())
+        if field:
+            col_map[idx] = field
+
+    required_fields = {"question_text", "correct_answer", "wrong_answer_1", "wrong_answer_2", "wrong_answer_3"}
+    if not required_fields.issubset(set(col_map.values())):
+        raise HTTPException(
+            status_code=400,
+            detail="أعمدة الملف ناقصة. المطلوب: السؤال، الإجابة الصحيحة، إجابة خاطئة 1، "
+                   "إجابة خاطئة 2، إجابة خاطئة 3 (والتفسير والدرجة اختياريين)"
+        )
+
+    with get_connection() as conn:
+        _oe_get_exam(conn, exam_id)
+        next_order = conn.execute(
+            "SELECT COALESCE(MAX(order_index), -1) + 1 as n FROM online_exam_questions WHERE exam_id=?", (exam_id,)
+        ).fetchone()["n"]
+
+        inserted, skipped = 0, 0
+        errors = []
+        for row_num, row in enumerate(data_rows, start=2):
+            if row is None or all(c is None or str(c).strip() == "" for c in row):
+                continue
+            data = {}
+            for idx, field in col_map.items():
+                val = row[idx] if idx < len(row) else None
+                data[field] = str(val).strip() if val is not None else ""
+
+            missing = [f for f in required_fields if not data.get(f)]
+            if missing:
+                skipped += 1
+                errors.append(f"صف {row_num}: بيانات ناقصة")
+                continue
+
+            points = 1.0
+            if data.get("points"):
+                try:
+                    points = float(data["points"])
+                except ValueError:
+                    points = 1.0
+
+            conn.execute("""
+                INSERT INTO online_exam_questions (exam_id, question_text, correct_answer, wrong_answer_1,
+                                                    wrong_answer_2, wrong_answer_3, explanation, order_index, points)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (exam_id, data["question_text"], data["correct_answer"], data["wrong_answer_1"],
+                  data["wrong_answer_2"], data["wrong_answer_3"], data.get("explanation") or None,
+                  next_order, points))
+            next_order += 1
+            inserted += 1
+
+        log_session_activity(conn, session, "exam_questions_upload", f"رفع {inserted} سؤال لامتحان #{exam_id}")
+        return {
+            "message": f"تم رفع {inserted} سؤال بنجاح" + (f" (تم تجاهل {skipped} صف)" if skipped else ""),
+            "inserted": inserted, "skipped": skipped, "errors": errors[:20],
+        }
+
+
+@app.get("/api/exams/{exam_id}/results")
+def get_online_exam_results(exam_id: int, session=Depends(require_roles("admin", "head_supervisor"))):
+    with get_connection() as conn:
+        _oe_get_exam(conn, exam_id)
+        rows = conn.execute("""
+            SELECT a.*, s.full_name as student_name, g.name as group_name
+            FROM online_exam_attempts a
+            JOIN students s ON s.id = a.student_id
+            LEFT JOIN groups g ON g.id = s.group_id
+            WHERE a.exam_id=?
+            ORDER BY a.status='in_progress' DESC, a.score DESC
+        """, (exam_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+@app.post("/api/exams/{exam_id}/attempts/{attempt_id}/reset")
+def reset_online_exam_attempt(exam_id: int, attempt_id: int,
+                               session=Depends(require_roles("admin", "head_supervisor"))):
+    """يمسح محاولة الطالب بالكامل عشان يقدر يبدأ من جديد - لحالات المشاكل
+    التقنية (قطع نت طويل، مشكلة جهاز...) اللي محتاجة تدخل يدوي من الإدارة"""
+    with get_connection() as conn:
+        attempt = conn.execute(
+            "SELECT * FROM online_exam_attempts WHERE id=? AND exam_id=?", (attempt_id, exam_id)
+        ).fetchone()
+        if not attempt:
+            raise HTTPException(status_code=404, detail="المحاولة غير موجودة")
+        conn.execute("DELETE FROM online_exam_attempts WHERE id=?", (attempt_id,))
+        log_session_activity(conn, session, "exam_attempt_reset",
+                              f"إعادة تعيين محاولة الطالب #{attempt['student_id']} في امتحان #{exam_id}")
+        return {"message": "تم مسح المحاولة، الطالب يقدر يبدأ الامتحان تاني"}
+
+
+# ----------------------- خوض الامتحان (الطالب) -----------------------
+
+@app.get("/api/exams/student/list")
+def list_exams_for_student(session=Depends(require_roles("student"))):
+    with get_connection() as conn:
+        stage_id = _student_stage_id(conn, session)
+        if not stage_id:
+            return []
+        rows = conn.execute("""
+            SELECT e.*, (SELECT COUNT(*) FROM online_exam_questions q WHERE q.exam_id=e.id) as questions_count
+            FROM online_exams e
+            WHERE e.stage_id=? AND e.is_active=1
+            ORDER BY e.id DESC
+        """, (stage_id,)).fetchall()
+
+        now = datetime.utcnow()
+        result = []
+        for exam in rows:
+            attempt = conn.execute(
+                "SELECT * FROM online_exam_attempts WHERE exam_id=? AND student_id=?",
+                (exam["id"], session["id"])
+            ).fetchone()
+            if attempt:
+                attempt = _oe_auto_close_if_expired(conn, attempt)
+
+            if attempt:
+                status = "in_progress" if attempt["status"] == "in_progress" else attempt["status"]
+            elif exam["start_at"] and now < datetime.fromisoformat(exam["start_at"]):
+                status = "upcoming"
+            elif exam["end_at"] and now > datetime.fromisoformat(exam["end_at"]):
+                status = "closed"
+            elif exam["questions_count"] == 0:
+                status = "not_ready"
+            else:
+                status = "available"
+
+            item = {
+                "id": exam["id"], "title": exam["title"], "description": exam["description"],
+                "duration_minutes": exam["duration_minutes"], "questions_count": exam["questions_count"],
+                "max_violations": exam["max_violations"], "start_at": exam["start_at"], "end_at": exam["end_at"],
+                "status": status, "attempt_id": attempt["id"] if attempt else None,
+            }
+            if attempt and attempt["status"] != "in_progress" and exam["show_result_immediately"]:
+                total = attempt["total_points"] or 0
+                item["percentage"] = round((attempt["score"] or 0) / total * 100, 1) if total else 0
+                item["score"] = attempt["score"]
+                item["total_points"] = attempt["total_points"]
+            result.append(item)
+        return result
+
+
+@app.post("/api/exams/{exam_id}/start")
+def start_online_exam(exam_id: int, session=Depends(require_roles("student"))):
+    with get_connection() as conn:
+        exam = _oe_get_exam(conn, exam_id)
+        if not exam["is_active"]:
+            raise HTTPException(status_code=400, detail="الامتحان ده مش متاح حاليًا")
+        stage_id = _student_stage_id(conn, session)
+        if stage_id != exam["stage_id"]:
+            raise HTTPException(status_code=403, detail="الامتحان ده مش لمرحلتك")
+
+        now = datetime.utcnow()
+        if exam["start_at"] and now < datetime.fromisoformat(exam["start_at"]):
+            raise HTTPException(status_code=400, detail="الامتحان لسه معملش بدأ")
+        if exam["end_at"] and now > datetime.fromisoformat(exam["end_at"]):
+            raise HTTPException(status_code=400, detail="انتهى الوقت المسموح لبدء الامتحان ده")
+
+        existing = conn.execute(
+            "SELECT * FROM online_exam_attempts WHERE exam_id=? AND student_id=?", (exam_id, session["id"])
+        ).fetchone()
+        if existing:
+            existing = _oe_auto_close_if_expired(conn, existing)
+            if existing["status"] == "in_progress":
+                return {"attempt_id": existing["id"], "message": "استكمال محاولتك السابقة"}
+            raise HTTPException(status_code=400, detail="أنت خلصت الامتحان ده بالفعل")
+
+        question_ids = [r["id"] for r in conn.execute(
+            "SELECT id FROM online_exam_questions WHERE exam_id=? ORDER BY order_index, id", (exam_id,)
+        ).fetchall()]
+        if not question_ids:
+            raise HTTPException(status_code=400, detail="الامتحان ده لسه معملوش أسئلة")
+        if exam["shuffle_questions"]:
+            random.Random(f"{exam_id}-{session['id']}-{uuid.uuid4()}").shuffle(question_ids)
+
+        expires_at = (now + timedelta(minutes=exam["duration_minutes"])).isoformat(timespec="seconds")
+        cur = conn.execute("""
+            INSERT INTO online_exam_attempts (exam_id, student_id, status, question_order, current_index,
+                                               started_at, expires_at)
+            VALUES (?, ?, 'in_progress', ?, 0, ?, ?)
+        """, (exam_id, session["id"], json.dumps(question_ids), _oe_now_str(), expires_at))
+        log_session_activity(conn, session, "exam_start", f"بدء امتحان: {exam['title']}")
+        return {"attempt_id": cur.lastrowid, "message": "تم بدء الامتحان، بالتوفيق"}
+
+
+@app.get("/api/exams/attempts/{attempt_id}/current")
+def get_exam_current_question(attempt_id: int, session=Depends(require_roles("student"))):
+    with get_connection() as conn:
+        attempt = _oe_get_owned_attempt(conn, attempt_id, session)
+        exam = _oe_get_exam(conn, attempt["exam_id"])
+        attempt = _oe_auto_close_if_expired(conn, attempt)
+
+        if attempt["status"] != "in_progress":
+            resp = {"status": attempt["status"], "finished": True, "ended_reason": attempt["ended_reason"]}
+            if exam["show_result_immediately"]:
+                resp["result"] = _oe_build_result(conn, attempt, exam)
+            return resp
+
+        order = json.loads(attempt["question_order"])
+        idx = attempt["current_index"]
+        if idx >= len(order):
+            attempt = _oe_grade_and_close(conn, attempt, "completed")
+            resp = {"status": attempt["status"], "finished": True, "ended_reason": attempt["ended_reason"]}
+            if exam["show_result_immediately"]:
+                resp["result"] = _oe_build_result(conn, attempt, exam)
+            return resp
+
+        qid = order[idx]
+        question = conn.execute("SELECT * FROM online_exam_questions WHERE id=?", (qid,)).fetchone()
+        options = _oe_shuffled_options(question, bool(exam["shuffle_options"]), seed=f"{attempt_id}-{qid}")
+        remaining = int((datetime.fromisoformat(attempt["expires_at"]) - datetime.utcnow()).total_seconds())
+
+        return {
+            "status": "in_progress", "finished": False,
+            "exam_title": exam["title"],
+            "question": {"id": qid, "text": question["question_text"], "options": options},
+            "index": idx, "total": len(order),
+            "remaining_seconds": max(0, remaining),
+            "violations_count": attempt["violations_count"], "max_violations": exam["max_violations"],
+        }
+
+
+@app.post("/api/exams/attempts/{attempt_id}/answer")
+def submit_exam_answer(attempt_id: int, payload: OnlineExamAnswerIn, session=Depends(require_roles("student"))):
+    with get_connection() as conn:
+        attempt = _oe_get_owned_attempt(conn, attempt_id, session)
+        exam = _oe_get_exam(conn, attempt["exam_id"])
+        attempt = _oe_auto_close_if_expired(conn, attempt)
+
+        if attempt["status"] != "in_progress":
+            resp = {"finished": True, "status": attempt["status"], "ended_reason": attempt["ended_reason"]}
+            if exam["show_result_immediately"]:
+                resp["result"] = _oe_build_result(conn, attempt, exam)
+            return resp
+
+        order = json.loads(attempt["question_order"])
+        idx = attempt["current_index"]
+        if idx >= len(order):
+            attempt = _oe_grade_and_close(conn, attempt, "completed")
+            resp = {"finished": True, "status": attempt["status"], "ended_reason": attempt["ended_reason"]}
+            if exam["show_result_immediately"]:
+                resp["result"] = _oe_build_result(conn, attempt, exam)
+            return resp
+
+        expected_qid = order[idx]
+        # حماية من محاولة إرسال إجابة لسؤال مش السؤال الحالي فعليًا (تلاعب من الفرونت إند)
+        if payload.question_id != expected_qid:
+            raise HTTPException(status_code=400, detail="السؤال ده مش السؤال الحالي في امتحانك")
+
+        question = conn.execute("SELECT * FROM online_exam_questions WHERE id=?", (expected_qid,)).fetchone()
+        selected = (payload.selected_answer or "").strip() or None
+        is_correct = bool(selected and selected == question["correct_answer"].strip())
+
+        conn.execute("""
+            INSERT INTO online_exam_answers (attempt_id, question_id, selected_answer, is_correct)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(attempt_id, question_id)
+            DO UPDATE SET selected_answer=excluded.selected_answer, is_correct=excluded.is_correct
+        """, (attempt_id, expected_qid, selected, 1 if is_correct else 0))
+
+        new_index = idx + 1
+        conn.execute("UPDATE online_exam_attempts SET current_index=? WHERE id=?", (new_index, attempt_id))
+
+        if new_index >= len(order):
+            attempt = conn.execute("SELECT * FROM online_exam_attempts WHERE id=?", (attempt_id,)).fetchone()
+            attempt = _oe_grade_and_close(conn, attempt, "completed")
+            log_session_activity(conn, session, "exam_submit", f"تسليم امتحان: {exam['title']}")
+            resp = {"finished": True, "status": attempt["status"], "ended_reason": attempt["ended_reason"]}
+            if exam["show_result_immediately"]:
+                resp["result"] = _oe_build_result(conn, attempt, exam)
+            return resp
+
+        remaining = int((datetime.fromisoformat(attempt["expires_at"]) - datetime.utcnow()).total_seconds())
+        return {"finished": False, "index": new_index, "total": len(order), "remaining_seconds": max(0, remaining)}
+
+
+@app.post("/api/exams/attempts/{attempt_id}/violation")
+def report_exam_violation(attempt_id: int, payload: OnlineExamViolationIn, session=Depends(require_roles("student"))):
+    with get_connection() as conn:
+        attempt = _oe_get_owned_attempt(conn, attempt_id, session)
+        exam = _oe_get_exam(conn, attempt["exam_id"])
+        attempt = _oe_auto_close_if_expired(conn, attempt)
+
+        if attempt["status"] != "in_progress":
+            return {
+                "violations_count": attempt["violations_count"], "max_violations": exam["max_violations"],
+                "terminated": attempt["status"] == "terminated", "status": attempt["status"],
+            }
+
+        conn.execute(
+            "INSERT INTO online_exam_violations (attempt_id, violation_type) VALUES (?, ?)",
+            (attempt_id, payload.violation_type[:50])
+        )
+        new_count = attempt["violations_count"] + 1
+        conn.execute("UPDATE online_exam_attempts SET violations_count=? WHERE id=?", (new_count, attempt_id))
+
+        terminated = False
+        status = "in_progress"
+        if new_count >= exam["max_violations"]:
+            attempt = conn.execute("SELECT * FROM online_exam_attempts WHERE id=?", (attempt_id,)).fetchone()
+            attempt = _oe_grade_and_close(conn, attempt, "violations", status="terminated")
+            log_session_activity(conn, session, "exam_terminated",
+                                  f"إنهاء محاولة امتحان \"{exam['title']}\" بسبب تجاوز عدد المخالفات")
+            terminated = True
+            status = "terminated"
+
+        return {"violations_count": new_count, "max_violations": exam["max_violations"],
+                "terminated": terminated, "status": status}
+
+
+@app.get("/api/exams/attempts/{attempt_id}/result")
+def get_exam_attempt_result(attempt_id: int, session=Depends(require_roles("student"))):
+    with get_connection() as conn:
+        attempt = _oe_get_owned_attempt(conn, attempt_id, session)
+        exam = _oe_get_exam(conn, attempt["exam_id"])
+        attempt = _oe_auto_close_if_expired(conn, attempt)
+        if attempt["status"] == "in_progress":
+            raise HTTPException(status_code=400, detail="الامتحان لسه شغال")
+        if not exam["show_result_immediately"]:
+            return {
+                "status": attempt["status"], "ended_reason": attempt["ended_reason"],
+                "show_result_immediately": False,
+                "message": "تم تسليم الامتحان بنجاح، النتيجة هتتعلن لاحقًا من الإدارة",
+            }
+        result = _oe_build_result(conn, attempt, exam)
+        result["show_result_immediately"] = True
+        result["exam_title"] = exam["title"]
+        return result
 
 
 @app.get("/api/students/{student_id}/scores")

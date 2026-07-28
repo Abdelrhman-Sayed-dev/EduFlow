@@ -752,6 +752,110 @@ def init_db():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_activity_log_created ON activity_log(created_at)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_activity_log_action ON activity_log(action)")
 
+        # ---------------------------------------------------------------
+        # الامتحانات الإلكترونية الآمنة - Online Exams (منفصل عن جدول quizzes
+        # القديم اللي بيرصد درجات يدوي بس). النظام ده كامل الأمان من السيرفر:
+        # ترتيب الأسئلة، السؤال الحالي، الوقت المتبقي، والتصحيح كله بيتحدد
+        # وبيتحقق منه في الباك إند فقط - الفرونت إند بيعرض بس وبيبعت الإجابات.
+        # مشرف المشرفين أو الأدمن هو اللي بيرفع الامتحان لمرحلة دراسية كاملة،
+        # وبيوصل لكل طلاب المرحلة (بنفس منطق جدول quizzes الحالي stage_id).
+        # ---------------------------------------------------------------
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS online_exams (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            description TEXT,
+            stage_id INTEGER NOT NULL,
+            duration_minutes INTEGER NOT NULL,
+            max_violations INTEGER NOT NULL DEFAULT 3,
+            shuffle_questions INTEGER NOT NULL DEFAULT 1,
+            shuffle_options INTEGER NOT NULL DEFAULT 1,
+            show_result_immediately INTEGER NOT NULL DEFAULT 1,
+            start_at TEXT,
+            end_at TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_by INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (stage_id) REFERENCES stages(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_online_exams_stage ON online_exams(stage_id, is_active)")
+
+        # أسئلة الامتحان - إجابة صحيحة واحدة + 3 غلط (زي بنك الأسئلة بالظبط)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS online_exam_questions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            exam_id INTEGER NOT NULL,
+            question_text TEXT NOT NULL,
+            correct_answer TEXT NOT NULL,
+            wrong_answer_1 TEXT NOT NULL,
+            wrong_answer_2 TEXT NOT NULL,
+            wrong_answer_3 TEXT NOT NULL,
+            explanation TEXT,
+            order_index INTEGER NOT NULL DEFAULT 0,
+            points REAL NOT NULL DEFAULT 1,
+            FOREIGN KEY (exam_id) REFERENCES online_exams(id) ON DELETE CASCADE
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_online_exam_questions_exam ON online_exam_questions(exam_id, order_index)")
+
+        # محاولة الطالب - محاولة واحدة لكل طالب لكل امتحان. ترتيب الأسئلة
+        # (question_order) بيتخزن مرة واحدة وقت البدء وثابت طول المحاولة،
+        # والمهلة (expires_at) بتتحسب من وقت السيرفر وقت البدء ومبتتغيرش.
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS online_exam_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            exam_id INTEGER NOT NULL,
+            student_id INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'in_progress' CHECK(status IN ('in_progress','submitted','terminated')),
+            question_order TEXT NOT NULL,
+            current_index INTEGER NOT NULL DEFAULT 0,
+            started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            expires_at TEXT NOT NULL,
+            violations_count INTEGER NOT NULL DEFAULT 0,
+            ended_reason TEXT,
+            submitted_at TEXT,
+            score REAL,
+            total_points REAL,
+            FOREIGN KEY (exam_id) REFERENCES online_exams(id) ON DELETE CASCADE,
+            FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+            UNIQUE(exam_id, student_id)
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_online_exam_attempts_student ON online_exam_attempts(student_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_online_exam_attempts_exam ON online_exam_attempts(exam_id)")
+
+        # إجابات الطالب في المحاولة - سؤال واحد لكل صف، بتتسجل فورًا لحظة
+        # ما يدوس "التالي" عشان لو حصل قطع نت أو ريفريش يكمل من غير ما يخسر حاجة
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS online_exam_answers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            attempt_id INTEGER NOT NULL,
+            question_id INTEGER NOT NULL,
+            selected_answer TEXT,
+            is_correct INTEGER NOT NULL DEFAULT 0,
+            answered_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (attempt_id) REFERENCES online_exam_attempts(id) ON DELETE CASCADE,
+            FOREIGN KEY (question_id) REFERENCES online_exam_questions(id) ON DELETE CASCADE,
+            UNIQUE(attempt_id, question_id)
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_online_exam_answers_attempt ON online_exam_answers(attempt_id)")
+
+        # سجل مخالفات المراقبة (خروج من التبويب/تصغير/خروج فُل سكرين/محاولة
+        # فتح Developer Tools/محاولة نسخ...) - لكل محاولة امتحان على حدة
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS online_exam_violations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            attempt_id INTEGER NOT NULL,
+            violation_type TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (attempt_id) REFERENCES online_exam_attempts(id) ON DELETE CASCADE
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_online_exam_violations_attempt ON online_exam_violations(attempt_id)")
+
         # ترحيل قيد الأدوار القديم عشان يسمح بدور head_supervisor الجديد
         _migrate_users_role_check(cur)
 
