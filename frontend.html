@@ -1237,9 +1237,6 @@ const NAV_BY_ROLE = {
     {id:"mycontent", label:"محتوى مجموعتي بالشهور", icon:"calendar-range"},
     {id:"myexams", label:"كويزات", icon:"shield-check"},
     {id:"qbank_student", label:"بنك الأسئلة", icon:"library"},
-    {id:"myhomework", label:"واجباتي", icon:"clipboard-list"},
-    {id:"myscores", label:"درجاتي", icon:"file-check-2"},
-    {id:"myattendance", label:"حضوري", icon:"calendar-check"},
     {id:"event_calendar", label:"التقويم", icon:"calendar-days"},
     {id:"myrequests", label:"طلباتي", icon:"send"},
   ],
@@ -1252,7 +1249,7 @@ const STUDENT_BOTTOM_NAV = [
   {id:"mydashboard", label:"الرئيسية", icon:"home"},
   {id:"mycontent", label:"محتوى الشهور", icon:"calendar-range"},
   {id:"myexams", label:"كويزات", icon:"shield-check"},
-  {id:"myrequests", label:"طلباتي", icon:"send"},
+  {id:"event_calendar", label:"التقويم", icon:"calendar-days"},
   {id:"student_more", label:"المزيد", icon:"layout-grid"},
 ];
 
@@ -6299,24 +6296,9 @@ async function renderStudentMorePage(){
         <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">بنك الأسئلة</div><div style="font-size:11.5px;color:var(--text-3);">حل أسئلة اختيارية، واحفظ اللي يهمك في المفضلة</div></div>
         <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
       </div>
-      <div class="student-more-item" onclick="navigateTo('myhomework')">
-        <div class="student-more-ic"><i data-lucide="clipboard-list" style="width:18px;height:18px;"></i></div>
-        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">واجباتي</div><div style="font-size:11.5px;color:var(--text-3);">الواجبات المطلوبة منك وتسليمك ليها</div></div>
-        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
-      </div>
-      <div class="student-more-item" onclick="navigateTo('myattendance')">
-        <div class="student-more-ic"><i data-lucide="calendar-check" style="width:18px;height:18px;"></i></div>
-        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">حضوري</div><div style="font-size:11.5px;color:var(--text-3);">سجل حضورك وغيابك في الحصص</div></div>
-        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
-      </div>
-      <div class="student-more-item" onclick="navigateTo('myscores')">
-        <div class="student-more-ic"><i data-lucide="file-check-2" style="width:18px;height:18px;"></i></div>
-        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">درجاتي</div><div style="font-size:11.5px;color:var(--text-3);">درجاتك في الكويزات والامتحانات</div></div>
-        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
-      </div>
-      <div class="student-more-item" onclick="navigateTo('event_calendar')">
-        <div class="student-more-ic"><i data-lucide="calendar-days" style="width:18px;height:18px;"></i></div>
-        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">التقويم</div><div style="font-size:11.5px;color:var(--text-3);">مواعيد الحصص والامتحانات والمراجعات</div></div>
+      <div class="student-more-item" onclick="navigateTo('myrequests')">
+        <div class="student-more-ic"><i data-lucide="send" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">طلباتي</div><div style="font-size:11.5px;color:var(--text-3);">طلباتك المقدمة وردود الإدارة عليها</div></div>
         <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
       </div>
     </div>
