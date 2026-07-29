@@ -2562,19 +2562,6 @@ QB_UPLOAD_COLUMNS = {
 }
 
 
-def _record_study_activity(conn, student_id: int):
-    """بيسجل إن الطالب ده عمل نشاط مذاكرة فعلي (حل سؤال، إجابة في امتحان...)
-    اليوم ده - بيتغذى منه هيت ماب المذاكرة زي GitHub. بيتعمل مرة واحدة لكل يوم
-    لكل طالب مع عداد بيزيد كل نشاط، من غير ما يحتاج تسجيل يدوي من الطالب"""
-    today = datetime.utcnow().strftime("%Y-%m-%d")
-    conn.execute("""
-        INSERT INTO student_study_days (student_id, activity_date, activity_count)
-        VALUES (?, ?, 1)
-        ON CONFLICT(student_id, activity_date)
-        DO UPDATE SET activity_count = activity_count + 1
-    """, (student_id, today))
-
-
 def _student_stage_id(conn, session) -> Optional[int]:
     """يرجّع رقم المرحلة الدراسية للطالب الحالي من الجلسة"""
     grp = conn.execute(
@@ -2946,7 +2933,6 @@ def qb_student_answer(question_id: int, payload: QBAnswerIn, session=Depends(req
             INSERT INTO qb_answers (student_id, question_id, selected_answer, is_correct)
             VALUES (?, ?, ?, ?)
         """, (session["id"], question_id, payload.selected_answer, 1 if is_correct else 0))
-        _record_study_activity(conn, session["id"])
 
         return {
             "is_correct": is_correct,
@@ -3600,7 +3586,6 @@ def submit_exam_answer(attempt_id: int, payload: OnlineExamAnswerIn, session=Dep
             ON CONFLICT(attempt_id, question_id)
             DO UPDATE SET selected_answer=excluded.selected_answer, is_correct=excluded.is_correct
         """, (attempt_id, expected_qid, selected, 1 if is_correct else 0))
-        _record_study_activity(conn, session["id"])
 
         new_index = idx + 1
         conn.execute("UPDATE online_exam_attempts SET current_index=? WHERE id=?", (new_index, attempt_id))
@@ -3670,77 +3655,6 @@ def get_exam_attempt_result(attempt_id: int, session=Depends(require_roles("stud
         result["show_result_immediately"] = True
         result["exam_title"] = exam["title"]
         return result
-
-
-# ---------------------------------------------------------------------------
-# هيت ماب المذاكرة - Study Heatmap (زي GitHub)
-# ---------------------------------------------------------------------------
-
-def _compute_heatmap(conn, student_id: int, days: int):
-    rows = conn.execute(
-        "SELECT activity_date, activity_count FROM student_study_days WHERE student_id=? ORDER BY activity_date",
-        (student_id,)
-    ).fetchall()
-    all_dates = {r["activity_date"]: r["activity_count"] for r in rows}
-
-    today = datetime.utcnow().date()
-    start = today - timedelta(days=days - 1)
-    heat_days = []
-    d = start
-    while d <= today:
-        key = d.strftime("%Y-%m-%d")
-        heat_days.append({"date": key, "count": all_dates.get(key, 0)})
-        d += timedelta(days=1)
-
-    # الـ streak بيتحسب على كل التاريخ المسجل مش بس النطاق المعروض، عشان يبقى
-    # دقيق حتى لو الطالب فتح هيت ماب أقصر من عمر حسابه
-    all_active_dates = sorted(datetime.strptime(k, "%Y-%m-%d").date() for k in all_dates.keys())
-    longest_streak = 0
-    current_run = 0
-    prev = None
-    for dt in all_active_dates:
-        if prev is not None and (dt - prev).days == 1:
-            current_run += 1
-        else:
-            current_run = 1
-        longest_streak = max(longest_streak, current_run)
-        prev = dt
-
-    current_streak = 0
-    if all_active_dates:
-        active_set = set(all_active_dates)
-        cursor = today if today in active_set else (today - timedelta(days=1))
-        while cursor in active_set:
-            current_streak += 1
-            cursor -= timedelta(days=1)
-
-    return {
-        "days": heat_days,
-        "total_active_days": len(all_dates),
-        "total_activities": sum(all_dates.values()),
-        "current_streak": current_streak,
-        "longest_streak": longest_streak,
-    }
-
-
-@app.get("/api/students/study-heatmap")
-def get_my_study_heatmap(days: int = 371, session=Depends(require_roles("student"))):
-    days = max(30, min(days, 730))
-    with get_connection() as conn:
-        return _compute_heatmap(conn, session["id"], days)
-
-
-@app.get("/api/students/{student_id}/study-heatmap")
-def get_student_study_heatmap(student_id: int, days: int = 371,
-                               session=Depends(require_roles("admin", "head_supervisor", "supervisor", "teacher"))):
-    days = max(30, min(days, 730))
-    with get_connection() as conn:
-        student = conn.execute("SELECT id, group_id FROM students WHERE id=?", (student_id,)).fetchone()
-        if not student:
-            raise HTTPException(status_code=404, detail="الطالب غير موجود")
-        if session["role"] == "supervisor":
-            assert_supervisor_owns_group(conn, session, student["group_id"])
-        return _compute_heatmap(conn, student_id, days)
 
 
 # ---------------------------------------------------------------------------

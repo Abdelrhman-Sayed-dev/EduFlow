@@ -785,18 +785,6 @@ body.is-student .bottom-nav, body.is-supervisor .bottom-nav, body.is-teacher .bo
   .exam-fullscreen-prompt-box{background:var(--surface,#fff);border-radius:16px;padding:26px;text-align:center;max-width:320px;}
   .exam-result-card{width:100%;max-width:640px;background:var(--surface,#fff);border-radius:16px;padding:28px 22px;text-align:center;}
 
-  /* هيت ماب المذاكرة */
-  .heatmap-scroll{overflow-x:auto;padding-bottom:6px;}
-  .heatmap-grid{display:flex;gap:3px;width:max-content;}
-  .heatmap-week{display:flex;flex-direction:column;gap:3px;}
-  .heatmap-cell{width:11px;height:11px;border-radius:3px;background:var(--surface-3,#ebedf0);}
-  .heatmap-cell.empty{background:transparent;}
-  .heatmap-cell.level-1{background:#9be9a8;}
-  .heatmap-cell.level-2{background:#40c463;}
-  .heatmap-cell.level-3{background:#30a14e;}
-  .heatmap-cell.level-4{background:#216e39;}
-  .heatmap-legend{display:flex;align-items:center;gap:4px;margin-top:8px;font-size:11px;color:var(--text-3,#888);}
-  .heatmap-card{padding:16px;margin-bottom:14px;}
 
   /* التقويم */
   .cal-header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
@@ -6045,13 +6033,12 @@ async function renderMyGroupPage(){
    صفحات الطالب
 ===================================================================== */
 async function renderStudentDashboardPage(){
-  const [scores, attendance, groupInfo, ranking, payments, heatmap] = await Promise.all([
+  const [scores, attendance, groupInfo, ranking, payments] = await Promise.all([
     api(`/api/students/${SESSION.id}/scores`),
     api(`/api/students/${SESSION.id}/attendance`),
     SESSION.group_id ? api(`/api/groups/${SESSION.group_id}/info`).catch(()=>null) : Promise.resolve(null),
     api(`/api/students/${SESSION.id}/ranking`).catch(()=>null),
     api(`/api/students/${SESSION.id}/payments`).catch(()=>[]),
-    api(`/api/students/study-heatmap`).catch(()=>null),
   ]);
   const present = attendance.filter(a=>a.status==='present'||a.status==='late').length;
   const avg = scores.length ? (scores.reduce((s,x)=>s+(x.score||0)/x.max_score*100,0)/scores.length).toFixed(0) : "—";
@@ -6145,8 +6132,6 @@ async function renderStudentDashboardPage(){
       </div>
     </div>
 
-    ${heatmap ? renderStudyHeatmapWidget(heatmap) : ""}
-
     ${ranking ? `
     <div class="table-card" style="padding:14px 16px;margin-bottom:14px;background:var(--warning-bg);border:none;box-shadow:none;">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
@@ -6199,72 +6184,6 @@ function switchDashboardTab(tab){
   document.getElementById("dashTabBtnPayments").className = "dash-tab-btn" + (tab==='payments' ? " active" : "");
   document.getElementById("dashTabBody").innerHTML = tab === 'scores' ? DASH_TAB_DATA.scoresHtml : DASH_TAB_DATA.paymentsHtml;
   icons();
-}
-
-/* =====================================================================
-   هيت ماب المذاكرة - زي GitHub، كل يوم فيه نشاط (حل سؤال/إجابة في امتحان)
-   بيتلوّن، والألوان بتفتح على حسب عدد النشاطات في اليوم ده
-===================================================================== */
-function renderStudyHeatmapWidget(data){
-  const days = data.days || [];
-  if (!days.length) return "";
-  const firstDate = new Date(days[0].date + "T00:00:00");
-  const leadBlanks = firstDate.getDay(); // 0 = الأحد
-  const cells = new Array(leadBlanks).fill(null).concat(days);
-  const weeks = [];
-  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
-  const maxCount = Math.max(1, ...days.map(d => d.count));
-
-  function levelOf(count){
-    if (!count) return 0;
-    const ratio = count / maxCount;
-    if (ratio > 0.75) return 4;
-    if (ratio > 0.5) return 3;
-    if (ratio > 0.25) return 2;
-    return 1;
-  }
-
-  const gridHtml = weeks.map(week => `
-    <div class="heatmap-week">
-      ${week.map(d => d
-        ? `<div class="heatmap-cell level-${levelOf(d.count)}" title="${d.date} — ${d.count} نشاط مذاكرة"></div>`
-        : `<div class="heatmap-cell empty"></div>`
-      ).join("")}
-    </div>
-  `).join("");
-
-  const streakMsg = data.current_streak > 0
-    ? `مستمر من ${data.current_streak} يوم متتالي - كمّل كده! 🔥`
-    : `ابدأ سلسلتك النهاردة بحل سؤال أو مراجعة 💪`;
-
-  return `
-  <div class="table-card heatmap-card">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
-      <div>
-        <div style="font-weight:800;font-size:14px;display:flex;align-items:center;gap:7px;">
-          <i data-lucide="flame" style="width:16px;height:16px;color:#f97316;"></i> هيت ماب المذاكرة
-        </div>
-        <div style="font-size:11.5px;color:var(--text-3);margin-top:2px;">${streakMsg}</div>
-      </div>
-      <div style="display:flex;gap:12px;font-size:11.5px;color:var(--text-3);flex-wrap:wrap;">
-        <span>🔥 <b style="color:var(--text);">${data.current_streak}</b> يوم متتالي</span>
-        <span>🏆 أطول سلسلة <b style="color:var(--text);">${data.longest_streak}</b></span>
-        <span>📅 <b style="color:var(--text);">${data.total_active_days}</b> يوم مذاكرة</span>
-      </div>
-    </div>
-    <div class="heatmap-scroll" dir="ltr">
-      <div class="heatmap-grid">${gridHtml}</div>
-    </div>
-    <div class="heatmap-legend" dir="ltr">
-      <span>أقل</span>
-      <div class="heatmap-cell level-0"></div>
-      <div class="heatmap-cell level-1"></div>
-      <div class="heatmap-cell level-2"></div>
-      <div class="heatmap-cell level-3"></div>
-      <div class="heatmap-cell level-4"></div>
-      <span>أكتر</span>
-    </div>
-  </div>`;
 }
 
 async function renderHeadSupervisorMorePage(){
@@ -6393,6 +6312,11 @@ async function renderStudentMorePage(){
       <div class="student-more-item" onclick="navigateTo('myscores')">
         <div class="student-more-ic"><i data-lucide="file-check-2" style="width:18px;height:18px;"></i></div>
         <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">درجاتي</div><div style="font-size:11.5px;color:var(--text-3);">درجاتك في الكويزات والامتحانات</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
+      <div class="student-more-item" onclick="navigateTo('event_calendar')">
+        <div class="student-more-ic"><i data-lucide="calendar-days" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">التقويم</div><div style="font-size:11.5px;color:var(--text-3);">مواعيد الحصص والامتحانات والمراجعات</div></div>
         <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
       </div>
     </div>
