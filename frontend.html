@@ -9399,13 +9399,16 @@ function calEventFormHtml(event, groups, stages, prefillDate){
   <div class="form-group" id="calGroupField">
     <label class="form-label">المجموعة</label>
     <select class="form-select" id="calFormGroup">
+      <option value="" ${v.group_id?'':'selected'} disabled>-- اختر المجموعة --</option>
       ${groups.map(g=>`<option value="${g.id}" ${v.group_id===g.id?'selected':''}>${escapeHtml(g.name)}</option>`).join("")}
     </select></div>
   <div class="form-group" id="calStageField">
     <label class="form-label">المرحلة الدراسية</label>
     <select class="form-select" id="calFormStage">
+      <option value="" ${v.stage_id?'':'selected'} disabled>-- اختر المرحلة --</option>
       ${stages.map(s=>`<option value="${s.id}" ${v.stage_id===s.id?'selected':''}>${escapeHtml(s.name)}</option>`).join("")}
     </select></div>
+  <div style="font-size:11.5px;color:var(--text-3);margin-top:-6px;margin-bottom:8px;">⚠️ لازم تختار المجموعة أو المرحلة صح، لإن الحدث بيظهر بس للطلاب اللي فيها.</div>
   <div class="form-group"><label class="form-label">وصف (اختياري)</label>
     <textarea class="form-input" id="calFormDesc" rows="2">${escapeHtml(v.description||"")}</textarea></div>
   `;
@@ -9444,6 +9447,8 @@ async function saveCalendarEventForm(eventId){
   }
 
   if (!payload.title || !payload.event_date){ showToast("لازم تملأ العنوان والتاريخ", "error"); return; }
+  if (scope === "group" && !payload.group_id){ showToast("لازم تختار المجموعة", "error"); return; }
+  if (scope === "stage" && !payload.stage_id){ showToast("لازم تختار المرحلة الدراسية", "error"); return; }
   try{
     if (eventId) await api(`/api/calendar-events/${eventId}`, {method:"PUT", body: JSON.stringify(payload)});
     else await api("/api/calendar-events", {method:"POST", body: JSON.stringify(payload)});
