@@ -813,6 +813,7 @@ body.is-student .bottom-nav, body.is-supervisor .bottom-nav, body.is-teacher .bo
   .cal-event-exam{background:var(--danger-bg,#fee2e2);color:#991B1B;}
   .cal-event-review{background:var(--success-bg,#d1fae5);color:#065F46;}
   .cal-event-other{background:var(--surface-3,#eee);color:var(--text-2,#555);}
+  .cal-event-recurring{background:#ede9fe;color:#5b21b6;}
   @media (max-width:640px){ .cal-day{min-height:52px;} .cal-event-pill{display:none;} .cal-day.has-events::after{content:"";display:block;width:5px;height:5px;border-radius:50%;background:var(--primary,#6366f1);margin-top:2px;} }
   `;
   const style = document.createElement("style");
@@ -9235,10 +9236,10 @@ async function resetExamAttempt(examId, attemptId, studentName){
    التقويم - حصص / امتحانات / مراجعات، بعرض شهري
 ===================================================================== */
 const CAL_EVENT_TYPE_LABELS = {session:"حصة", exam:"امتحان", review:"مراجعة", other:"آخر"};
-const CAL_WEEKDAY_NAMES = ["الأحد","الاثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت"];
+const CAL_WEEKDAY_NAMES = ARABIC_DAY_NAMES; // نفس أسماء الأيام المستخدمة في جدول المواعيد، عشان التطابق يبقى دقيق
 const CAL_MONTH_NAMES = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
 
-let CAL_STATE = { year: 0, month: 0, eventsByDate: {}, eventsById: {} };
+let CAL_STATE = { year: 0, month: 0, eventsByDate: {}, eventsById: {}, scheduleSlots: [] };
 
 function calFmtDate(d){
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
@@ -9272,6 +9273,7 @@ async function renderEventCalendarPage(){
       <div class="cal-grid" id="calDaysGrid" style="margin-top:6px;"></div>
     </div>
     <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:var(--text-3);">
+      <span><span class="cal-event-pill cal-event-recurring" style="padding:2px 8px;">🔁 حصة ثابتة</span></span>
       <span><span class="cal-event-pill cal-event-session" style="padding:2px 8px;">حصة</span></span>
       <span><span class="cal-event-pill cal-event-exam" style="padding:2px 8px;">امتحان</span></span>
       <span><span class="cal-event-pill cal-event-review" style="padding:2px 8px;">مراجعة</span></span>
@@ -9279,7 +9281,14 @@ async function renderEventCalendarPage(){
     </div>
   `;
   icons();
+  CAL_STATE.scheduleSlots = [];
+  try{ CAL_STATE.scheduleSlots = await api("/api/schedule"); }catch(e){ /* الأحداث بس هتظهر لو الجدول الثابت فشل يتحمّل */ }
   await loadCalendarMonth();
+}
+
+function calRecurringSlotsForDate(dateObj){
+  const dayName = ARABIC_DAY_NAMES[dateObj.getDay()];
+  return (CAL_STATE.scheduleSlots || []).filter(s => s.day_of_week === dayName);
 }
 
 function calNavigate(delta){
@@ -9319,11 +9328,22 @@ async function loadCalendarMonth(){
     const isOtherMonth = cur.getMonth() !== m;
     const isToday = key === todayKey;
     const dayEvents = CAL_STATE.eventsByDate[key] || [];
+    const recurring = calRecurringSlotsForDate(cur);
+    const hasAny = dayEvents.length || recurring.length;
+    const recurringPills = recurring.slice(0, 2).map(s =>
+      `<div class="cal-event-pill cal-event-recurring" title="حصة ثابتة أسبوعيًا">🔁 ${escapeHtml(s.title || s.group_name || "حصة")}</div>`
+    ).join("");
+    const remainingSlots = Math.max(0, 3 - recurring.length);
+    const eventPills = dayEvents.slice(0, remainingSlots).map(e =>
+      `<div class="cal-event-pill cal-event-${e.event_type}">${escapeHtml(e.title)}</div>`
+    ).join("");
+    const overflow = (recurring.length - 2) + (dayEvents.length - remainingSlots);
     html += `
-      <div class="cal-day ${isOtherMonth?'other-month':''} ${isToday?'today':''} ${dayEvents.length?'has-events':''}" onclick="openCalendarDayModal('${key}')">
+      <div class="cal-day ${isOtherMonth?'other-month':''} ${isToday?'today':''} ${hasAny?'has-events':''}" onclick="openCalendarDayModal('${key}')">
         <div class="cal-day-num">${cur.getDate()}</div>
-        ${dayEvents.slice(0,3).map(e=>`<div class="cal-event-pill cal-event-${e.event_type}">${escapeHtml(e.title)}</div>`).join("")}
-        ${dayEvents.length > 3 ? `<div style="font-size:10px;color:var(--text-3);">+${dayEvents.length-3} كمان</div>` : ""}
+        ${recurringPills}
+        ${eventPills}
+        ${overflow > 0 ? `<div style="font-size:10px;color:var(--text-3);">+${overflow} كمان</div>` : ""}
       </div>`;
     cur.setDate(cur.getDate() + 1);
   }
@@ -9357,14 +9377,34 @@ function calDayEventsListHtml(events){
   `).join("");
 }
 
+function calRecurringSlotsListHtml(slots){
+  if (!slots.length) return "";
+  return `
+    <div style="font-size:11.5px;font-weight:700;color:var(--text-3);margin-bottom:6px;">🔁 حصص ثابتة أسبوعيًا</div>
+    ${slots.map(s => `
+      <div class="table-card" style="padding:8px 12px;margin-bottom:6px;background:var(--surface-2);border:none;box-shadow:none;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+          <div>
+            <b style="font-size:12.5px;">${escapeHtml(s.title || s.group_name || "حصة")}</b>
+            <div style="font-size:11px;color:var(--text-3);">${s.start_time ? formatTime12h(s.start_time) : ""}${s.end_time ? ' - '+formatTime12h(s.end_time) : ""}${s.group_name ? ' · '+escapeHtml(s.group_name) : ''}</div>
+          </div>
+        </div>
+      </div>
+    `).join("")}
+    <div style="border-top:1px dashed var(--border);margin:10px 0;"></div>
+  `;
+}
+
 function openCalendarDayModal(dateKey){
   const events = CAL_STATE.eventsByDate[dateKey] || [];
-  const canManage = ["admin","head_supervisor","supervisor"].includes(SESSION.role);
   const d = new Date(dateKey + "T00:00:00");
+  const recurring = calRecurringSlotsForDate(d);
+  const canManage = ["admin","head_supervisor","supervisor"].includes(SESSION.role);
   const dateLabel = `${d.getDate()} ${CAL_MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
   openModal(
     dateLabel,
-    `<div id="calDayEventsList">${calDayEventsListHtml(events)}</div>
+    `${calRecurringSlotsListHtml(recurring)}
+     <div id="calDayEventsList">${calDayEventsListHtml(events)}</div>
      ${canManage ? `<button class="btn btn-ghost btn-sm" style="margin-top:6px;" onclick="openAddCalendarEventModal('${dateKey}')"><i data-lucide="plus" style="width:13px;height:13px;"></i> إضافة حدث في اليوم ده</button>` : ""}`,
     `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`,
     {width:"480px"}
