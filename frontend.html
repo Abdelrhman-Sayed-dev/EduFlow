@@ -784,6 +784,36 @@ body.is-student .bottom-nav, body.is-supervisor .bottom-nav, body.is-teacher .bo
   .exam-fullscreen-prompt{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10001;display:flex;align-items:center;justify-content:center;}
   .exam-fullscreen-prompt-box{background:var(--surface,#fff);border-radius:16px;padding:26px;text-align:center;max-width:320px;}
   .exam-result-card{width:100%;max-width:640px;background:var(--surface,#fff);border-radius:16px;padding:28px 22px;text-align:center;}
+
+  /* هيت ماب المذاكرة */
+  .heatmap-scroll{overflow-x:auto;padding-bottom:6px;}
+  .heatmap-grid{display:flex;gap:3px;width:max-content;}
+  .heatmap-week{display:flex;flex-direction:column;gap:3px;}
+  .heatmap-cell{width:11px;height:11px;border-radius:3px;background:var(--surface-3,#ebedf0);}
+  .heatmap-cell.empty{background:transparent;}
+  .heatmap-cell.level-1{background:#9be9a8;}
+  .heatmap-cell.level-2{background:#40c463;}
+  .heatmap-cell.level-3{background:#30a14e;}
+  .heatmap-cell.level-4{background:#216e39;}
+  .heatmap-legend{display:flex;align-items:center;gap:4px;margin-top:8px;font-size:11px;color:var(--text-3,#888);}
+  .heatmap-card{padding:16px;margin-bottom:14px;}
+
+  /* التقويم */
+  .cal-header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
+  .cal-nav-btn{width:32px;height:32px;border-radius:8px;border:1px solid var(--border,#e5e7eb);background:var(--surface,#fff);cursor:pointer;display:flex;align-items:center;justify-content:center;}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;}
+  .cal-weekday{text-align:center;font-size:11.5px;font-weight:700;color:var(--text-3,#888);padding:4px 0;}
+  .cal-day{min-height:76px;border-radius:10px;border:1px solid var(--border,#eee);padding:5px;cursor:pointer;background:var(--surface,#fff);transition:.15s;}
+  .cal-day:hover{border-color:var(--primary,#6366f1);}
+  .cal-day.other-month{opacity:.35;}
+  .cal-day.today{border-color:var(--primary,#6366f1);border-width:2px;}
+  .cal-day-num{font-size:12px;font-weight:700;margin-bottom:3px;}
+  .cal-event-pill{font-size:10px;padding:2px 5px;border-radius:5px;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;}
+  .cal-event-session{background:var(--info-bg,#dbeafe);color:#1D4ED8;}
+  .cal-event-exam{background:var(--danger-bg,#fee2e2);color:#991B1B;}
+  .cal-event-review{background:var(--success-bg,#d1fae5);color:#065F46;}
+  .cal-event-other{background:var(--surface-3,#eee);color:var(--text-2,#555);}
+  @media (max-width:640px){ .cal-day{min-height:52px;} .cal-event-pill{display:none;} .cal-day.has-events::after{content:"";display:block;width:5px;height:5px;border-radius:50%;background:var(--primary,#6366f1);margin-top:2px;} }
   `;
   const style = document.createElement("style");
   style.id = "examInjectedStyles";
@@ -1173,6 +1203,7 @@ const NAV_BY_ROLE = {
     {id:"quizzes", label:"الكويزات والامتحانات", icon:"file-check-2"},
     {id:"qbank_admin", label:"بنك الأسئلة", icon:"library"},
     {id:"online_exams_admin", label:"الامتحانات الإلكترونية", icon:"shield-check"},
+    {id:"event_calendar", label:"التقويم", icon:"calendar-days"},
     {id:"attendance", label:"الحضور والغياب", icon:"calendar-check"},
     {id:"student_search", label:"بحث عن طالب", icon:"search"},
     {id:"activity_log", label:"سجل الأنشطة", icon:"history"},
@@ -1185,12 +1216,14 @@ const NAV_BY_ROLE = {
     {id:"teacher_ranking", label:"الترتيب المتقدم", icon:"trophy"},
     {id:"teacher_reports", label:"التقارير", icon:"file-text"},
     {id:"teacher_schedule", label:"جدولي", icon:"calendar-clock"},
+    {id:"event_calendar", label:"التقويم", icon:"calendar-days"},
   ],
   head_supervisor: [
     {id:"dashboard", label:"الرئيسية", icon:"layout-dashboard"},
     {id:"hs_videos", label:"الفيديوهات", icon:"video"},
     {id:"hs_quizzes", label:"إدارة الكويزات والامتحانات", icon:"file-check-2"},
     {id:"online_exams_admin", label:"الامتحانات الإلكترونية", icon:"shield-check"},
+    {id:"event_calendar", label:"التقويم", icon:"calendar-days"},
     {id:"qbank_analytics", label:"تحليل بنك الأسئلة", icon:"library"},
     {id:"teacher_analytics", label:"التحليلات", icon:"bar-chart-3"},
     {id:"teacher_compare", label:"مقارنة المجموعات", icon:"git-compare"},
@@ -1205,6 +1238,7 @@ const NAV_BY_ROLE = {
     {id:"quizzes", label:"الكويزات والامتحانات", icon:"file-check-2"},
     {id:"homework", label:"الواجبات", icon:"clipboard-list"},
     {id:"attendance", label:"الحضور والغياب", icon:"calendar-check"},
+    {id:"event_calendar", label:"التقويم", icon:"calendar-days"},
     {id:"monthly_reports", label:"التقرير الشهري", icon:"file-bar-chart"},
     {id:"student_requests", label:"طلبات الطلاب", icon:"inbox"},
     {id:"student_search", label:"بحث عن طالب", icon:"search"},
@@ -1217,6 +1251,7 @@ const NAV_BY_ROLE = {
     {id:"myhomework", label:"واجباتي", icon:"clipboard-list"},
     {id:"myscores", label:"درجاتي", icon:"file-check-2"},
     {id:"myattendance", label:"حضوري", icon:"calendar-check"},
+    {id:"event_calendar", label:"التقويم", icon:"calendar-days"},
     {id:"myrequests", label:"طلباتي", icon:"send"},
   ],
 };
@@ -1360,6 +1395,7 @@ const PAGE_TITLES = {
   fraud_alerts:"كشف التلاعب",
   qbank_admin:"بنك الأسئلة", qbank_analytics:"تحليل بنك الأسئلة", qbank_student:"بنك الأسئلة",
   online_exams_admin:"إدارة الامتحانات الإلكترونية", myexams:"كويزات",
+  event_calendar:"التقويم",
 };
 
 async function renderPage(page){
@@ -1414,6 +1450,7 @@ async function renderPage(page){
       qbank_student: renderQbankStudentPage,
       online_exams_admin: renderOnlineExamsAdminPage,
       myexams: renderMyExamsPage,
+      event_calendar: renderEventCalendarPage,
     };
     const fn = renderers[page];
     if (fn) await fn();
@@ -6007,12 +6044,13 @@ async function renderMyGroupPage(){
    صفحات الطالب
 ===================================================================== */
 async function renderStudentDashboardPage(){
-  const [scores, attendance, groupInfo, ranking, payments] = await Promise.all([
+  const [scores, attendance, groupInfo, ranking, payments, heatmap] = await Promise.all([
     api(`/api/students/${SESSION.id}/scores`),
     api(`/api/students/${SESSION.id}/attendance`),
     SESSION.group_id ? api(`/api/groups/${SESSION.group_id}/info`).catch(()=>null) : Promise.resolve(null),
     api(`/api/students/${SESSION.id}/ranking`).catch(()=>null),
-    api(`/api/students/${SESSION.id}/payments`).catch(()=>[])
+    api(`/api/students/${SESSION.id}/payments`).catch(()=>[]),
+    api(`/api/students/study-heatmap`).catch(()=>null),
   ]);
   const present = attendance.filter(a=>a.status==='present'||a.status==='late').length;
   const avg = scores.length ? (scores.reduce((s,x)=>s+(x.score||0)/x.max_score*100,0)/scores.length).toFixed(0) : "—";
@@ -6106,6 +6144,8 @@ async function renderStudentDashboardPage(){
       </div>
     </div>
 
+    ${heatmap ? renderStudyHeatmapWidget(heatmap) : ""}
+
     ${ranking ? `
     <div class="table-card" style="padding:14px 16px;margin-bottom:14px;background:var(--warning-bg);border:none;box-shadow:none;">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
@@ -6158,6 +6198,72 @@ function switchDashboardTab(tab){
   document.getElementById("dashTabBtnPayments").className = "dash-tab-btn" + (tab==='payments' ? " active" : "");
   document.getElementById("dashTabBody").innerHTML = tab === 'scores' ? DASH_TAB_DATA.scoresHtml : DASH_TAB_DATA.paymentsHtml;
   icons();
+}
+
+/* =====================================================================
+   هيت ماب المذاكرة - زي GitHub، كل يوم فيه نشاط (حل سؤال/إجابة في امتحان)
+   بيتلوّن، والألوان بتفتح على حسب عدد النشاطات في اليوم ده
+===================================================================== */
+function renderStudyHeatmapWidget(data){
+  const days = data.days || [];
+  if (!days.length) return "";
+  const firstDate = new Date(days[0].date + "T00:00:00");
+  const leadBlanks = firstDate.getDay(); // 0 = الأحد
+  const cells = new Array(leadBlanks).fill(null).concat(days);
+  const weeks = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+  const maxCount = Math.max(1, ...days.map(d => d.count));
+
+  function levelOf(count){
+    if (!count) return 0;
+    const ratio = count / maxCount;
+    if (ratio > 0.75) return 4;
+    if (ratio > 0.5) return 3;
+    if (ratio > 0.25) return 2;
+    return 1;
+  }
+
+  const gridHtml = weeks.map(week => `
+    <div class="heatmap-week">
+      ${week.map(d => d
+        ? `<div class="heatmap-cell level-${levelOf(d.count)}" title="${d.date} — ${d.count} نشاط مذاكرة"></div>`
+        : `<div class="heatmap-cell empty"></div>`
+      ).join("")}
+    </div>
+  `).join("");
+
+  const streakMsg = data.current_streak > 0
+    ? `مستمر من ${data.current_streak} يوم متتالي - كمّل كده! 🔥`
+    : `ابدأ سلسلتك النهاردة بحل سؤال أو مراجعة 💪`;
+
+  return `
+  <div class="table-card heatmap-card">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+      <div>
+        <div style="font-weight:800;font-size:14px;display:flex;align-items:center;gap:7px;">
+          <i data-lucide="flame" style="width:16px;height:16px;color:#f97316;"></i> هيت ماب المذاكرة
+        </div>
+        <div style="font-size:11.5px;color:var(--text-3);margin-top:2px;">${streakMsg}</div>
+      </div>
+      <div style="display:flex;gap:12px;font-size:11.5px;color:var(--text-3);flex-wrap:wrap;">
+        <span>🔥 <b style="color:var(--text);">${data.current_streak}</b> يوم متتالي</span>
+        <span>🏆 أطول سلسلة <b style="color:var(--text);">${data.longest_streak}</b></span>
+        <span>📅 <b style="color:var(--text);">${data.total_active_days}</b> يوم مذاكرة</span>
+      </div>
+    </div>
+    <div class="heatmap-scroll" dir="ltr">
+      <div class="heatmap-grid">${gridHtml}</div>
+    </div>
+    <div class="heatmap-legend" dir="ltr">
+      <span>أقل</span>
+      <div class="heatmap-cell level-0"></div>
+      <div class="heatmap-cell level-1"></div>
+      <div class="heatmap-cell level-2"></div>
+      <div class="heatmap-cell level-3"></div>
+      <div class="heatmap-cell level-4"></div>
+      <span>أكتر</span>
+    </div>
+  </div>`;
 }
 
 async function renderHeadSupervisorMorePage(){
@@ -9120,6 +9226,275 @@ async function resetExamAttempt(examId, attemptId, studentName){
     try{ await api(`/api/exams/${examId}/attempts/${attemptId}/reset`, {method:"POST"}); }catch(e){ return; }
     showToast("تم إعادة التعيين", "success");
     await openExamResultsModal(examId);
+  });
+}
+</script>
+
+<script>
+/* =====================================================================
+   التقويم - حصص / امتحانات / مراجعات، بعرض شهري
+===================================================================== */
+const CAL_EVENT_TYPE_LABELS = {session:"حصة", exam:"امتحان", review:"مراجعة", other:"آخر"};
+const CAL_WEEKDAY_NAMES = ["الأحد","الاثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت"];
+const CAL_MONTH_NAMES = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
+
+let CAL_STATE = { year: 0, month: 0, eventsByDate: {}, eventsById: {} };
+
+function calFmtDate(d){
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+
+function canManageCalEvent(e){
+  if (SESSION.role === "admin" || SESSION.role === "head_supervisor") return true;
+  if (SESSION.role === "supervisor") return !!e.group_id;
+  return false;
+}
+
+async function renderEventCalendarPage(){
+  const now = new Date();
+  CAL_STATE.year = now.getFullYear();
+  CAL_STATE.month = now.getMonth();
+  const canManage = ["admin","head_supervisor","supervisor"].includes(SESSION.role);
+
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>التقويم</h1><p>الحصص والامتحانات والمراجعات المجدولة</p></div>
+      ${canManage ? `<button class="btn btn-primary" onclick="openAddCalendarEventModal()"><i data-lucide="plus" style="width:14px;height:14px;"></i> حدث جديد</button>` : ""}
+    </div>
+    <div class="table-card" style="padding:16px;">
+      <div class="cal-header">
+        <button class="cal-nav-btn" onclick="calNavigate(-1)"><i data-lucide="chevron-right" style="width:16px;height:16px;"></i></button>
+        <div style="font-weight:800;font-size:15px;" id="calMonthLabel"></div>
+        <button class="cal-nav-btn" onclick="calNavigate(1)"><i data-lucide="chevron-left" style="width:16px;height:16px;"></i></button>
+      </div>
+      <div class="cal-grid" id="calWeekdaysRow">${CAL_WEEKDAY_NAMES.map(w=>`<div class="cal-weekday">${w}</div>`).join("")}</div>
+      <div class="cal-grid" id="calDaysGrid" style="margin-top:6px;"></div>
+    </div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:var(--text-3);">
+      <span><span class="cal-event-pill cal-event-session" style="padding:2px 8px;">حصة</span></span>
+      <span><span class="cal-event-pill cal-event-exam" style="padding:2px 8px;">امتحان</span></span>
+      <span><span class="cal-event-pill cal-event-review" style="padding:2px 8px;">مراجعة</span></span>
+      <span><span class="cal-event-pill cal-event-other" style="padding:2px 8px;">آخر</span></span>
+    </div>
+  `;
+  icons();
+  await loadCalendarMonth();
+}
+
+function calNavigate(delta){
+  CAL_STATE.month += delta;
+  if (CAL_STATE.month < 0){ CAL_STATE.month = 11; CAL_STATE.year--; }
+  if (CAL_STATE.month > 11){ CAL_STATE.month = 0; CAL_STATE.year++; }
+  loadCalendarMonth();
+}
+
+async function loadCalendarMonth(){
+  const y = CAL_STATE.year, m = CAL_STATE.month;
+  const firstOfMonth = new Date(y, m, 1);
+  const lastOfMonth = new Date(y, m + 1, 0);
+  const gridStart = new Date(y, m, 1 - firstOfMonth.getDay());
+  const gridEnd = new Date(y, m, lastOfMonth.getDate() + (6 - lastOfMonth.getDay()));
+
+  document.getElementById("calMonthLabel").textContent = `${CAL_MONTH_NAMES[m]} ${y}`;
+
+  let events = [];
+  try{
+    events = await api(`/api/calendar-events?start=${calFmtDate(gridStart)}&end=${calFmtDate(gridEnd)}`);
+  }catch(e){ /* اتعرض التوست من جوه api() نفسها */ }
+
+  CAL_STATE.eventsByDate = {};
+  CAL_STATE.eventsById = {};
+  events.forEach(ev=>{
+    if (!CAL_STATE.eventsByDate[ev.event_date]) CAL_STATE.eventsByDate[ev.event_date] = [];
+    CAL_STATE.eventsByDate[ev.event_date].push(ev);
+    CAL_STATE.eventsById[ev.id] = ev;
+  });
+
+  const todayKey = calFmtDate(new Date());
+  let html = "";
+  const cur = new Date(gridStart);
+  while (cur <= gridEnd){
+    const key = calFmtDate(cur);
+    const isOtherMonth = cur.getMonth() !== m;
+    const isToday = key === todayKey;
+    const dayEvents = CAL_STATE.eventsByDate[key] || [];
+    html += `
+      <div class="cal-day ${isOtherMonth?'other-month':''} ${isToday?'today':''} ${dayEvents.length?'has-events':''}" onclick="openCalendarDayModal('${key}')">
+        <div class="cal-day-num">${cur.getDate()}</div>
+        ${dayEvents.slice(0,3).map(e=>`<div class="cal-event-pill cal-event-${e.event_type}">${escapeHtml(e.title)}</div>`).join("")}
+        ${dayEvents.length > 3 ? `<div style="font-size:10px;color:var(--text-3);">+${dayEvents.length-3} كمان</div>` : ""}
+      </div>`;
+    cur.setDate(cur.getDate() + 1);
+  }
+  document.getElementById("calDaysGrid").innerHTML = html;
+  icons();
+}
+
+function calDayEventsListHtml(events){
+  if (!events.length){
+    return `<div style="font-size:13px;color:var(--text-3);text-align:center;padding:14px 0;">مفيش أحداث في اليوم ده</div>`;
+  }
+  return events.map(e=>`
+    <div class="table-card" style="padding:10px 12px;margin-bottom:8px;">
+      <div style="display:flex;justify-content:space-between;gap:8px;">
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;flex-wrap:wrap;">
+            <span class="cal-event-pill cal-event-${e.event_type}" style="display:inline-block;">${CAL_EVENT_TYPE_LABELS[e.event_type]||e.event_type}</span>
+            <b style="font-size:13px;">${escapeHtml(e.title)}</b>
+          </div>
+          ${e.start_time ? `<div style="font-size:11.5px;color:var(--text-3);">${formatTime12h(e.start_time)}${e.end_time?' - '+formatTime12h(e.end_time):''}</div>` : ""}
+          <div style="font-size:11.5px;color:var(--text-3);">${e.group_name ? escapeHtml(e.group_name) : (e.stage_name ? 'كل مرحلة '+escapeHtml(e.stage_name) : '')}</div>
+          ${e.description ? `<div style="font-size:12px;color:var(--text-2);margin-top:4px;">${escapeHtml(e.description)}</div>` : ""}
+        </div>
+        ${canManageCalEvent(e) ? `
+        <div style="display:flex;gap:4px;flex-shrink:0;">
+          <button class="action-btn" onclick="openEditCalendarEventModal(${e.id})"><i data-lucide="pencil" style="width:13px;height:13px;"></i></button>
+          <button class="action-btn" onclick="deleteCalendarEvent(${e.id})" style="color:var(--danger);"><i data-lucide="trash-2" style="width:13px;height:13px;"></i></button>
+        </div>` : ""}
+      </div>
+    </div>
+  `).join("");
+}
+
+function openCalendarDayModal(dateKey){
+  const events = CAL_STATE.eventsByDate[dateKey] || [];
+  const canManage = ["admin","head_supervisor","supervisor"].includes(SESSION.role);
+  const d = new Date(dateKey + "T00:00:00");
+  const dateLabel = `${d.getDate()} ${CAL_MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
+  openModal(
+    dateLabel,
+    `<div id="calDayEventsList">${calDayEventsListHtml(events)}</div>
+     ${canManage ? `<button class="btn btn-ghost btn-sm" style="margin-top:6px;" onclick="openAddCalendarEventModal('${dateKey}')"><i data-lucide="plus" style="width:13px;height:13px;"></i> إضافة حدث في اليوم ده</button>` : ""}`,
+    `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`,
+    {width:"480px"}
+  );
+  icons();
+}
+
+async function openAddCalendarEventModal(prefillDate){
+  const [groups, stages] = await Promise.all([loadGroups(), loadStages()]);
+  openModal(
+    "حدث جديد في التقويم",
+    calEventFormHtml(null, groups, stages, prefillDate),
+    `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+     <button class="btn btn-primary" onclick="saveCalendarEventForm(null)">إضافة</button>`,
+    {width:"520px"}
+  );
+  icons();
+  toggleCalScopeInputs();
+}
+
+async function openEditCalendarEventModal(eventId){
+  const event = CAL_STATE.eventsById[eventId];
+  if (!event) return;
+  const [groups, stages] = await Promise.all([loadGroups(), loadStages()]);
+  openModal(
+    "تعديل الحدث",
+    calEventFormHtml(event, groups, stages, null),
+    `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+     <button class="btn btn-primary" onclick="saveCalendarEventForm(${eventId})">حفظ التعديلات</button>`,
+    {width:"520px"}
+  );
+  icons();
+  toggleCalScopeInputs();
+}
+
+function calEventFormHtml(event, groups, stages, prefillDate){
+  const v = event || {};
+  const isSupervisor = SESSION.role === "supervisor";
+  const scopeIsStage = !!v.stage_id;
+  return `
+  <div class="form-group"><label class="form-label">عنوان الحدث</label>
+    <input class="form-input" id="calFormTitle" value="${jsAttr(v.title||"")}" placeholder="مثال: امتحان الشهر الأول"></div>
+  <div class="form-row-2">
+    <div class="form-group"><label class="form-label">نوع الحدث</label>
+      <select class="form-select" id="calFormType">
+        <option value="session" ${v.event_type==='session'?'selected':''}>حصة</option>
+        <option value="exam" ${v.event_type==='exam'?'selected':''}>امتحان</option>
+        <option value="review" ${v.event_type==='review'?'selected':''}>مراجعة</option>
+        <option value="other" ${v.event_type==='other'?'selected':''}>آخر</option>
+      </select></div>
+    <div class="form-group"><label class="form-label">التاريخ</label>
+      <input type="date" class="form-input" id="calFormDate" value="${v.event_date||prefillDate||""}"></div>
+  </div>
+  <div class="form-row-2">
+    <div class="form-group"><label class="form-label">من الساعة (اختياري)</label>
+      <input type="time" class="form-input" id="calFormStart" value="${v.start_time||""}"></div>
+    <div class="form-group"><label class="form-label">إلى الساعة (اختياري)</label>
+      <input type="time" class="form-input" id="calFormEnd" value="${v.end_time||""}"></div>
+  </div>
+  ${!isSupervisor ? `
+  <div class="form-group">
+    <label class="form-label">نطاق الحدث</label>
+    <div style="display:flex;gap:14px;font-size:13px;">
+      <label style="display:flex;align-items:center;gap:5px;"><input type="radio" name="calScope" value="group" ${!scopeIsStage?'checked':''} onchange="toggleCalScopeInputs()"> مجموعة معينة</label>
+      <label style="display:flex;align-items:center;gap:5px;"><input type="radio" name="calScope" value="stage" ${scopeIsStage?'checked':''} onchange="toggleCalScopeInputs()"> مرحلة كاملة</label>
+    </div>
+  </div>` : ""}
+  <div class="form-group" id="calGroupField">
+    <label class="form-label">المجموعة</label>
+    <select class="form-select" id="calFormGroup">
+      ${groups.map(g=>`<option value="${g.id}" ${v.group_id===g.id?'selected':''}>${escapeHtml(g.name)}</option>`).join("")}
+    </select></div>
+  <div class="form-group" id="calStageField">
+    <label class="form-label">المرحلة الدراسية</label>
+    <select class="form-select" id="calFormStage">
+      ${stages.map(s=>`<option value="${s.id}" ${v.stage_id===s.id?'selected':''}>${escapeHtml(s.name)}</option>`).join("")}
+    </select></div>
+  <div class="form-group"><label class="form-label">وصف (اختياري)</label>
+    <textarea class="form-input" id="calFormDesc" rows="2">${escapeHtml(v.description||"")}</textarea></div>
+  `;
+}
+
+function toggleCalScopeInputs(){
+  const isSupervisor = SESSION.role === "supervisor";
+  const radios = document.getElementsByName("calScope");
+  const val = (!isSupervisor && radios.length) ? (Array.from(radios).find(r=>r.checked)?.value || "group") : "group";
+  const groupField = document.getElementById("calGroupField");
+  const stageField = document.getElementById("calStageField");
+  if (groupField) groupField.style.display = val === "group" ? "" : "none";
+  if (stageField) stageField.style.display = val === "stage" ? "" : "none";
+}
+
+async function saveCalendarEventForm(eventId){
+  const isSupervisor = SESSION.role === "supervisor";
+  const radios = document.getElementsByName("calScope");
+  const scope = (!isSupervisor && radios.length) ? (Array.from(radios).find(r=>r.checked)?.value || "group") : "group";
+
+  const payload = {
+    title: document.getElementById("calFormTitle").value.trim(),
+    description: document.getElementById("calFormDesc").value.trim() || null,
+    event_type: document.getElementById("calFormType").value,
+    event_date: document.getElementById("calFormDate").value,
+    start_time: document.getElementById("calFormStart").value || null,
+    end_time: document.getElementById("calFormEnd").value || null,
+    group_id: null, stage_id: null,
+  };
+  if (scope === "group"){
+    const gEl = document.getElementById("calFormGroup");
+    payload.group_id = gEl && gEl.value ? parseInt(gEl.value) : null;
+  } else {
+    const sEl = document.getElementById("calFormStage");
+    payload.stage_id = sEl && sEl.value ? parseInt(sEl.value) : null;
+  }
+
+  if (!payload.title || !payload.event_date){ showToast("لازم تملأ العنوان والتاريخ", "error"); return; }
+  try{
+    if (eventId) await api(`/api/calendar-events/${eventId}`, {method:"PUT", body: JSON.stringify(payload)});
+    else await api("/api/calendar-events", {method:"POST", body: JSON.stringify(payload)});
+  }catch(e){ return; }
+  closeOverlay("genericModal");
+  showToast("تم الحفظ", "success");
+  await loadCalendarMonth();
+}
+
+async function deleteCalendarEvent(eventId){
+  confirmAction("حذف الحدث", "متأكد إنك عايز تحذف الحدث ده؟", async ()=>{
+    try{ await api(`/api/calendar-events/${eventId}`, {method:"DELETE"}); }catch(e){ return; }
+    closeOverlay("genericModal");
+    showToast("تم حذف الحدث", "success");
+    await loadCalendarMonth();
   });
 }
 </script>

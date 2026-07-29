@@ -856,6 +856,51 @@ def init_db():
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_online_exam_violations_attempt ON online_exam_violations(attempt_id)")
 
+        # ---------------------------------------------------------------
+        # هيت ماب المذاكرة (زي GitHub) - بنسجل يوم النشاط مرة واحدة بس لكل
+        # طالب لكل يوم (مع عداد إجمالي عدد مرات النشاط في اليوم ده)، وبيتغذى
+        # تلقائيًا من أي نشاط مذاكرة فعلي (حل سؤال في بنك الأسئلة، أو الإجابة
+        # في امتحان إلكتروني) - مفيش تسجيل يدوي عشان يفضل رقم صادق يشجع الطالب
+        # ---------------------------------------------------------------
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS student_study_days (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id INTEGER NOT NULL,
+            activity_date TEXT NOT NULL,
+            activity_count INTEGER NOT NULL DEFAULT 1,
+            FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+            UNIQUE(student_id, activity_date)
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_study_days_student ON student_study_days(student_id, activity_date)")
+
+        # ---------------------------------------------------------------
+        # التقويم - أحداث (حصص/امتحانات/مراجعات) تظهر لمجموعة بعينها أو لمرحلة
+        # دراسية كاملة. المشرف بيضيف لمجموعاته بس، والأدمن/مشرف المشرفين
+        # يقدروا يضيفوا لمرحلة كاملة كمان.
+        # ---------------------------------------------------------------
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS calendar_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            description TEXT,
+            event_type TEXT NOT NULL DEFAULT 'session' CHECK(event_type IN ('session','exam','review','other')),
+            event_date TEXT NOT NULL,
+            start_time TEXT,
+            end_time TEXT,
+            group_id INTEGER,
+            stage_id INTEGER,
+            created_by INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+            FOREIGN KEY (stage_id) REFERENCES stages(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_calendar_events_date ON calendar_events(event_date)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_calendar_events_group ON calendar_events(group_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_calendar_events_stage ON calendar_events(stage_id)")
+
         # ترحيل قيد الأدوار القديم عشان يسمح بدور head_supervisor الجديد
         _migrate_users_role_check(cur)
 
