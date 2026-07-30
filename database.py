@@ -471,6 +471,27 @@ def init_db():
         # غير سداد، من غير ما يأثر على باقي الشهور
         _safe_alter(cur, "ALTER TABLE payments ADD COLUMN is_free INTEGER NOT NULL DEFAULT 0")
 
+        # ---------------------------------------------------------------
+        # Exception (خصم/سعر مختلف عن سعر الباقة) + رسوم الحصص التي غابها الطالب
+        # ميزتان اختياريتان بالكامل - لو مش مستخدمتين، amount = base_price زي ما كان قبل كده بالظبط
+        # - base_price: السعر الأساسي المعتمد فعليًا لهذه الدفعة (سعر المجموعة، أو
+        #   قيمة الـ Exception لو اتفعلت). بيتسجل وقت الحفظ عشان التقرير يفضل صحيح
+        #   حتى لو سعر المجموعة اتغير بعدين.
+        # - exception_amount: لو مش NULL، يبقى معناه إن الأدمن فعّل Exception وحدد
+        #   قيمة اشتراك فعلية مختلفة عن سعر الباقة (بتحل محل base_price مش بتتضاف ليه)
+        # - absence_sessions / absence_session_price: عدد حصص الغياب وسعر الحصة
+        # - absence_fee: رسوم الغياب المحسوبة = absence_sessions × absence_session_price
+        # - amount (العمود الأصلي) فضل بمعنى "إجمالي المطلوب" = base_price + absence_fee
+        # ---------------------------------------------------------------
+        _safe_alter(cur, "ALTER TABLE payments ADD COLUMN base_price REAL")
+        _safe_alter(cur, "ALTER TABLE payments ADD COLUMN exception_amount REAL")
+        _safe_alter(cur, "ALTER TABLE payments ADD COLUMN absence_sessions INTEGER NOT NULL DEFAULT 0")
+        _safe_alter(cur, "ALTER TABLE payments ADD COLUMN absence_session_price REAL NOT NULL DEFAULT 0")
+        _safe_alter(cur, "ALTER TABLE payments ADD COLUMN absence_fee REAL NOT NULL DEFAULT 0")
+        # ترحيل السجلات القديمة: base_price كانت مش موجودة قبل كده، فبنملاها من amount
+        # (اللي كانت هي سعر الاشتراك بالظبط قبل إضافة الـ Exception ورسوم الغياب)
+        cur.execute("UPDATE payments SET base_price = amount WHERE base_price IS NULL")
+
         # جدول الكويزات - كويز عام على مستوى المرحلة الدراسية (بيشوفه كل مشرفي المرحلة)
         # أو مرتبط بمجموعة معينة (النظام القديم، لسه متاح للتوافق)
         cur.execute("""

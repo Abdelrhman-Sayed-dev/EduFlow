@@ -368,6 +368,12 @@ class PaymentIn(BaseModel):
     is_free: bool = False  # فري لشهر الدفعة ده بس (مختلف عن فري الطالب الدائم)
     paid_date: Optional[str] = None
     notes: Optional[str] = Field(None, max_length=2000)
+    # Exception - سعر اشتراك فعلي مختلف عن سعر الباقة (اختياري بالكامل). لو اتبعت،
+    # بيحل محل سعر الباقة الافتراضي كـ"سعر اشتراك أساسي" لهذه الدفعة بس.
+    exception_amount: Optional[float] = None
+    # رسوم الحصص التي غابها الطالب (اختياري بالكامل) - بتتضاف فوق سعر الاشتراك
+    absence_sessions: Optional[int] = 0
+    absence_session_price: Optional[float] = 0
 
 
 class BulkPaymentIn(BaseModel):
@@ -1234,7 +1240,7 @@ def search_students(q: str = "", session=Depends(require_roles("admin", "head_su
             sd["subscription_active"] = is_student_subscribed(conn, s["id"])
             # سجل الاشتراكات الشهرية (تاريخ السداد لكل شهر)
             payments_rows = conn.execute(
-                "SELECT month, is_paid, paid_date, amount FROM payments WHERE student_id=? ORDER BY month DESC",
+                "SELECT month, is_paid, paid_date, amount, base_price, exception_amount, absence_sessions, absence_session_price, absence_fee FROM payments WHERE student_id=? ORDER BY month DESC",
                 (s["id"],)
             ).fetchall()
             sd["payments"] = [dict(p) for p in payments_rows]
@@ -3905,7 +3911,7 @@ def find_student_by_code(code: str, session=Depends(require_roles("admin", "head
         sd = dict(student)
         sd["subscription_active"] = is_student_subscribed(conn, student["id"])
         payments_rows = conn.execute(
-            "SELECT month, is_paid, paid_date, amount FROM payments WHERE student_id=? ORDER BY month DESC",
+            "SELECT month, is_paid, paid_date, amount, base_price, exception_amount, absence_sessions, absence_session_price, absence_fee FROM payments WHERE student_id=? ORDER BY month DESC",
             (student["id"],)
         ).fetchall()
         sd["payments"] = [dict(p) for p in payments_rows]
@@ -4171,7 +4177,8 @@ def get_payments(group_id: Optional[int] = None, month: Optional[str] = None,
 
         query = """
             SELECT s.id as student_id, s.full_name, s.group_id, s.is_free, g.name as group_name, g.monthly_fee as group_monthly_fee,
-                   p.id as payment_id, p.amount, p.is_paid, p.is_free as month_free, p.paid_date, p.notes
+                   p.id as payment_id, p.amount, p.is_paid, p.is_free as month_free, p.paid_date, p.notes,
+                   p.base_price, p.exception_amount, p.absence_sessions, p.absence_session_price, p.absence_fee
             FROM students s
             JOIN groups g ON g.id = s.group_id
             LEFT JOIN payments p ON p.student_id = s.id AND p.month = ?
@@ -4203,10 +4210,30 @@ def set_payment(data: PaymentIn, session=Depends(require_roles("admin", "head_su
         is_free = data.is_free
         is_paid = data.is_paid and not is_free
 
-        amount = data.amount
-        if amount is None and not is_free:
-            grp = conn.execute("SELECT monthly_fee FROM groups WHERE id=?", (student["group_id"],)).fetchone()
-            amount = grp["monthly_fee"] if grp else None
+        # -----------------------------------------------------------------
+        # سعر الاشتراك الأساسي: سعر الباقة (المجموعة) افتراضيًا، إلا لو:
+        #   - اتبعت amount يدويًا (توافق مع السلوك القديم قبل إضافة الـ Exception)
+        #   - أو اتفعّل Exception (exception_amount) - وده بيحل محل السعر الافتراضي
+        # -----------------------------------------------------------------
+        exception_amount = data.exception_amount if not is_free else None
+        base_price = None
+        if not is_free:
+            if exception_amount is not None:
+                base_price = exception_amount
+            elif data.amount is not None:
+                base_price = data.amount
+            else:
+                grp = conn.execute("SELECT monthly_fee FROM groups WHERE id=?", (student["group_id"],)).fetchone()
+                base_price = grp["monthly_fee"] if grp else None
+
+        # رسوم الحصص التي غابها الطالب (اختياري) - بتتضاف فوق سعر الاشتراك الأساسي
+        absence_sessions = int(data.absence_sessions or 0) if not is_free else 0
+        absence_session_price = float(data.absence_session_price or 0) if not is_free else 0.0
+        absence_fee = (absence_sessions * absence_session_price) if not is_free else 0.0
+
+        amount = None
+        if not is_free:
+            amount = (base_price or 0) + absence_fee
 
         paid_date = data.paid_date
         if is_paid and not paid_date:
@@ -4216,13 +4243,25 @@ def set_payment(data: PaymentIn, session=Depends(require_roles("admin", "head_su
             paid_date = None
 
         conn.execute("""
-            INSERT INTO payments (student_id, month, amount, is_paid, is_free, paid_date, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO payments (student_id, month, amount, is_paid, is_free, paid_date, notes,
+                                   base_price, exception_amount, absence_sessions, absence_session_price, absence_fee)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(student_id, month)
             DO UPDATE SET amount=excluded.amount, is_paid=excluded.is_paid, is_free=excluded.is_free,
-                          paid_date=excluded.paid_date, notes=excluded.notes
-        """, (data.student_id, data.month, amount, int(is_paid), int(is_free), paid_date, data.notes))
+                          paid_date=excluded.paid_date, notes=excluded.notes,
+                          base_price=excluded.base_price, exception_amount=excluded.exception_amount,
+                          absence_sessions=excluded.absence_sessions, absence_session_price=excluded.absence_session_price,
+                          absence_fee=excluded.absence_fee
+        """, (data.student_id, data.month, amount, int(is_paid), int(is_free), paid_date, data.notes,
+              base_price, exception_amount, absence_sessions, absence_session_price, absence_fee))
         desc = "فري (الشهر ده بس)" if is_free else ("مسدد" if is_paid else "غير مسدد")
+        extra_bits = []
+        if exception_amount is not None:
+            extra_bits.append(f"Exception بقيمة {exception_amount}")
+        if absence_fee:
+            extra_bits.append(f"رسوم غياب {absence_fee}")
+        if extra_bits:
+            desc += " (" + " + ".join(extra_bits) + ")"
         log_session_activity(
             conn, session, "payment",
             f"تسجيل دفعة لطالب #{data.student_id} - شهر {data.month}: {desc}",
@@ -4266,11 +4305,11 @@ def set_bulk_payment(data: BulkPaymentIn, session=Depends(require_roles("admin",
                 amount = grp["monthly_fee"] if grp else None
 
             conn.execute("""
-                INSERT INTO payments (student_id, month, amount, is_paid, paid_date, notes)
-                VALUES (?, ?, ?, ?, ?, NULL)
+                INSERT INTO payments (student_id, month, amount, is_paid, paid_date, notes, base_price)
+                VALUES (?, ?, ?, ?, ?, NULL, ?)
                 ON CONFLICT(student_id, month)
                 DO UPDATE SET amount=excluded.amount, is_paid=excluded.is_paid, paid_date=excluded.paid_date
-            """, (sid, data.month, amount, int(data.is_paid), paid_date))
+            """, (sid, data.month, amount, int(data.is_paid), paid_date, amount))
             updated += 1
 
         log_session_activity(
@@ -4303,7 +4342,8 @@ def get_subscriptions_summary(month: str, session=Depends(require_roles("admin",
 
         for g in groups:
             students = conn.execute("""
-                SELECT s.id as student_id, s.full_name, s.is_free, p.is_paid, p.is_free as month_free, p.amount, p.paid_date
+                SELECT s.id as student_id, s.full_name, s.is_free, p.is_paid, p.is_free as month_free, p.amount, p.paid_date,
+                       p.base_price, p.exception_amount, p.absence_sessions, p.absence_session_price, p.absence_fee
                 FROM students s
                 LEFT JOIN payments p ON p.student_id = s.id AND p.month = ?
                 WHERE s.group_id = ? AND s.is_active = 1
@@ -4314,23 +4354,44 @@ def get_subscriptions_summary(month: str, session=Depends(require_roles("admin",
             paid_count = 0
             free_count = 0
             group_amount = 0.0
+            group_exception_amount = 0.0
+            group_absence_fee = 0.0
+            group_remaining = 0.0
             for s in students:
                 # فري دائم (كل الشهور) أو فري لشهر التقرير ده بالذات - الاتنين بيتحسبوا "فري"
                 is_free = bool(s["is_free"]) or bool(s["month_free"])
                 is_paid = bool(s["is_paid"]) and not is_free
+                # قيمة الاشتراك الفعلية لو موجودة، وإلا قيمة المجموعة الافتراضية (كمتوقع لسه ملسددش)
+                total_amount = s["amount"] if s["amount"] is not None else g["monthly_fee"]
+                base_price = s["base_price"] if s["base_price"] is not None else g["monthly_fee"]
+                exception_amount = s["exception_amount"]
+                absence_fee = s["absence_fee"] or 0
+                paid_amount = (total_amount or 0) if is_paid else 0
+                remaining_amount = 0 if (is_free or is_paid) else (total_amount or 0)
                 if is_free:
                     free_count += 1
                 elif is_paid:
                     paid_count += 1
-                    group_amount += (s["amount"] or 0)
+                    group_amount += (total_amount or 0)
+                    if exception_amount is not None:
+                        group_exception_amount += exception_amount
+                    group_absence_fee += absence_fee
+                else:
+                    group_remaining += remaining_amount
                 students_list.append({
                     "student_id": s["student_id"],
                     "full_name": s["full_name"],
                     "is_free": is_free,
                     "is_paid": is_paid,
-                    # قيمة الاشتراك الفعلية لو موجودة، وإلا قيمة المجموعة الافتراضية (كمتوقع لسه ملسددش)
-                    # الطالب الفري مش بيدفع فعليًا، القيمة هنا للعرض بس (مش بتتحسب في الإجمالي)
-                    "amount": s["amount"] if s["amount"] is not None else g["monthly_fee"],
+                    "amount": total_amount,  # إجمالي المطلوب - للتوافق مع الواجهة القديمة
+                    "base_price": base_price,  # سعر الاشتراك الأساسي (سعر الباقة أو الـ Exception)
+                    "exception_amount": exception_amount,  # قيمة الـ Exception إن وجدت، وإلا None
+                    "absence_sessions": s["absence_sessions"] or 0,
+                    "absence_session_price": s["absence_session_price"] or 0,
+                    "absence_fee": absence_fee,  # رسوم الغياب إن وجدت
+                    "total_due": total_amount,  # إجمالي المطلوب = base_price + absence_fee
+                    "paid_amount": paid_amount,
+                    "remaining_amount": remaining_amount,
                     "paid_date": s["paid_date"],
                 })
 
@@ -4343,12 +4404,19 @@ def get_subscriptions_summary(month: str, session=Depends(require_roles("admin",
                 "free_count": free_count,
                 "unpaid_count": students_count - paid_count - free_count,
                 "total_amount": group_amount,
+                "total_exception_amount": group_exception_amount,
+                "total_absence_fee": group_absence_fee,
+                "total_remaining": group_remaining,
                 "students": students_list,
             })
             grand_students += students_count
             grand_paid += paid_count
             grand_free += free_count
             grand_amount += group_amount
+
+        grand_exception_amount = sum(g["total_exception_amount"] for g in result_groups)
+        grand_absence_fee = sum(g["total_absence_fee"] for g in result_groups)
+        grand_remaining = sum(g["total_remaining"] for g in result_groups)
 
         return {
             "month": month,
@@ -4359,6 +4427,9 @@ def get_subscriptions_summary(month: str, session=Depends(require_roles("admin",
                 "free_count": grand_free,
                 "unpaid_count": grand_students - grand_paid - grand_free,
                 "total_amount": grand_amount,
+                "total_exception_amount": grand_exception_amount,
+                "total_absence_fee": grand_absence_fee,
+                "total_remaining": grand_remaining,
             },
         }
 
