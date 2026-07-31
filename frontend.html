@@ -3313,6 +3313,43 @@ function moneyLabel(n){
   return `${num.toLocaleString("ar-EG")} ج`;
 }
 
+/* -----------------------------------------------------------------------
+   تطبيع الأرقام العربية/الفارسية للأرقام الإنجليزية - بعض المتصفحات بترجع
+   value فاضي لو المستخدم كتب أرقام عربية (٠١٢...) جوه input من نوع
+   type="number" (سبب شائع إن حقول المبالغ كانت بترجع فاضية/صفر بعد الحفظ
+   لو كيبورد الجهاز كان عربي). الحل: نستخدم type="text" مع تطبيع الأرقام.
+----------------------------------------------------------------------- */
+function normalizeDigits(str){
+  if (str === null || str === undefined) return "";
+  const arabicIndic = "٠١٢٣٤٥٦٧٨٩";
+  const persian = "۰۱۲۳۴۵۶۷۸۹";
+  return String(str).replace(/[٠-٩۰-۹]/g, (d) => {
+    let idx = arabicIndic.indexOf(d);
+    if (idx === -1) idx = persian.indexOf(d);
+    return idx === -1 ? d : String(idx);
+  });
+}
+
+// بيسمح بالأرقام (عربي/إنجليزي) وفاصلة عشرية واحدة بس - يُستخدم كـ oninput
+// على حقول المبالغ عشان يمنع المستخدم يكتب حروف أو أكتر من فاصلة، وفي نفس
+// الوقت يحافظ على اللي كتبه بدل ما يتصفّر.
+function sanitizeAmountInput(value){
+  let v = normalizeDigits(value).replace(/[^0-9.]/g, "");
+  const firstDot = v.indexOf(".");
+  if (firstDot !== -1){
+    v = v.slice(0, firstDot + 1) + v.slice(firstDot + 1).replace(/\./g, "");
+  }
+  return v;
+}
+
+// بيرجع رقم (float) من قيمة حقل مبلغ بعد التطبيع، أو null لو الحقل فاضي/مش رقم
+function parseAmountValue(value){
+  const v = sanitizeAmountInput(value || "").trim();
+  if (!v || v === ".") return null;
+  const num = parseFloat(v);
+  return isNaN(num) ? null : num;
+}
+
 async function renderSubscriptionsReportPage(){
   if (!SUBS_REPORT_MONTH) SUBS_REPORT_MONTH = currentMonthStr();
   const c = document.getElementById("pageContainer");
@@ -3534,6 +3571,90 @@ function printSubscribedStudentsReport(){
    renderSubscriptionsReportPage) - له شاشاته وإدارته الخاصة بالكامل، ومش
    بيأثر ولا بيتأثر بمنطق الاشتراك الشهري.
 ===================================================================== */
+/* -----------------------------------------------------------------------
+   خلي أي <select> عادي دروب داون فيه بحث - بيسيب الـ select الأصلي شغال زي
+   ما هو (مخفي بس) عشان أي كود قديم بيقرأ .value أو بيسمع onchange عليه يفضل
+   شغال من غير أي تعديل، وبس بيضيف فوقه واجهة بحث. آمن إنك تنادي الدالة أكتر
+   من مرة على نفس الـ select (مش بتكرر الإضافة).
+----------------------------------------------------------------------- */
+function enableSearchableSelect(selectId){
+  const select = document.getElementById(selectId);
+  if (!select || select.dataset.searchableReady) return;
+  select.dataset.searchableReady = "1";
+
+  const wrap = document.createElement("div");
+  wrap.className = "searchable-select-wrap";
+  wrap.style.cssText = "position:relative;display:inline-block;";
+  select.parentNode.insertBefore(wrap, select);
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "form-input searchable-select-input";
+  input.autocomplete = "off";
+  input.style.cssText = select.getAttribute("style") || "";
+  wrap.appendChild(input);
+  wrap.appendChild(select);
+  select.style.display = "none";
+
+  const list = document.createElement("div");
+  list.className = "searchable-select-list";
+  list.style.cssText = "position:absolute;top:calc(100% + 4px);right:0;left:0;background:var(--card-bg,#fff);border:1px solid var(--border);border-radius:var(--radius-md);max-height:260px;overflow-y:auto;z-index:60;display:none;box-shadow:0 8px 24px rgba(0,0,0,0.14);";
+  wrap.appendChild(list);
+
+  function optionsData(){
+    return [...select.options].filter(o => o.value !== "").map(o => ({value:o.value, label:o.textContent}));
+  }
+  function syncFromSelect(){
+    const opt = select.options[select.selectedIndex];
+    input.value = (opt && opt.value) ? opt.textContent : "";
+    input.placeholder = select.options[0] ? select.options[0].textContent : "بحث...";
+    input.disabled = select.disabled;
+    input.style.opacity = select.disabled ? "0.6" : "";
+    input.style.cursor = select.disabled ? "not-allowed" : "text";
+  }
+  syncFromSelect();
+
+  function renderList(filter){
+    const q = normalizeDigits(filter || "").trim().toLowerCase();
+    const items = optionsData().filter(o => !q || o.label.toLowerCase().includes(q));
+    list.innerHTML = items.length
+      ? items.map(o => `<div class="searchable-select-item" data-value="${String(o.value).replace(/"/g,'&quot;')}" style="padding:9px 12px;cursor:pointer;font-size:13px;">${escapeHtml(o.label)}</div>`).join("")
+      : `<div style="padding:10px 12px;color:var(--text-3);font-size:12.5px;">مفيش نتائج</div>`;
+    list.style.display = "block";
+  }
+
+  input.addEventListener("focus", () => { if (!select.disabled) renderList(""); });
+  input.addEventListener("input", () => { if (!select.disabled) renderList(input.value); });
+  list.addEventListener("mouseover", (e) => {
+    const item = e.target.closest(".searchable-select-item");
+    if (item) item.style.background = "var(--primary-10)";
+  });
+  list.addEventListener("mouseout", (e) => {
+    const item = e.target.closest(".searchable-select-item");
+    if (item) item.style.background = "";
+  });
+  list.addEventListener("mousedown", (e) => {
+    const item = e.target.closest(".searchable-select-item");
+    if (!item) return;
+    e.preventDefault();
+    select.value = item.dataset.value;
+    input.value = item.textContent;
+    list.style.display = "none";
+    select.dispatchEvent(new Event("change"));
+  });
+  document.addEventListener("click", (e) => {
+    if (!wrap.contains(e.target)) list.style.display = "none";
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") list.style.display = "none";
+  });
+
+  // لو الأوبشنز أو حالة الـ disabled اتغيّرت برمجيًا (زي إعادة تعبئة قايمة
+  // الطلاب لما المجموعة تتغيّر)، حدّث واجهة البحث تلقائيًا
+  const observer = new MutationObserver(syncFromSelect);
+  observer.observe(select, {childList:true, attributes:true, attributeFilter:["disabled"]});
+}
+
 let SESSION_SUB_GROUPS = [];
 let SESSION_SUB_SELECTED_GROUP = "";
 let SESSION_SUB_SELECTED_STUDENT = null; // {id, full_name, group_id, ...}
@@ -3560,6 +3681,8 @@ async function renderSessionSubscriptionsPage(){
       <div id="ssubBody"><div class="empty-state"><div class="empty-icon"><i data-lucide="ticket" style="width:24px;height:24px;"></i></div><div class="empty-title">اختر مجموعة ثم طالب عشان تبدأ</div></div></div>
     </div>
   `;
+  enableSearchableSelect("ssubGroupSelect");
+  enableSearchableSelect("ssubStudentSelect");
   icons();
 }
 
@@ -3657,7 +3780,7 @@ function renderSsubBody(){
       <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;background:var(--primary-10);padding:14px 16px;border-radius:var(--radius-md);">
         <div class="form-group" style="margin:0;">
           <label class="form-label">المبلغ المدفوع</label>
-          <input class="form-input" type="number" id="ssubAmount" style="width:140px;" placeholder="جنيه">
+          <input class="form-input" type="text" inputmode="decimal" id="ssubAmount" style="width:140px;" placeholder="جنيه" oninput="this.value=sanitizeAmountInput(this.value)">
         </div>
         <div class="form-group" style="margin:0;">
           <label class="form-label">تاريخ الاشتراك</label>
@@ -3711,10 +3834,12 @@ function renderSsubHistoryTable(){
             <td style="color:var(--text-3);font-size:12.5px;">${p.purchase_date || "—"}</td>
             <td><span class="badge ${p.status==='active'?'badge-green':'badge-red'}">${p.status==='active'?'فعّال':'ملغي'}</span></td>
             <td style="color:var(--text-3);font-size:12.5px;">${escapeHtml(p.created_by_name || "—")}</td>
-            <td>
+            <td style="display:flex;gap:4px;flex-wrap:wrap;">
               ${p.status==='active'
                 ? `<button class="btn btn-ghost btn-sm" style="color:var(--danger);" onclick="toggleSessionPurchaseStatus(${p.id}, 'cancelled')">إلغاء</button>`
                 : `<button class="btn btn-ghost btn-sm" onclick="toggleSessionPurchaseStatus(${p.id}, 'active')">إعادة تفعيل</button>`}
+              <button class="btn btn-ghost btn-sm" onclick="openEditSessionPurchase(${p.id})"><i data-lucide="pencil" style="width:12px;height:12px;"></i> تعديل</button>
+              <button class="btn btn-ghost btn-sm" style="color:var(--danger);" onclick="deleteSessionPurchase(${p.id})"><i data-lucide="trash-2" style="width:12px;height:12px;"></i> حذف</button>
             </td>
           </tr>
         `).join("")}
@@ -3729,14 +3854,14 @@ async function saveSessionPurchase(){
     month: cb.dataset.month, session_number: parseInt(cb.dataset.session, 10),
   }));
   if (!checked.length){ showToast("اختر حصة واحدة على الأقل", "error"); return; }
-  const amount = document.getElementById("ssubAmount").value;
+  const amount = parseAmountValue(document.getElementById("ssubAmount").value);
   const purchase_date = document.getElementById("ssubDate").value || null;
   const notes = document.getElementById("ssubNotes").value.trim() || null;
 
   await api("/api/session-subscriptions", {method:"POST", body: JSON.stringify({
     student_id: SESSION_SUB_SELECTED_STUDENT.id,
     sessions: checked,
-    amount: amount ? parseFloat(amount) : null,
+    amount,
     purchase_date, notes,
   })});
   showToast("تم تسجيل الاشتراك بالحصص وفتح الحصص المختارة للطالب", "success");
@@ -3746,6 +3871,107 @@ async function saveSessionPurchase(){
 async function toggleSessionPurchaseStatus(purchaseId, status){
   await api(`/api/session-subscriptions/${purchaseId}/status`, {method:"PUT", body: JSON.stringify({status})});
   showToast(status === "active" ? "تم إعادة تفعيل الاشتراك" : "تم إلغاء الاشتراك وقفل الحصص المرتبطة بيه", "success");
+  await onSsubStudentChange();
+}
+
+// فتح مودال تعديل سجل اشتراك بالحصص - بيسمح بتعديل المبلغ والتاريخ والملاحظات
+// وكمان تغيير قائمة الحصص المرتبطة بالاشتراك (إضافة/إزالة)
+function openEditSessionPurchase(purchaseId){
+  const p = SESSION_SUB_STUDENT_PURCHASES.find(x => x.id === purchaseId);
+  if (!p) return;
+
+  // دمج حصص كتالوج المجموعة الحالي مع الحصص المشتراة فعليًا في السجل ده (لو
+  // فيها حصة مش موجودة في الكتالوج الحالي، لازم تفضل تظهر عشان متتفقدش)
+  const selectedKeys = new Set((p.sessions||[]).map(it => `${it.month}|${it.session_number}`));
+  const catalogKeys = new Set(SESSION_SUB_CATALOG.map(s => `${s.month}|${s.session_number}`));
+  const merged = [...SESSION_SUB_CATALOG];
+  (p.sessions||[]).forEach(it => {
+    const key = `${it.month}|${it.session_number}`;
+    if (!catalogKeys.has(key)) merged.push({month: it.month, session_number: it.session_number});
+  });
+  merged.sort((a,b) => (a.month+String(a.session_number).padStart(4,"0")).localeCompare(b.month+String(b.session_number).padStart(4,"0")));
+
+  const sessionsHtml = merged.length ? merged.map(s => {
+    const key = `${s.month}|${s.session_number}`;
+    const checked = selectedKeys.has(key);
+    return `<label style="display:flex;align-items:center;gap:5px;padding:5px 9px;border:1px solid var(--border);border-radius:var(--radius-md);cursor:pointer;font-size:12px;${checked?'background:var(--success-bg);border-color:var(--success);':''}">
+      <input type="checkbox" class="esub-session-cb" data-month="${s.month}" data-session="${s.session_number}" ${checked?'checked':''} style="width:14px;height:14px;">
+      ${escapeHtml(monthLabelAr(s.month))} / حصة ${s.session_number}
+    </label>`;
+  }).join("") : `<div style="color:var(--text-3);font-size:12.5px;">لا توجد حصص متاحة في الكتالوج - أضف حصة برقمها تحت</div>`;
+
+  openModal(
+    "تعديل اشتراك بالحصص",
+    `
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <div>
+          <div style="font-weight:700;font-size:13px;margin-bottom:8px;">الحصص</div>
+          <div id="esubSessionsList" style="display:flex;flex-wrap:wrap;gap:6px;">${sessionsHtml}</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap;">
+            <span style="font-size:12px;color:var(--text-3);">أضف حصة برقمها:</span>
+            <input class="form-input" type="month" id="esubManualMonth" style="width:auto;" value="${currentMonthStr()}">
+            <input class="form-input" type="number" id="esubManualSession" style="width:80px;" placeholder="رقم الحصة" min="1">
+            <button class="btn btn-ghost btn-sm" onclick="addEditManualSessionCheckbox()"><i data-lucide="plus" style="width:12px;height:12px;"></i> إضافة</button>
+          </div>
+        </div>
+        <div class="form-group" style="margin:0;">
+          <label class="form-label">المبلغ المدفوع</label>
+          <input class="form-input" type="text" inputmode="decimal" id="esubAmount" value="${p.amount != null ? p.amount : ''}" placeholder="جنيه" oninput="this.value=sanitizeAmountInput(this.value)">
+        </div>
+        <div class="form-group" style="margin:0;">
+          <label class="form-label">تاريخ الاشتراك</label>
+          <input class="form-input" type="date" id="esubDate" value="${p.purchase_date || ''}">
+        </div>
+        <div class="form-group" style="margin:0;">
+          <label class="form-label">ملاحظات (اختياري)</label>
+          <input class="form-input" id="esubNotes" value="${escapeHtml(p.notes || '')}" placeholder="ملاحظات...">
+        </div>
+      </div>
+    `,
+    `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+     <button class="btn btn-primary" onclick="submitEditSessionPurchase(${purchaseId})"><i data-lucide="save" style="width:14px;height:14px;"></i> حفظ التعديل</button>`
+  );
+  openOverlay("genericModal");
+}
+
+// بيضيف checkbox لحصة برقمها يدويًا جوه مودال التعديل، من غير ما يعيد فتح المودال كله
+function addEditManualSessionCheckbox(){
+  const month = document.getElementById("esubManualMonth").value;
+  const sessionNumber = parseInt(document.getElementById("esubManualSession").value, 10);
+  if (!month || !sessionNumber){ showToast("حدد الشهر ورقم الحصة الأول", "error"); return; }
+  if ([...document.querySelectorAll(".esub-session-cb")].some(cb => cb.dataset.month===month && Number(cb.dataset.session)===sessionNumber)){
+    showToast("الحصة دي موجودة بالفعل في القايمة فوق", "info");
+    return;
+  }
+  const container = document.getElementById("esubSessionsList");
+  const label = document.createElement("label");
+  label.style.cssText = "display:flex;align-items:center;gap:5px;padding:5px 9px;border:1px solid var(--border);border-radius:var(--radius-md);cursor:pointer;font-size:12px;background:var(--success-bg);border-color:var(--success);";
+  label.innerHTML = `<input type="checkbox" class="esub-session-cb" data-month="${month}" data-session="${sessionNumber}" checked style="width:14px;height:14px;"> ${escapeHtml(monthLabelAr(month))} / حصة ${sessionNumber}`;
+  container.appendChild(label);
+}
+
+async function submitEditSessionPurchase(purchaseId){
+  const checked = [...document.querySelectorAll(".esub-session-cb:checked")].map(cb => ({
+    month: cb.dataset.month, session_number: parseInt(cb.dataset.session, 10),
+  }));
+  if (!checked.length){ showToast("اختر حصة واحدة على الأقل", "error"); return; }
+  const amount = parseAmountValue(document.getElementById("esubAmount").value);
+  const purchase_date = document.getElementById("esubDate").value || null;
+  const notes = document.getElementById("esubNotes").value.trim() || null;
+
+  await api(`/api/session-subscriptions/${purchaseId}`, {method:"PUT", body: JSON.stringify({
+    sessions: checked, amount, purchase_date, notes,
+  })});
+  showToast("تم تعديل الاشتراك بنجاح", "success");
+  closeOverlay("genericModal");
+  await onSsubStudentChange();
+}
+
+// حذف سجل اشتراك بالحصص نهائيًا (مش مجرد إلغاء) - بيقفل الحصص المرتبطة بيه فورًا
+async function deleteSessionPurchase(purchaseId){
+  if (!confirm("متأكد إنك عايز تحذف سجل الاشتراك ده نهائيًا؟ الحصص المرتبطة بيه هتتقفل لو محدش سجلها في اشتراك تاني للطالب.")) return;
+  await api(`/api/session-subscriptions/${purchaseId}`, {method:"DELETE"});
+  showToast("تم حذف سجل الاشتراك نهائيًا", "success");
   await onSsubStudentChange();
 }
 

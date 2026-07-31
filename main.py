@@ -407,6 +407,13 @@ class SessionPurchaseStatusIn(BaseModel):
     status: str  # 'active' أو 'cancelled'
 
 
+class SessionPurchaseEditIn(BaseModel):
+    sessions: List[SessionPurchaseItemIn]
+    amount: Optional[float] = None
+    purchase_date: Optional[str] = None
+    notes: Optional[str] = Field(None, max_length=2000)
+
+
 
 class StudentRequestIn(BaseModel):
     request_type: str  # attendance_change / issue / explanation / other
@@ -656,6 +663,8 @@ ACTION_LABELS = {
     "payment": "تسجيل دفعة اشتراك",
     "session_purchase": "تسجيل اشتراك بالحصص",
     "session_purchase_status": "تغيير حالة اشتراك بالحصص",
+    "session_purchase_edit": "تعديل اشتراك بالحصص",
+    "session_purchase_delete": "حذف اشتراك بالحصص",
     "video_upload": "رفع فيديو",
     "video_delete": "حذف فيديو",
     "student_add": "إضافة طالب",
@@ -4712,6 +4721,68 @@ def update_session_purchase_status(purchase_id: int, data: SessionPurchaseStatus
             group_id=purchase["group_id"]
         )
         return {"message": "تم تحديث حالة الاشتراك"}
+
+
+@app.put("/api/session-subscriptions/{purchase_id}")
+def update_session_purchase(purchase_id: int, data: SessionPurchaseEditIn,
+                             session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
+    """
+    تعديل سجل اشتراك بالحصص بالكامل: المبلغ، تاريخ الاشتراك، الملاحظات، وقائمة
+    الحصص المرتبطة (بيستبدل قائمة الحصص القديمة بالجديدة تمامًا). مختلف عن
+    endpoint تغيير الحالة اللي فوق ده (اللي بيلغي/يفعّل بس من غير ما يعدّل البيانات).
+    """
+    if not data.sessions:
+        raise HTTPException(status_code=400, detail="لازم تحدد حصة واحدة على الأقل")
+    with get_connection() as conn:
+        purchase = conn.execute("SELECT * FROM session_purchases WHERE id=?", (purchase_id,)).fetchone()
+        if not purchase:
+            raise HTTPException(status_code=404, detail="سجل الاشتراك غير موجود")
+        if session["role"] == "supervisor":
+            assert_supervisor_owns_group(conn, session, purchase["group_id"])
+
+        conn.execute(
+            "UPDATE session_purchases SET amount=?, purchase_date=?, notes=? WHERE id=?",
+            (data.amount, data.purchase_date or purchase["purchase_date"], data.notes, purchase_id)
+        )
+        conn.execute("DELETE FROM session_purchase_items WHERE purchase_id=?", (purchase_id,))
+        for item in data.sessions:
+            conn.execute(
+                "INSERT OR IGNORE INTO session_purchase_items (purchase_id, month, session_number) VALUES (?, ?, ?)",
+                (purchase_id, item.month, item.session_number)
+            )
+
+        student = conn.execute("SELECT full_name FROM students WHERE id=?", (purchase["student_id"],)).fetchone()
+        sessions_label = "، ".join(f"{it.month}/حصة {it.session_number}" for it in data.sessions)
+        log_session_activity(
+            conn, session, "session_purchase_edit",
+            f"تعديل اشتراك بالحصص لطالب \"{student['full_name'] if student else purchase['student_id']}\" - {sessions_label} - {data.amount or 0} ج",
+            group_id=purchase["group_id"]
+        )
+        return {"message": "تم تعديل الاشتراك بنجاح"}
+
+
+@app.delete("/api/session-subscriptions/{purchase_id}")
+def delete_session_purchase(purchase_id: int,
+                             session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
+    """
+    حذف سجل اشتراك بالحصص نهائيًا من قاعدة البيانات (مش مجرد إلغاء) - بيحذف
+    معاه عناصر الحصص المرتبطة بيه تلقائيًا (ON DELETE CASCADE على session_purchase_items).
+    """
+    with get_connection() as conn:
+        purchase = conn.execute("SELECT * FROM session_purchases WHERE id=?", (purchase_id,)).fetchone()
+        if not purchase:
+            raise HTTPException(status_code=404, detail="سجل الاشتراك غير موجود")
+        if session["role"] == "supervisor":
+            assert_supervisor_owns_group(conn, session, purchase["group_id"])
+
+        student = conn.execute("SELECT full_name FROM students WHERE id=?", (purchase["student_id"],)).fetchone()
+        conn.execute("DELETE FROM session_purchases WHERE id=?", (purchase_id,))
+        log_session_activity(
+            conn, session, "session_purchase_delete",
+            f"حذف سجل اشتراك بالحصص لطالب \"{student['full_name'] if student else purchase['student_id']}\" نهائيًا",
+            group_id=purchase["group_id"]
+        )
+        return {"message": "تم حذف سجل الاشتراك نهائيًا"}
 
 
 @app.get("/api/reports/session-subscriptions")
