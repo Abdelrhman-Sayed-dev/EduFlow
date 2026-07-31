@@ -18,6 +18,7 @@ import base64
 import uuid
 import asyncio
 import calendar
+import secrets
 from datetime import datetime, timedelta
 from openpyxl import load_workbook
 from fastapi import FastAPI, HTTPException, Header, Depends, Request, UploadFile, File, Form, Query
@@ -1887,6 +1888,26 @@ def assert_can_access_group_media(conn, session, group_id: int):
     raise HTTPException(status_code=403, detail="مفيش صلاحية للوصول لده")
 
 
+# ---------------------------------------------------------------------------
+# توكن مؤقت خاص ببث الفيديو فقط (vtoken)
+# ---------------------------------------------------------------------------
+# المشكلة اللي بيحلها: كان الفيديو بيتبث باستخدام نفس توكن تسجيل الدخول
+# (session token) حاطه في الـ query string. لو الطالب نسخ رابط الفيديو ده
+# وبعته لحد تاني، بقى معاه نفس توكن الدخول بتاعه وممكن يستخدمه يدخل يستعمل
+# الحساب كامل - مش بس يشوف الفيديو! عشان كده بدل ما نحط توكن الجلسة نفسه في
+# اللينك، بنولّد توكن مؤقت (vtoken) خاص بفيديو واحد بس، وله صلاحية قصيرة
+# ومحدودة، وميقدرش يستخدم بيه أي حاجة تانية في المنصة.
+VIDEO_TOKEN_TTL_SECONDS = 60 * 60 * 4  # 4 ساعات - كفاية لمشاهدة أطول فيديو من غير ما نحتاج نجدد
+_video_stream_tokens = {}  # vtoken -> {"video_id": int, "expires_at": datetime}
+
+
+def _cleanup_video_tokens():
+    now = datetime.utcnow()
+    expired = [t for t, v in _video_stream_tokens.items() if v["expires_at"] < now]
+    for t in expired:
+        _video_stream_tokens.pop(t, None)
+
+
 def assert_can_access_video(conn, session, video_id: int):
     """فيديو ممكن يكون مربوط بأكتر من مجموعة (video_group_links) - نسمح بالوصول
     لو الجلسة عندها صلاحية على أي مجموعة من المجموعات المربوط بيها الفيديو."""
@@ -1903,6 +1924,39 @@ def assert_can_access_video(conn, session, video_id: int):
         except HTTPException as e:
             last_error = e
     raise last_error
+
+
+@app.post("/api/videos/{video_id}/stream-token")
+def issue_video_stream_token(video_id: int, session=Depends(get_current_session)):
+    """بيتنادى قبل ما نفتح المشغل، بعد التحقق العادي بتوكن الدخول (Authorization
+    header) - بيرجع توكن مؤقت (vtoken) خاص بالفيديو ده بس، نحطه إحنا في رابط
+    البث بدل توكن الجلسة، عشان لو الرابط اتسرب مايبقاش فيه دخول على الحساب كله."""
+    with get_connection() as conn:
+        vid = conn.execute("SELECT * FROM group_videos WHERE id=?", (video_id,)).fetchone()
+        if not vid:
+            raise HTTPException(status_code=404, detail="الفيديو غير موجود")
+        if vid["video_type"] == "link":
+            raise HTTPException(status_code=400, detail="الفيديو ده رابط خارجي مش ملف مرفوع على المنصة")
+        assert_can_access_video(conn, session, video_id)
+
+        paid_months = get_student_paid_months(conn, session)
+        student_group_id = session.get("group_id") if session.get("role") == "student" else None
+        link_row = conn.execute(
+            "SELECT session_number FROM video_group_links WHERE video_id=? AND group_id=?",
+            (video_id, student_group_id)
+        ).fetchone() if student_group_id else None
+        session_number = link_row["session_number"] if link_row else None
+        session_access = get_student_session_access(conn, session, student_group_id)
+        if not is_content_visible(vid["created_at"], session_number, paid_months, session_access):
+            raise HTTPException(status_code=404, detail="الفيديو غير موجود")
+
+    _cleanup_video_tokens()
+    vtoken = secrets.token_urlsafe(32)
+    _video_stream_tokens[vtoken] = {
+        "video_id": video_id,
+        "expires_at": datetime.utcnow() + timedelta(seconds=VIDEO_TOKEN_TTL_SECONDS),
+    }
+    return {"vtoken": vtoken, "expires_in": VIDEO_TOKEN_TTL_SECONDS}
 
 
 @app.get("/api/groups/{group_id}/videos")
@@ -2375,30 +2429,27 @@ def delete_video_permanently(video_id: int, session=Depends(require_roles("admin
 
 
 @app.get("/api/videos/{video_id}/stream")
-def stream_group_video(video_id: int, request: Request, session=Depends(get_session_for_media)):
+def stream_group_video(video_id: int, request: Request, vtoken: Optional[str] = Query(None)):
     """بث الفيديو مع دعم Range requests (ضروري عشان المستخدم يقدر يتقدم/يرجع في فيديو طويل).
     الفيديو مش متاح كملف عام قابل للتنزيل - بيتبث بس من خلال الـ endpoint ده بعد التحقق من الصلاحية،
-    وبـ Content-Disposition: inline (مش attachment) عشان يتشغل جوه المشغل مباشرة."""
+    وبـ Content-Disposition: inline (مش attachment) عشان يتشغل جوه المشغل مباشرة.
+
+    التحقق من الصلاحية بيتم بتوكن مؤقت خاص بالفيديو (vtoken) بيتاخد الأول من
+    /api/videos/{id}/stream-token (وده بيتحقق فيه من الصلاحيات الكاملة زي الاشتراك
+    والمجموعة). ما بنقبلش هنا توكن جلسة الدخول العادي في الـ query string، عشان لو
+    حد ياخد لينك الفيديو ويبعته لحد تاني، أقصى حاجة هيقدر يعملها إنه يشوف الفيديو
+    ده بس لحد ما ينتهي الـ vtoken - مش إنه يدخل على الحساب كامل."""
+    _cleanup_video_tokens()
+    tok_info = _video_stream_tokens.get(vtoken) if vtoken else None
+    if not tok_info or tok_info["video_id"] != video_id or tok_info["expires_at"] < datetime.utcnow():
+        raise HTTPException(status_code=401, detail="رابط الفيديو منتهي أو غير صالح - افتح الفيديو تاني من داخل المنصة")
+
     with get_connection() as conn:
         vid = conn.execute("SELECT * FROM group_videos WHERE id=?", (video_id,)).fetchone()
         if not vid:
             raise HTTPException(status_code=404, detail="الفيديو غير موجود")
         if vid["video_type"] == "link":
             raise HTTPException(status_code=400, detail="الفيديو ده رابط خارجي مش ملف مرفوع على المنصة")
-        assert_can_access_video(conn, session, video_id)
-
-        # فلتر عام: منع الطالب من بث فيديو خاص بشهر مش مسدده (ولا حصة مش مشتراة
-        # بالحصة)، حتى لو حاول يوصله مباشرة بالرابط (مش بس إخفاءه من القايمة)
-        paid_months = get_student_paid_months(conn, session)
-        student_group_id = session.get("group_id") if session.get("role") == "student" else None
-        link_row = conn.execute(
-            "SELECT session_number FROM video_group_links WHERE video_id=? AND group_id=?",
-            (video_id, student_group_id)
-        ).fetchone() if student_group_id else None
-        session_number = link_row["session_number"] if link_row else None
-        session_access = get_student_session_access(conn, session, student_group_id)
-        if not is_content_visible(vid["created_at"], session_number, paid_months, session_access):
-            raise HTTPException(status_code=404, detail="الفيديو غير موجود")
 
         file_path = os.path.join(VIDEOS_DIR, vid["file_path"])
         if not os.path.exists(file_path):

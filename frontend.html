@@ -6428,14 +6428,63 @@ function openVideoPlayerModal(videoId, title, videoType, externalUrl){
     return;
   }
 
-  const streamUrl = `${API}/api/videos/${videoId}/stream?token=${encodeURIComponent(TOKEN||"")}`;
+  // فيديو مرفوع كملف: بنفتح مودال بحالة تحميل الأول، وبنطلب توكن بث مؤقت خاص
+  // بالفيديو ده بس (مش توكن الدخول) - عشان حتى لو الرابط اتسرب، أقصى حاجة
+  // ممكن تحصل إنه يتفرج على الفيديو ده لحد ما التوكن ينتهي، مش إنه يدخل بحسابه.
+  const isStudent = SESSION && SESSION.role === "student";
   openModal(escapeHtml(title), `
-    <div style="background:#000;border-radius:12px;overflow:hidden;">
-      <video src="${streamUrl}" controls controlsList="nodownload noremoteplayback" disablePictureInPicture oncontextmenu="return false" style="width:100%;max-height:70vh;display:block;" autoplay></video>
-    </div>
-    <div style="font-size:11.5px;color:var(--text-3);margin-top:10px;text-align:center;">هذا الفيديو للمشاهدة فقط ولا يمكن تنزيله</div>
+    <div id="videoPlayerLoading" style="padding:40px 20px;text-align:center;color:var(--text-2);">جاري التحميل...</div>
   `, `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`,
   { width: "760px" });
+  icons();
+
+  (async () => {
+    let vtoken;
+    try{
+      const res = await api(`/api/videos/${videoId}/stream-token`, { method: "POST" });
+      vtoken = res.vtoken;
+    }catch(e){
+      const loadingEl = document.getElementById("videoPlayerLoading");
+      if (loadingEl) loadingEl.textContent = "تعذر تحميل الفيديو";
+      return;
+    }
+    const body = document.getElementById("genericModalBody");
+    if (!body) return; // المستخدم قفل المودال قبل ما التوكن يرجع
+
+    const streamUrl = `${API}/api/videos/${videoId}/stream?vtoken=${encodeURIComponent(vtoken)}`;
+    body.querySelector(".modal-body").innerHTML = `
+      <div id="videoPlayerWrap" style="background:#000;border-radius:12px;overflow:hidden;">
+        <video id="videoPlayerEl" src="${streamUrl}" controls controlsList="nodownload noremoteplayback" disablePictureInPicture oncontextmenu="return false" style="width:100%;max-height:70vh;display:block;" autoplay></video>
+      </div>
+      <div style="font-size:11.5px;color:var(--text-3);margin-top:10px;text-align:center;">هذا الفيديو للمشاهدة فقط ولا يمكن تنزيله${isStudent ? " - المشاهدة بوضع ملء الشاشة فقط" : ""}</div>
+    `;
+
+    if (isStudent){
+      const videoEl = document.getElementById("videoPlayerEl");
+      const requestFs = (el) => {
+        const req = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+        if (req) req.call(el).catch(()=>{});
+      };
+      // لازم يتنادى وإحنا لسه جوه نفس تفاعل المستخدم (ضغطة زرار "تشغيل") عشان
+      // المتصفح يسمح بيه - عشان كده مش بننتظر أي حدث زيادة قبل ما نطلبه
+      requestFs(videoEl);
+      videoEl.addEventListener("click", () => requestFs(videoEl));
+
+      const onFsChange = () => {
+        const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+        if (fsEl !== videoEl){
+          // الطالب خرج من وضع ملء الشاشة (Esc أو تبديل تاب) - بنقفل المودال
+          // ونوقف الفيديو، بدل ما نسيبه يفضل شغال بره وضع ملء الشاشة
+          closeOverlay("genericModal");
+          document.removeEventListener("fullscreenchange", onFsChange);
+          document.removeEventListener("webkitfullscreenchange", onFsChange);
+        }
+      };
+      document.addEventListener("fullscreenchange", onFsChange);
+      document.addEventListener("webkitfullscreenchange", onFsChange);
+    }
+    icons();
+  })();
 }
 
 /* =====================================================================
