@@ -1185,6 +1185,8 @@ const NAV_BY_ROLE = {
     {id:"import_students", label:"استيراد طلاب (CSV)", icon:"upload"},
     {id:"subscriptions", label:"اشتراكات الطلاب", icon:"credit-card"},
     {id:"subscriptions_report", label:"تقرير الاشتراكات الشهري", icon:"file-bar-chart"},
+    {id:"session_subscriptions", label:"الاشتراك بالحصص", icon:"ticket"},
+    {id:"session_subscriptions_report", label:"تقرير الاشتراك بالحصص", icon:"receipt"},
     {id:"supervisors", label:"المشرفين", icon:"shield-check"},
     {id:"head_supervisors", label:"مشرفي المشرفين", icon:"shield"},
     {id:"teachers", label:"المدرسين", icon:"presentation"},
@@ -1377,6 +1379,8 @@ const PAGE_TITLES = {
   myrequests:"طلباتي", student_requests:"طلبات الطلاب",
   student_videos:"فيديوهات المجموعة", myvideos:"فيديوهاتي", hs_videos:"كل الفيديوهات",
   subscriptions_report:"تقرير الاشتراكات الشهري",
+  session_subscriptions:"الاشتراك بالحصص",
+  session_subscriptions_report:"تقرير الاشتراك بالحصص",
   activity_log:"سجل الأنشطة",
   fraud_alerts:"كشف التلاعب",
   qbank_admin:"بنك الأسئلة", qbank_analytics:"تحليل بنك الأسئلة", qbank_student:"بنك الأسئلة",
@@ -1429,6 +1433,8 @@ async function renderPage(page){
       myvideos: renderMyVideosPage,
       hs_videos: renderHeadSupervisorVideosPage,
       subscriptions_report: renderSubscriptionsReportPage,
+      session_subscriptions: renderSessionSubscriptionsPage,
+      session_subscriptions_report: renderSessionSubscriptionsReportPage,
       activity_log: renderActivityLogPage,
       fraud_alerts: renderFraudAlertsPage,
       qbank_admin: renderQbankAdminPage,
@@ -3520,6 +3526,306 @@ function printSubscribedStudentsReport(){
   const win = window.open("", "_blank");
   win.document.write(doc);
   win.document.close();
+}
+
+/* =====================================================================
+   نظام الاشتراك بالحصص - Session-Based Subscriptions
+   نظام مستقل تمامًا عن نظام الاشتراك الشهري فوق (renderSubscriptionsPage/
+   renderSubscriptionsReportPage) - له شاشاته وإدارته الخاصة بالكامل، ومش
+   بيأثر ولا بيتأثر بمنطق الاشتراك الشهري.
+===================================================================== */
+let SESSION_SUB_GROUPS = [];
+let SESSION_SUB_SELECTED_GROUP = "";
+let SESSION_SUB_SELECTED_STUDENT = null; // {id, full_name, group_id, ...}
+let SESSION_SUB_CATALOG = [];            // حصص المجموعة المتاحة [{month, session_number, session_date}]
+let SESSION_SUB_STUDENT_PURCHASES = [];  // اشتراكات الطالب المختار بالحصص (سجل)
+
+async function renderSessionSubscriptionsPage(){
+  SESSION_SUB_GROUPS = await loadGroups();
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>الاشتراك بالحصص</h1><p>نظام منفصل تمامًا عن الاشتراك الشهري - اختر الطالب، حدد الحصة أو الحصص اللي هيدفع مقابلها، وسجل المبلغ. بمجرد الحفظ تتفتح له الحصص دي بس، ويحتفظ بأي حصص سابقة اشتراها قبل كده.</p></div>
+    </div>
+    <div class="table-card" style="padding:16px;">
+      <div class="toolbar" style="gap:10px;flex-wrap:wrap;padding:0 0 14px;border:none;">
+        <select class="form-select" id="ssubGroupSelect" style="width:auto;min-width:200px;" onchange="onSsubGroupChange()">
+          <option value="">اختر المجموعة</option>
+          ${SESSION_SUB_GROUPS.map(g=>`<option value="${g.id}">${escapeHtml(g.name)}</option>`).join("")}
+        </select>
+        <select class="form-select" id="ssubStudentSelect" style="width:auto;min-width:220px;" disabled onchange="onSsubStudentChange()">
+          <option value="">اختر الطالب</option>
+        </select>
+      </div>
+      <div id="ssubBody"><div class="empty-state"><div class="empty-icon"><i data-lucide="ticket" style="width:24px;height:24px;"></i></div><div class="empty-title">اختر مجموعة ثم طالب عشان تبدأ</div></div></div>
+    </div>
+  `;
+  icons();
+}
+
+async function onSsubGroupChange(){
+  const groupId = document.getElementById("ssubGroupSelect").value;
+  SESSION_SUB_SELECTED_GROUP = groupId;
+  SESSION_SUB_SELECTED_STUDENT = null;
+  const studentSelect = document.getElementById("ssubStudentSelect");
+  document.getElementById("ssubBody").innerHTML = `<div class="empty-state"><div class="empty-title">اختر طالب عشان تبدأ</div></div>`;
+  if (!groupId){
+    studentSelect.innerHTML = `<option value="">اختر الطالب</option>`;
+    studentSelect.disabled = true;
+    return;
+  }
+  const students = await loadStudents({group_id: groupId});
+  studentSelect.innerHTML = `<option value="">اختر الطالب</option>` + students.map(s=>`<option value="${s.id}">${escapeHtml(s.full_name)}</option>`).join("");
+  studentSelect.disabled = false;
+  icons();
+}
+
+async function onSsubStudentChange(){
+  const studentId = document.getElementById("ssubStudentSelect").value;
+  const body = document.getElementById("ssubBody");
+  if (!studentId){
+    SESSION_SUB_SELECTED_STUDENT = null;
+    body.innerHTML = `<div class="empty-state"><div class="empty-title">اختر طالب عشان تبدأ</div></div>`;
+    return;
+  }
+  body.innerHTML = `<div class="empty-state"><div class="empty-title">بتحمّل...</div></div>`;
+  const groupId = SESSION_SUB_SELECTED_GROUP;
+  const studentName = document.getElementById("ssubStudentSelect").selectedOptions[0].textContent;
+  SESSION_SUB_SELECTED_STUDENT = {id: Number(studentId), full_name: studentName, group_id: Number(groupId)};
+
+  const [catalog, purchases] = await Promise.all([
+    api(`/api/groups/${groupId}/sessions-catalog`),
+    api(`/api/session-subscriptions?student_id=${studentId}`),
+  ]);
+  SESSION_SUB_CATALOG = catalog.sessions || [];
+  SESSION_SUB_STUDENT_PURCHASES = purchases || [];
+  renderSsubBody();
+}
+
+// set من مفاتيح "month|session_number" اللي عندها اشتراك فعّال بالفعل لنفس الطالب
+function ssubActiveKeysSet(){
+  const set = new Set();
+  SESSION_SUB_STUDENT_PURCHASES.filter(p => p.status === "active").forEach(p => {
+    (p.sessions || []).forEach(it => set.add(`${it.month}|${it.session_number}`));
+  });
+  return set;
+}
+
+function renderSsubBody(){
+  const body = document.getElementById("ssubBody");
+  const activeKeys = ssubActiveKeysSet();
+
+  // تجميع الحصص المتاحة حسب الشهر لعرضها في أكورديون بسيط
+  const byMonth = {};
+  SESSION_SUB_CATALOG.forEach(s => {
+    if (!byMonth[s.month]) byMonth[s.month] = [];
+    byMonth[s.month].push(s);
+  });
+  const months = Object.keys(byMonth).sort();
+
+  const catalogHtml = months.length ? months.map(m => `
+    <div style="margin-bottom:12px;">
+      <div style="font-size:12.5px;font-weight:800;color:var(--text-2);margin-bottom:6px;">${escapeHtml(monthLabelAr(m))}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;">
+        ${byMonth[m].map(s => {
+          const key = `${s.month}|${s.session_number}`;
+          const already = activeKeys.has(key);
+          return `
+            <label style="display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-md);cursor:pointer;font-size:12.5px;${already?'background:var(--success-bg);border-color:var(--success);':''}">
+              <input type="checkbox" class="ssub-session-cb" data-month="${s.month}" data-session="${s.session_number}" style="width:15px;height:15px;">
+              حصة ${s.session_number} <span style="color:var(--text-3);font-size:11px;">(${s.session_date || ''})</span>
+              ${already ? `<span title="عنده اشتراك فعّال بالحصة دي بالفعل" style="color:var(--success);font-weight:700;">✓ مشترى</span>` : ""}
+            </label>
+          `;
+        }).join("")}
+      </div>
+    </div>
+  `).join("") : `<div style="color:var(--text-3);font-size:13px;padding:8px 0;">لسه مفيش حصص مسجلة للمجموعة دي (صور سبورة/واجبات/حضور) عشان تختار منها. تقدر تسجل الحصة برقمها يدويًا تحت.</div>`;
+
+  body.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:18px;">
+      <div>
+        <div style="font-weight:800;font-size:14px;margin-bottom:10px;">تسجيل اشتراك بالحصص للطالب: ${escapeHtml(SESSION_SUB_SELECTED_STUDENT.full_name)}</div>
+        ${catalogHtml}
+        <div style="display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border);flex-wrap:wrap;">
+          <span style="font-size:12.5px;color:var(--text-3);">أو أضف حصة برقمها يدويًا:</span>
+          <input class="form-input" type="month" id="ssubManualMonth" style="width:auto;" value="${currentMonthStr()}">
+          <input class="form-input" type="number" id="ssubManualSession" style="width:90px;" placeholder="رقم الحصة" min="1">
+          <button class="btn btn-ghost btn-sm" onclick="addManualSessionCheckbox()"><i data-lucide="plus" style="width:13px;height:13px;"></i> إضافة</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;background:var(--primary-10);padding:14px 16px;border-radius:var(--radius-md);">
+        <div class="form-group" style="margin:0;">
+          <label class="form-label">المبلغ المدفوع</label>
+          <input class="form-input" type="number" id="ssubAmount" style="width:140px;" placeholder="جنيه">
+        </div>
+        <div class="form-group" style="margin:0;">
+          <label class="form-label">تاريخ الاشتراك</label>
+          <input class="form-input" type="date" id="ssubDate" style="width:150px;" value="${new Date().toISOString().slice(0,10)}">
+        </div>
+        <div class="form-group" style="margin:0;flex:1;min-width:180px;">
+          <label class="form-label">ملاحظات (اختياري)</label>
+          <input class="form-input" id="ssubNotes" placeholder="ملاحظات...">
+        </div>
+        <button class="btn btn-primary" onclick="saveSessionPurchase()"><i data-lucide="save" style="width:14px;height:14px;"></i> حفظ الاشتراك وفتح الحصص</button>
+      </div>
+      <div>
+        <div style="font-weight:800;font-size:14px;margin-bottom:10px;">سجل اشتراكات الطالب بالحصص</div>
+        ${renderSsubHistoryTable()}
+      </div>
+    </div>
+  `;
+  icons();
+}
+
+// بيضيف checkbox يدوي لحصة برقمها من غير ما تكون موجودة في الكتالوج الأوتوماتيكي
+function addManualSessionCheckbox(){
+  const month = document.getElementById("ssubManualMonth").value;
+  const sessionNumber = parseInt(document.getElementById("ssubManualSession").value, 10);
+  if (!month || !sessionNumber){ showToast("حدد الشهر ورقم الحصة الأول", "error"); return; }
+  if (SESSION_SUB_CATALOG.some(s => s.month === month && s.session_number === sessionNumber)){
+    showToast("الحصة دي موجودة بالفعل في القايمة فوق", "info");
+    return;
+  }
+  SESSION_SUB_CATALOG.push({month, session_number: sessionNumber, session_date: null});
+  renderSsubBody();
+  // بعد إعادة الرسم، نأشر تلقائيًا على الحصة اللي المستخدم لسه ضايفها
+  setTimeout(() => {
+    const cb = document.querySelector(`.ssub-session-cb[data-month="${month}"][data-session="${sessionNumber}"]`);
+    if (cb) cb.checked = true;
+  }, 0);
+}
+
+function renderSsubHistoryTable(){
+  if (!SESSION_SUB_STUDENT_PURCHASES.length){
+    return `<div style="color:var(--text-3);font-size:13px;">لا يوجد اشتراكات بالحصص مسجلة لهذا الطالب بعد</div>`;
+  }
+  return `
+    <div class="table-wrap"><table>
+      <thead><tr><th>الحصص</th><th>المبلغ</th><th>تاريخ الاشتراك</th><th>الحالة</th><th>سجّلها</th><th></th></tr></thead>
+      <tbody>
+        ${SESSION_SUB_STUDENT_PURCHASES.map(p => `
+          <tr>
+            <td style="text-align:right;font-size:12.5px;">${(p.sessions||[]).map(it=>`${escapeHtml(monthLabelAr(it.month))}/حصة ${it.session_number}`).join("، ")}</td>
+            <td>${moneyLabel(p.amount)}</td>
+            <td style="color:var(--text-3);font-size:12.5px;">${p.purchase_date || "—"}</td>
+            <td><span class="badge ${p.status==='active'?'badge-green':'badge-red'}">${p.status==='active'?'فعّال':'ملغي'}</span></td>
+            <td style="color:var(--text-3);font-size:12.5px;">${escapeHtml(p.created_by_name || "—")}</td>
+            <td>
+              ${p.status==='active'
+                ? `<button class="btn btn-ghost btn-sm" style="color:var(--danger);" onclick="toggleSessionPurchaseStatus(${p.id}, 'cancelled')">إلغاء</button>`
+                : `<button class="btn btn-ghost btn-sm" onclick="toggleSessionPurchaseStatus(${p.id}, 'active')">إعادة تفعيل</button>`}
+            </td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table></div>
+  `;
+}
+
+async function saveSessionPurchase(){
+  if (!SESSION_SUB_SELECTED_STUDENT) return;
+  const checked = [...document.querySelectorAll(".ssub-session-cb:checked")].map(cb => ({
+    month: cb.dataset.month, session_number: parseInt(cb.dataset.session, 10),
+  }));
+  if (!checked.length){ showToast("اختر حصة واحدة على الأقل", "error"); return; }
+  const amount = document.getElementById("ssubAmount").value;
+  const purchase_date = document.getElementById("ssubDate").value || null;
+  const notes = document.getElementById("ssubNotes").value.trim() || null;
+
+  await api("/api/session-subscriptions", {method:"POST", body: JSON.stringify({
+    student_id: SESSION_SUB_SELECTED_STUDENT.id,
+    sessions: checked,
+    amount: amount ? parseFloat(amount) : null,
+    purchase_date, notes,
+  })});
+  showToast("تم تسجيل الاشتراك بالحصص وفتح الحصص المختارة للطالب", "success");
+  await onSsubStudentChange();
+}
+
+async function toggleSessionPurchaseStatus(purchaseId, status){
+  await api(`/api/session-subscriptions/${purchaseId}/status`, {method:"PUT", body: JSON.stringify({status})});
+  showToast(status === "active" ? "تم إعادة تفعيل الاشتراك" : "تم إلغاء الاشتراك وقفل الحصص المرتبطة بيه", "success");
+  await onSsubStudentChange();
+}
+
+/* =====================================================================
+   تقرير الاشتراك بالحصص - مستقل تمامًا عن تقرير الاشتراك الشهري
+===================================================================== */
+let SSUB_REPORT_MONTH = "";
+let SSUB_REPORT_GROUP = "";
+let SSUB_REPORT_DATA = null;
+
+async function renderSessionSubscriptionsReportPage(){
+  const groups = await loadGroups();
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>تقرير الاشتراك بالحصص</h1><p>كل عمليات الاشتراك بالحصص - اسم الطالب، الحصص المشتراة، القيمة، تاريخ الاشتراك، الحالة، والموظف اللي سجّلها. مستقل تمامًا عن تقرير الاشتراك الشهري</p></div>
+      <div class="header-actions">
+        <input type="month" class="form-input" id="ssubReportMonth" style="width:auto;" value="${SSUB_REPORT_MONTH}" onchange="SSUB_REPORT_MONTH=this.value; loadSessionSubscriptionsReport();">
+        <select class="form-select" id="ssubReportGroup" style="width:auto;min-width:180px;" onchange="SSUB_REPORT_GROUP=this.value; loadSessionSubscriptionsReport();">
+          <option value="">كل المجموعات</option>
+          ${groups.map(g=>`<option value="${g.id}">${escapeHtml(g.name)}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+    <div id="ssubReportStats"></div>
+    <div class="table-card">
+      <div id="ssubReportTableWrap" style="padding:8px;"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>
+    </div>
+  `;
+  icons();
+  await loadSessionSubscriptionsReport();
+}
+
+async function loadSessionSubscriptionsReport(){
+  const qs = new URLSearchParams();
+  if (SSUB_REPORT_MONTH) qs.set("month", SSUB_REPORT_MONTH);
+  if (SSUB_REPORT_GROUP) qs.set("group_id", SSUB_REPORT_GROUP);
+  SSUB_REPORT_DATA = await api(`/api/reports/session-subscriptions?${qs.toString()}`);
+  renderSessionSubscriptionsReportView();
+}
+
+function renderSessionSubscriptionsReportView(){
+  const statsWrap = document.getElementById("ssubReportStats");
+  const tableWrap = document.getElementById("ssubReportTableWrap");
+  if (!tableWrap || !SSUB_REPORT_DATA) return;
+  const t = SSUB_REPORT_DATA.totals;
+
+  statsWrap.innerHTML = `
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon teal"><i data-lucide="ticket" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${t.purchases_count}</div><div class="stat-label">إجمالي عمليات الاشتراك</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon green"><i data-lucide="check-circle" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${t.active_count}</div><div class="stat-label">فعّالة</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon red"><i data-lucide="x-circle" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${t.cancelled_count}</div><div class="stat-label">ملغية</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon blue"><i data-lucide="wallet" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${moneyLabel(t.total_amount)}</div><div class="stat-label">إجمالي المبالغ (الفعّالة بس)</div></div>
+    </div>
+  `;
+
+  const rows = SSUB_REPORT_DATA.purchases || [];
+  tableWrap.innerHTML = `
+    <div class="table-wrap"><table>
+      <thead><tr><th>الطالب</th><th>المجموعة</th><th>الحصص المشتراة</th><th>القيمة</th><th>تاريخ الاشتراك</th><th>الحالة</th><th>سجّلها</th></tr></thead>
+      <tbody>
+        ${rows.map(p => `
+          <tr>
+            <td class="td-name">${escapeHtml(p.student_name)}</td>
+            <td><span class="badge badge-teal">${escapeHtml(p.group_name)}</span></td>
+            <td style="text-align:right;font-size:12.5px;">${(p.sessions||[]).map(it=>`${escapeHtml(monthLabelAr(it.month))}/حصة ${it.session_number}`).join("، ")}</td>
+            <td>${moneyLabel(p.amount)}</td>
+            <td style="color:var(--text-3);font-size:12.5px;">${p.purchase_date || "—"}</td>
+            <td><span class="badge ${p.status==='active'?'badge-green':'badge-red'}">${p.status==='active'?'فعّال':'ملغي'}</span></td>
+            <td style="color:var(--text-3);font-size:12.5px;">${escapeHtml(p.created_by_name || "—")}</td>
+          </tr>
+        `).join("") || `<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:24px;">لا يوجد عمليات اشتراك بالحصص</td></tr>`}
+      </tbody>
+    </table></div>
+  `;
+  icons();
 }
 
 /* =====================================================================

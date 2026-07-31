@@ -492,6 +492,47 @@ def init_db():
         # (اللي كانت هي سعر الاشتراك بالظبط قبل إضافة الـ Exception ورسوم الغياب)
         cur.execute("UPDATE payments SET base_price = amount WHERE base_price IS NULL")
 
+        # ---------------------------------------------------------------
+        # نظام الاشتراك بالحصص - نظام منفصل تمامًا عن الاشتراك الشهري (payments).
+        # الأدمن/المشرف يسجل إن الطالب دفع مبلغ معين مقابل حصة أو أكتر بعينها،
+        # وده بيفتح الحصص دي بس للطالب - مش المحتوى كله زي الاشتراك الشهري.
+        # النظامان بيشتغلوا مع بعض بشكل تراكمي (طالب ممكن يكون مشترك شهريًا
+        # وبرضه يشتري حصص إضافية، أو يكون مش مشترك شهريًا خالص وبيشتري حصص بس).
+        #
+        # session_purchases: "فاتورة" الشراء - طالب + مبلغ + تاريخ + حالة + مين سجلها
+        # session_purchase_items: الحصص المحددة اللي اتغطت بالفاتورة دي (شهر + رقم حصة)
+        # ---------------------------------------------------------------
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS session_purchases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id INTEGER NOT NULL,
+            group_id INTEGER NOT NULL,
+            amount REAL,
+            purchase_date TEXT NOT NULL,
+            notes TEXT,
+            status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','cancelled')),
+            created_by INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+            FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_session_purchases_student ON session_purchases(student_id, status)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_session_purchases_group ON session_purchases(group_id)")
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS session_purchase_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            purchase_id INTEGER NOT NULL,
+            month TEXT NOT NULL,
+            session_number INTEGER NOT NULL,
+            FOREIGN KEY (purchase_id) REFERENCES session_purchases(id) ON DELETE CASCADE,
+            UNIQUE(purchase_id, month, session_number)
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_session_purchase_items_purchase ON session_purchase_items(purchase_id)")
+
         # جدول الكويزات - كويز عام على مستوى المرحلة الدراسية (بيشوفه كل مشرفي المرحلة)
         # أو مرتبط بمجموعة معينة (النظام القديم، لسه متاح للتوافق)
         cur.execute("""

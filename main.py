@@ -384,6 +384,30 @@ class BulkPaymentIn(BaseModel):
     amount: Optional[float] = None
 
 
+# ---------------------------------------------------------------------------
+# نظام الاشتراك بالحصص - نظام منفصل تمامًا عن نظام الاشتراك الشهري (PaymentIn
+# و BulkPaymentIn فوق). بيسمح ببيع حصص معينة بعينها لطالب مقابل مبلغ، بدل
+# اشتراك الشهر كله.
+# ---------------------------------------------------------------------------
+
+class SessionPurchaseItemIn(BaseModel):
+    month: str  # صيغة YYYY-MM
+    session_number: int
+
+
+class SessionPurchaseIn(BaseModel):
+    student_id: int
+    sessions: List[SessionPurchaseItemIn]
+    amount: Optional[float] = None
+    purchase_date: Optional[str] = None
+    notes: Optional[str] = Field(None, max_length=2000)
+
+
+class SessionPurchaseStatusIn(BaseModel):
+    status: str  # 'active' أو 'cancelled'
+
+
+
 class StudentRequestIn(BaseModel):
     request_type: str  # attendance_change / issue / explanation / other
     details: Optional[str] = Field(None, max_length=2000)
@@ -408,6 +432,8 @@ def is_student_subscribed(conn, student_id: int) -> bool:
     هل الطالب مسموحله يشوف المحتوى؟ - ده اللي بيتحكم في السماح بمشاهدة المحتوى من عدمه.
     - الطالب "الفري الدائم" (students.is_free) بيتحسب مشترك دايمًا في كل الشهور.
     - أو لو الشهر الحالي بالذات مسدد أو اتمنح فري لشهر واحد بس (payments.is_free).
+    - أو لو عنده أي اشتراك بالحصص فعّال (نظام منفصل تمامًا) - عشان يقدر يدخل
+      المنصة يشوف الحصص اللي اشتراها، حتى لو مسددش الاشتراك الشهري خالص.
     """
     student = conn.execute("SELECT is_free FROM students WHERE id=?", (student_id,)).fetchone()
     if student and student["is_free"]:
@@ -416,7 +442,9 @@ def is_student_subscribed(conn, student_id: int) -> bool:
         "SELECT is_paid, is_free FROM payments WHERE student_id=? AND month=?",
         (student_id, current_month_str())
     ).fetchone()
-    return bool(row and (row["is_paid"] or row["is_free"]))
+    if row and (row["is_paid"] or row["is_free"]):
+        return True
+    return has_active_session_purchase(conn, student_id)
 
 
 def paid_months_for_student(conn, student_id: int) -> Optional[set]:
@@ -462,6 +490,62 @@ def is_month_visible(date_value: Optional[str], paid_months: Optional[set]) -> b
     if paid_months is None or date_value is None:
         return True
     return date_value[:7] in paid_months
+
+
+# ---------------------------------------------------------------------------
+# نظام الاشتراك بالحصص - نظام منفصل تمامًا عن الاشتراك الشهري (payments/paid_months).
+# بيسمح للطالب يشوف حصص معينة اشتراها بس، حتى لو مش مشترك شهريًا خالص، من غير
+# ما يفتحله أي محتوى تاني في نفس الشهر أو يأثر على منطق الاشتراك الشهري.
+# ---------------------------------------------------------------------------
+
+def active_session_access_for_student(conn, student_id: int, group_id: Optional[int] = None) -> set:
+    """
+    بيرجع set من (month, session_number) للحصص اللي الطالب اشتراها فعليًا
+    (فاتورة شراء لسه فعّالة status='active') - مش ملغية.
+    """
+    query = """
+        SELECT spi.month, spi.session_number
+        FROM session_purchase_items spi
+        JOIN session_purchases sp ON sp.id = spi.purchase_id
+        WHERE sp.student_id = ? AND sp.status = 'active'
+    """
+    params = [student_id]
+    if group_id is not None:
+        query += " AND sp.group_id = ?"
+        params.append(group_id)
+    rows = conn.execute(query, params).fetchall()
+    return {(r["month"], r["session_number"]) for r in rows}
+
+
+def has_active_session_purchase(conn, student_id: int) -> bool:
+    """هل عند الطالب أي فاتورة اشتراك بالحصص فعّالة (بغض النظر عن الشهر)؟"""
+    row = conn.execute(
+        "SELECT 1 FROM session_purchases WHERE student_id=? AND status='active' LIMIT 1",
+        (student_id,)
+    ).fetchone()
+    return bool(row)
+
+
+def get_student_session_access(conn, session, group_id: Optional[int] = None) -> set:
+    """نفس فكرة get_student_paid_months بس لنظام الاشتراك بالحصص - بترجع set فاضية لغير الطالب"""
+    if session.get("role") != "student":
+        return set()
+    return active_session_access_for_student(conn, session["id"], group_id)
+
+
+def is_content_visible(date_value: Optional[str], session_number: Optional[int],
+                        paid_months: Optional[set], session_access: set) -> bool:
+    """
+    فلتر الظهور الموحّد للمحتوى: بيدمج النظامين المستقلين (الاشتراك الشهري +
+    الاشتراك بالحصص) بشكل تراكمي (OR) - يظهر المحتوى لو اتغطى بأي نظام منهم.
+    - لو الشهر كامل متسدد (أو مش طالب أصلاً) → is_month_visible بترجع True فورًا.
+    - غير كده، لو المحتوى ده ليه رقم حصة، وحصته دي بالذات مشتراة بالحصة → يظهر.
+    """
+    if is_month_visible(date_value, paid_months):
+        return True
+    if session_number is None or date_value is None:
+        return False
+    return (date_value[:7], session_number) in session_access
 
 
 def _resolve_session_by_token(token: Optional[str]):
@@ -570,6 +654,8 @@ ACTION_LABELS = {
     "homework_update": "تعديل واجب",
     "homework_delete": "حذف واجب",
     "payment": "تسجيل دفعة اشتراك",
+    "session_purchase": "تسجيل اشتراك بالحصص",
+    "session_purchase_status": "تغيير حالة اشتراك بالحصص",
     "video_upload": "رفع فيديو",
     "video_delete": "حذف فيديو",
     "student_add": "إضافة طالب",
@@ -1708,9 +1794,10 @@ def get_board_images(group_id: int, session=Depends(get_current_session)):
         params = [group_id]
         query += " ORDER BY bi.session_number DESC, bi.created_at DESC"
         rows = conn.execute(query, params).fetchall()
-        # فلتر عام: إخفاء صور سبورة أي شهر لسه الطالب مسدده لسه
+        # فلتر عام: إخفاء صور سبورة أي شهر لسه الطالب مسدده لسه (أو حصة مش مشتراة بالحصة)
         paid_months = get_student_paid_months(conn, session)
-        return [dict(r) for r in rows if is_month_visible(r["session_date"], paid_months)]
+        session_access = get_student_session_access(conn, session, group_id)
+        return [dict(r) for r in rows if is_content_visible(r["session_date"], r["session_number"], paid_months, session_access)]
 
 
 @app.post("/api/board-images")
@@ -1825,9 +1912,10 @@ def list_group_videos(group_id: int, session=Depends(get_current_session)):
         params = [group_id]
         query += " ORDER BY gv.created_at DESC"
         rows = conn.execute(query, params).fetchall()
-        # فلتر عام: إخفاء فيديوهات أي شهر لسه الطالب مسدده لسه
+        # فلتر عام: إخفاء فيديوهات أي شهر لسه الطالب مسدده لسه (أو حصة مش مشتراة بالحصة)
         paid_months = get_student_paid_months(conn, session)
-        return [dict(r) for r in rows if is_month_visible(r["created_at"], paid_months)]
+        session_access = get_student_session_access(conn, session, group_id)
+        return [dict(r) for r in rows if is_content_visible(r["created_at"], r["session_number"], paid_months, session_access)]
 
 
 # ---------------------------------------------------------------------------
@@ -2006,10 +2094,31 @@ def get_group_content_by_month(
         # ---------------- فلترة الشهور: يظهر بس الشهر اللي اتسدد فعليًا ----------------
         # (لو فيه فجوة سداد، الشهر ده بيتخفي حتى لو فيه شهور مدفوعة بعده)
         # عناصر "بدون تاريخ" بتفضل ظاهرة دايمًا لأننا مش نقدر نحكم عليها بشهر معين
+        # + نظام الاشتراك بالحصص (منفصل تمامًا عن الشهري): لو الشهر مش متسدد
+        # بالكامل، بس الطالب اشترى حصة أو أكتر بالحصة جواه، تفضل الحصص دي بس
+        # ظاهرة (من غير أي محتوى تاني للشهر ده - لا فيديوهات عامة ولا كويزات
+        # من غير رقم حصة - عشان منفتحش حاجة زيادة عن اللي اشتراه فعليًا)
         if paid_months is not None:
-            filtered = {k: v for k, v in months.items() if k in paid_months}
-            if NO_DATE_KEY in months:
-                filtered[NO_DATE_KEY] = months[NO_DATE_KEY]
+            session_access = active_session_access_for_student(conn, effective_student_id, group_id) if effective_student_id else set()
+            filtered = {}
+            for k, v in months.items():
+                if k == NO_DATE_KEY:
+                    filtered[k] = v
+                    continue
+                if k in paid_months:
+                    filtered[k] = v
+                    continue
+                bought_sessions = {
+                    sk: sd for sk, sd in v["sessions"].items()
+                    if (k, sd["session_number"]) in session_access
+                }
+                if bought_sessions:
+                    filtered[k] = {
+                        "month": v["month"], "label": v["label"],
+                        "sessions": bought_sessions,
+                        "videos": [],             # فيديوهات الشهر العامة (من غير رقم حصة) تفضل مقفولة
+                        "quizzes_no_session": [],  # نفس الفكرة للكويزات من غير رقم حصة
+                    }
             months = filtered
 
         dated_keys = sorted(k for k in months.keys() if k != NO_DATE_KEY)
@@ -2027,6 +2136,7 @@ def get_group_content_by_month(
             "group_id": group_id,
             "group_name": group["name"],
             "paid_months": sorted(paid_months) if paid_months is not None else None,
+            "purchased_sessions": sorted(session_access) if paid_months is not None else [],
             "months": result_months,
         }
 
@@ -2268,10 +2378,17 @@ def stream_group_video(video_id: int, request: Request, session=Depends(get_sess
             raise HTTPException(status_code=400, detail="الفيديو ده رابط خارجي مش ملف مرفوع على المنصة")
         assert_can_access_video(conn, session, video_id)
 
-        # فلتر عام: منع الطالب من بث فيديو خاص بشهر مش مسدده، حتى لو حاول يوصله
-        # مباشرة بالرابط (مش بس إخفاءه من القايمة)
+        # فلتر عام: منع الطالب من بث فيديو خاص بشهر مش مسدده (ولا حصة مش مشتراة
+        # بالحصة)، حتى لو حاول يوصله مباشرة بالرابط (مش بس إخفاءه من القايمة)
         paid_months = get_student_paid_months(conn, session)
-        if not is_month_visible(vid["created_at"], paid_months):
+        student_group_id = session.get("group_id") if session.get("role") == "student" else None
+        link_row = conn.execute(
+            "SELECT session_number FROM video_group_links WHERE video_id=? AND group_id=?",
+            (video_id, student_group_id)
+        ).fetchone() if student_group_id else None
+        session_number = link_row["session_number"] if link_row else None
+        session_access = get_student_session_access(conn, session, student_group_id)
+        if not is_content_visible(vid["created_at"], session_number, paid_months, session_access):
             raise HTTPException(status_code=404, detail="الفيديو غير موجود")
 
         file_path = os.path.join(VIDEOS_DIR, vid["file_path"])
@@ -2385,9 +2502,10 @@ def get_quizzes(group_id: Optional[int] = None, stage_id: Optional[int] = None,
 
         query += " ORDER BY q.quiz_date DESC, q.id DESC"
         rows = conn.execute(query, params).fetchall()
-        # فلتر عام: إخفاء أي كويز خاص بشهر لسه الطالب مسدده لسه
+        # فلتر عام: إخفاء أي كويز خاص بشهر لسه الطالب مسدده لسه (أو حصة مش مشتراة بالحصة)
         paid_months = get_student_paid_months(conn, session)
-        return [dict(r) for r in rows if is_month_visible(r["quiz_date"], paid_months)]
+        session_access = get_student_session_access(conn, session, session.get("group_id"))
+        return [dict(r) for r in rows if is_content_visible(r["quiz_date"], r["session_number"], paid_months, session_access)]
 
 
 @app.post("/api/quizzes")
@@ -2448,9 +2566,10 @@ def get_quiz_scores(quiz_id: int, session=Depends(get_current_session)):
         if not quiz:
             raise HTTPException(status_code=404, detail="الكويز غير موجود")
 
-        # فلتر عام: الطالب ميقدرش يشوف كويز خاص بشهر لسه مسدده لسه
+        # فلتر عام: الطالب ميقدرش يشوف كويز خاص بشهر لسه مسدده لسه (أو حصة مش مشتراة بالحصة)
         paid_months = get_student_paid_months(conn, session)
-        if not is_month_visible(quiz["quiz_date"], paid_months):
+        session_access = get_student_session_access(conn, session, session.get("group_id"))
+        if not is_content_visible(quiz["quiz_date"], quiz["session_number"], paid_months, session_access):
             raise HTTPException(status_code=404, detail="الكويز غير موجود")
 
         if session["role"] == "supervisor" and quiz["group_id"]:
@@ -3801,7 +3920,7 @@ def get_student_scores(student_id: int, session=Depends(get_current_session)):
                 assert_supervisor_owns_group(conn, session, student["group_id"])
 
         query = """
-            SELECT q.title, q.quiz_date, q.max_score, qs.score
+            SELECT q.title, q.quiz_date, q.max_score, q.session_number, qs.score
             FROM quiz_scores qs
             JOIN quizzes q ON q.id = qs.quiz_id
             WHERE qs.student_id = ?
@@ -3809,9 +3928,10 @@ def get_student_scores(student_id: int, session=Depends(get_current_session)):
         params = [student_id]
         query += " ORDER BY q.quiz_date DESC"
         rows = conn.execute(query, params).fetchall()
-        # فلتر عام: إخفاء أي درجة كويز خاص بشهر لسه الطالب مسدده لسه
+        # فلتر عام: إخفاء أي درجة كويز خاص بشهر لسه الطالب مسدده لسه (أو حصة مش مشتراة بالحصة)
         paid_months = get_student_paid_months(conn, session)
-        return [dict(r) for r in rows if is_month_visible(r["quiz_date"], paid_months)]
+        session_access = get_student_session_access(conn, session, session.get("group_id"))
+        return [dict(r) for r in rows if is_content_visible(r["quiz_date"], r["session_number"], paid_months, session_access)]
 
 
 # ---------------------------------------------------------------------------
@@ -3827,9 +3947,10 @@ def get_attendance_by_date(session_date: str, group_id: Optional[int] = None,
         if session["role"] == "supervisor" and group_id:
             assert_supervisor_owns_group(conn, session, group_id)
 
-        # فلتر عام: الطالب ميقدرش يشوف حضور شهر لسه مسدده لسه
+        # فلتر عام: الطالب ميقدرش يشوف حضور شهر لسه مسدده لسه (أو حصة مش مشتراة بالحصة)
         paid_months = get_student_paid_months(conn, session)
-        if not is_month_visible(session_date, paid_months):
+        session_access = get_student_session_access(conn, session, group_id)
+        if not is_content_visible(session_date, session_number, paid_months, session_access):
             return []
 
         query = """
@@ -3959,13 +4080,14 @@ def get_student_attendance(student_id: int, session=Depends(get_current_session)
             if student:
                 assert_supervisor_owns_group(conn, session, student["group_id"])
 
-        query = "SELECT session_date, status, notes FROM attendance WHERE student_id = ?"
+        query = "SELECT session_date, session_number, status, notes FROM attendance WHERE student_id = ?"
         params = [student_id]
         query += " ORDER BY session_date DESC"
         rows = conn.execute(query, params).fetchall()
-        # فلتر عام: إخفاء سجلات الحضور الخاصة بأي شهر لسه الطالب مسدده لسه
+        # فلتر عام: إخفاء سجلات الحضور الخاصة بأي شهر لسه الطالب مسدده لسه (أو حصة مش مشتراة بالحصة)
         paid_months = get_student_paid_months(conn, session)
-        return [dict(r) for r in rows if is_month_visible(r["session_date"], paid_months)]
+        session_access = get_student_session_access(conn, session, session.get("group_id"))
+        return [dict(r) for r in rows if is_content_visible(r["session_date"], r["session_number"], paid_months, session_access)]
 
 
 # ---------------------------------------------------------------------------
@@ -4434,6 +4556,221 @@ def get_subscriptions_summary(month: str, session=Depends(require_roles("admin",
         }
 
 
+# ===========================================================================
+# نظام الاشتراك بالحصص - Session-Based Subscriptions
+# نظام مستقل تمامًا عن نظام الاشتراك الشهري فوق (payments). بيسمح بتسجيل إن
+# طالب دفع مبلغ معين مقابل حصة أو أكتر بعينها، وبيفتحله الحصص دي بس - من غير
+# أي تعارض مع الاشتراك الشهري، والاتنين بيشتغلوا مع بعض في نفس الوقت.
+# ===========================================================================
+
+@app.get("/api/groups/{group_id}/sessions-catalog")
+def get_group_sessions_catalog(group_id: int,
+                                session=Depends(require_roles("admin", "head_supervisor", "supervisor", "teacher"))):
+    """
+    قائمة الحصص المتاحة لمجموعة معينة (شهر + رقم حصة + تاريخ تمثيلي) - مستخدمة
+    في شاشة تسجيل الاشتراك بالحصص عشان الأدمن/المشرف يختار الحصة اللي الطالب
+    هيدفع مقابلها. المصدر: أي رقم حصة ليه تاريخ معروف من صور السبورة أو
+    الواجبات أو سجلات الحضور (أكتر مصادر موثوقة لتاريخ الحصة الفعلي).
+    """
+    with get_connection() as conn:
+        if session["role"] == "supervisor":
+            assert_supervisor_owns_group(conn, session, group_id)
+
+        rows = conn.execute("""
+            SELECT session_date as d, session_number as n FROM board_images
+                WHERE group_id=? AND session_date IS NOT NULL
+            UNION
+            SELECT session_date as d, session_number as n FROM homework
+                WHERE group_id=? AND session_date IS NOT NULL
+            UNION
+            SELECT a.session_date as d, a.session_number as n
+                FROM attendance a JOIN students s ON s.id = a.student_id
+                WHERE s.group_id=? AND a.session_date IS NOT NULL
+        """, (group_id, group_id, group_id)).fetchall()
+
+        by_key = {}
+        for r in rows:
+            month = r["d"][:7]
+            key = (month, r["n"])
+            # لو نفس الحصة ظهرت بتواريخ مختلفة (فرق إدخال بسيط)، ناخد أقدم تاريخ كممثل لها
+            if key not in by_key or r["d"] < by_key[key]:
+                by_key[key] = r["d"]
+
+        sessions = sorted(
+            [{"month": k[0], "session_number": k[1], "session_date": v} for k, v in by_key.items()],
+            key=lambda x: (x["month"], x["session_number"])
+        )
+        return {"group_id": group_id, "sessions": sessions}
+
+
+@app.post("/api/session-subscriptions")
+def create_session_purchase(data: SessionPurchaseIn,
+                             session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
+    """
+    تسجيل اشتراك بالحصص لطالب - بيفتح بس الحصص المحددة، ومحتفظ بأي حصص
+    سابقة اتشرت له قبل كده (نفس الوقت، طالب من الممكن يكون مشترك شهريًا
+    برضه، والنظامان بيشتغلوا مع بعض من غير تعارض).
+    """
+    if not data.sessions:
+        raise HTTPException(status_code=400, detail="لازم تحدد حصة واحدة على الأقل")
+
+    with get_connection() as conn:
+        student = conn.execute("SELECT * FROM students WHERE id=?", (data.student_id,)).fetchone()
+        if not student:
+            raise HTTPException(status_code=404, detail="الطالب غير موجود")
+        group_id = student["group_id"]
+        if session["role"] == "supervisor":
+            assert_supervisor_owns_group(conn, session, group_id)
+
+        purchase_date = data.purchase_date or datetime.utcnow().strftime("%Y-%m-%d")
+        cur = conn.execute("""
+            INSERT INTO session_purchases (student_id, group_id, amount, purchase_date, notes, status, created_by)
+            VALUES (?, ?, ?, ?, ?, 'active', ?)
+        """, (data.student_id, group_id, data.amount, purchase_date, data.notes, session["id"]))
+        purchase_id = cur.lastrowid
+        for item in data.sessions:
+            conn.execute("""
+                INSERT OR IGNORE INTO session_purchase_items (purchase_id, month, session_number)
+                VALUES (?, ?, ?)
+            """, (purchase_id, item.month, item.session_number))
+
+        sessions_label = "، ".join(f"{it.month}/حصة {it.session_number}" for it in data.sessions)
+        log_session_activity(
+            conn, session, "session_purchase",
+            f"تسجيل اشتراك بالحصص لطالب \"{student['full_name']}\" - {sessions_label} - {data.amount or 0} ج",
+            group_id=group_id
+        )
+        return {"message": "تم تسجيل الاشتراك بالحصص وفتح الحصص المختارة", "purchase_id": purchase_id}
+
+
+@app.get("/api/session-subscriptions")
+def list_session_purchases(student_id: Optional[int] = None, group_id: Optional[int] = None,
+                            month: Optional[str] = None, session=Depends(get_current_session)):
+    """
+    قائمة عمليات الاشتراك بالحصص - بتدعم فلترة اختيارية بالطالب و/أو المجموعة
+    و/أو الشهر. الطالب نفسه يشوف اشتراكاته هو بس، المشرف يشوف مجموعاته بس،
+    والأدمن/مشرف المشرفين/المدرس يشوفوا الكل.
+    """
+    with get_connection() as conn:
+        if session["role"] == "student":
+            student_id = session["id"]
+        elif session["role"] not in ("admin", "head_supervisor", "supervisor", "teacher"):
+            raise HTTPException(status_code=403, detail="مفيش صلاحية للوصول لده")
+
+        query = """
+            SELECT sp.*, s.full_name as student_name, g.name as group_name,
+                   u.full_name as created_by_name
+            FROM session_purchases sp
+            JOIN students s ON s.id = sp.student_id
+            JOIN groups g ON g.id = sp.group_id
+            LEFT JOIN users u ON u.id = sp.created_by
+            WHERE 1=1
+        """
+        params = []
+        if student_id:
+            query += " AND sp.student_id = ?"
+            params.append(student_id)
+        if group_id:
+            query += " AND sp.group_id = ?"
+            params.append(group_id)
+        if session["role"] == "supervisor":
+            query += " AND sp.group_id IN (SELECT group_id FROM group_supervisors WHERE supervisor_id=?)"
+            params.append(session["id"])
+        query += " ORDER BY sp.purchase_date DESC, sp.id DESC"
+        purchases = conn.execute(query, params).fetchall()
+
+        result = []
+        for p in purchases:
+            items = conn.execute(
+                "SELECT month, session_number FROM session_purchase_items WHERE purchase_id=? ORDER BY month, session_number",
+                (p["id"],)
+            ).fetchall()
+            if month and not any(it["month"] == month for it in items):
+                continue
+            result.append({**dict(p), "sessions": [dict(it) for it in items]})
+        return result
+
+
+@app.put("/api/session-subscriptions/{purchase_id}/status")
+def update_session_purchase_status(purchase_id: int, data: SessionPurchaseStatusIn,
+                                    session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
+    """إلغاء/إعادة تفعيل عملية اشتراك بالحصص - الإلغاء بيقفل الحصص المرتبطة بيها فورًا"""
+    if data.status not in ("active", "cancelled"):
+        raise HTTPException(status_code=400, detail="حالة غير صحيحة")
+    with get_connection() as conn:
+        purchase = conn.execute("SELECT * FROM session_purchases WHERE id=?", (purchase_id,)).fetchone()
+        if not purchase:
+            raise HTTPException(status_code=404, detail="سجل الاشتراك غير موجود")
+        if session["role"] == "supervisor":
+            assert_supervisor_owns_group(conn, session, purchase["group_id"])
+
+        conn.execute("UPDATE session_purchases SET status=? WHERE id=?", (data.status, purchase_id))
+        student = conn.execute("SELECT full_name FROM students WHERE id=?", (purchase["student_id"],)).fetchone()
+        log_session_activity(
+            conn, session, "session_purchase_status",
+            f"تغيير حالة اشتراك بالحصص لطالب \"{student['full_name'] if student else purchase['student_id']}\" إلى {data.status}",
+            group_id=purchase["group_id"]
+        )
+        return {"message": "تم تحديث حالة الاشتراك"}
+
+
+@app.get("/api/reports/session-subscriptions")
+def get_session_subscriptions_report(month: Optional[str] = None, group_id: Optional[int] = None,
+                                      session=Depends(require_roles("admin", "head_supervisor"))):
+    """
+    تقرير الاشتراك بالحصص - مستقل تمامًا عن تقرير الاشتراك الشهري
+    (/api/reports/subscriptions-summary). بيسرد كل عمليات الاشتراك بالحصص:
+    اسم الطالب، الحصص المشتراة، القيمة، تاريخ الاشتراك، الحالة، والموظف
+    اللي سجلها. بيدعم فلترة اختيارية بالشهر و/أو المجموعة.
+    """
+    with get_connection() as conn:
+        query = """
+            SELECT sp.*, s.full_name as student_name, g.name as group_name,
+                   u.full_name as created_by_name
+            FROM session_purchases sp
+            JOIN students s ON s.id = sp.student_id
+            JOIN groups g ON g.id = sp.group_id
+            LEFT JOIN users u ON u.id = sp.created_by
+            WHERE 1=1
+        """
+        params = []
+        if group_id:
+            query += " AND sp.group_id = ?"
+            params.append(group_id)
+        query += " ORDER BY sp.purchase_date DESC, sp.id DESC"
+        purchases = conn.execute(query, params).fetchall()
+
+        result = []
+        total_amount = 0.0
+        active_count = 0
+        cancelled_count = 0
+        for p in purchases:
+            items = conn.execute(
+                "SELECT month, session_number FROM session_purchase_items WHERE purchase_id=? ORDER BY month, session_number",
+                (p["id"],)
+            ).fetchall()
+            if month and not any(it["month"] == month for it in items):
+                continue
+            result.append({**dict(p), "sessions": [dict(it) for it in items]})
+            if p["status"] == "active":
+                active_count += 1
+                total_amount += (p["amount"] or 0)
+            else:
+                cancelled_count += 1
+
+        return {
+            "month": month,
+            "group_id": group_id,
+            "purchases": result,
+            "totals": {
+                "purchases_count": len(result),
+                "active_count": active_count,
+                "cancelled_count": cancelled_count,
+                "total_amount": total_amount,
+            },
+        }
+
+
 @app.post("/api/payments/send-reminders")
 def trigger_payment_reminders(force: bool = Query(False),
                                session=Depends(require_roles("admin"))):
@@ -4567,9 +4904,10 @@ def get_homework(group_id: Optional[int] = None, session=Depends(get_current_ses
             params.append(session.get("group_id"))
         query += " ORDER BY h.session_number DESC"
         rows = conn.execute(query, params).fetchall()
-        # فلتر عام: إخفاء الواجبات الخاصة بأي شهر لسه الطالب مسدده لسه
+        # فلتر عام: إخفاء الواجبات الخاصة بأي شهر لسه الطالب مسدده لسه (أو حصة مش مشتراة بالحصة)
         paid_months = get_student_paid_months(conn, session)
-        return [dict(r) for r in rows if is_month_visible(r["session_date"], paid_months)]
+        session_access = get_student_session_access(conn, session, session.get("group_id"))
+        return [dict(r) for r in rows if is_content_visible(r["session_date"], r["session_number"], paid_months, session_access)]
 
 
 @app.post("/api/homework")
@@ -4626,15 +4964,16 @@ def delete_homework(hw_id: int, session=Depends(require_roles("admin", "head_sup
 def get_homework_submissions(hw_id: int, session=Depends(require_roles("admin", "head_supervisor", "supervisor", "student"))):
     """جلب حالة تسليم الواجب لكل طلاب المجموعة (الطالب بيشوف حالته هو بس)"""
     with get_connection() as conn:
-        hw = conn.execute("SELECT group_id, session_date FROM homework WHERE id=?", (hw_id,)).fetchone()
+        hw = conn.execute("SELECT group_id, session_date, session_number FROM homework WHERE id=?", (hw_id,)).fetchone()
         if not hw:
             raise HTTPException(status_code=404, detail="الواجب غير موجود")
         if session["role"] == "supervisor":
             assert_supervisor_owns_group(conn, session, hw["group_id"])
         if session["role"] == "student":
-            # فلتر عام: الطالب ميقدرش يشوف واجب خاص بشهر لسه مسدده لسه
+            # فلتر عام: الطالب ميقدرش يشوف واجب خاص بشهر لسه مسدده لسه (أو حصة مش مشتراة بالحصة)
             paid_months = get_student_paid_months(conn, session)
-            if not is_month_visible(hw["session_date"], paid_months):
+            session_access = get_student_session_access(conn, session, hw["group_id"])
+            if not is_content_visible(hw["session_date"], hw["session_number"], paid_months, session_access):
                 raise HTTPException(status_code=404, detail="الواجب غير موجود")
             # الطالب يشوف حالة تسليمه هو بس، ومن مجموعته هو بس
             if session.get("group_id") != hw["group_id"]:
