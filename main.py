@@ -4413,9 +4413,9 @@ def set_participation(data: ParticipationIn, session=Depends(require_roles("admi
 @app.post("/api/participation/tick")
 def tick_participation(data: ParticipationTickIn, session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
     """
-    تسجيل تفاعل الطالب بضغطة واحدة: كل مرة جاوب/اتفاعل بتضاف نقطة على نقاط
-    الحصة دي (مقفولة عند 5 لكل حصة)، أو تراجع لو غلط. النقاط بتتجمع تلقائيًا
-    على إجمالي الطالب المتراكم عبر كل الحصص
+    تسجيل تفاعل الطالب في الحصة: زر واحد (جاوب/متفاعل) - نقطة واحدة بس لكل
+    حصة (0 أو 1). دوس تاني يلغي التسجيل لو غلط. النقاط بتتجمع تلقائيًا على
+    إجمالي الطالب المتراكم عبر كل الحصص، والإجمالي ده هو اللي بيحدد نوع الطالب
     """
     with get_connection() as conn:
         student = conn.execute("SELECT full_name, group_id FROM students WHERE id=?", (data.student_id,)).fetchone()
@@ -4429,7 +4429,7 @@ def tick_participation(data: ParticipationTickIn, session=Depends(require_roles(
             (data.student_id, data.session_date, data.session_number)
         ).fetchone()
         current = row["points"] if row else 0
-        new_points = max(0, min(5, current + data.delta))
+        new_points = max(0, min(1, current + data.delta))
 
         if new_points == 0:
             conn.execute(
