@@ -1588,27 +1588,34 @@ def toggle_student_free(student_id: int, session=Depends(require_roles("admin", 
 # لازم الراوتس دي تتسجل قبل "/api/students/{student_id}" عشان ماتتحجبش منه
 # ---------------------------------------------------------------------------
 
-_NEVER_ENGAGED_QUERY = """
-    SELECT s.id, s.full_name, s.phone, s.parent_phone, s.group_id, g.name as group_name,
-           s.created_at
-    FROM students s
-    LEFT JOIN groups g ON g.id = s.group_id
-    WHERE s.is_active = 1
-      AND NOT EXISTS (
-          SELECT 1 FROM attendance a WHERE a.student_id = s.id AND a.status IN ('present','late')
-      )
-      AND NOT EXISTS (
-          SELECT 1 FROM homework_submissions hs WHERE hs.student_id = s.id AND hs.done = 1
-      )
-    ORDER BY s.full_name
-"""
+def _never_engaged_query_and_params(group_id: Optional[int] = None):
+    query = """
+        SELECT s.id, s.full_name, s.phone, s.parent_phone, s.group_id, g.name as group_name,
+               s.created_at
+        FROM students s
+        LEFT JOIN groups g ON g.id = s.group_id
+        WHERE s.is_active = 1
+          AND NOT EXISTS (
+              SELECT 1 FROM attendance a WHERE a.student_id = s.id AND a.status IN ('present','late')
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM homework_submissions hs WHERE hs.student_id = s.id AND hs.done = 1
+          )
+    """
+    params = []
+    if group_id:
+        query += " AND s.group_id = ?"
+        params.append(group_id)
+    query += " ORDER BY s.full_name"
+    return query, params
 
 
 @app.get("/api/students/never-engaged")
-def get_never_engaged_students(session=Depends(require_roles("admin"))):
-    """قايمة الطلاب اللي معندهمش أي حضور مسجل خالص ومعندهمش أي واجب متسلّم خالص"""
+def get_never_engaged_students(group_id: Optional[int] = None, session=Depends(require_roles("admin"))):
+    """قايمة الطلاب اللي معندهمش أي حضور مسجل خالص ومعندهمش أي واجب متسلّم خالص - ممكن تتفلتر بمجموعة"""
+    query, params = _never_engaged_query_and_params(group_id)
     with get_connection() as conn:
-        rows = conn.execute(_NEVER_ENGAGED_QUERY).fetchall()
+        rows = conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
 
 
@@ -1638,10 +1645,11 @@ def _never_engaged_workbook(students):
 
 
 @app.get("/api/students/never-engaged/export")
-def export_never_engaged_students(session=Depends(require_roles("admin"))):
-    """تصدير قايمة الطلاب اللي معندهمش تفاعل خالص كملف إكسيل"""
+def export_never_engaged_students(group_id: Optional[int] = None, session=Depends(require_roles("admin"))):
+    """تصدير قايمة الطلاب اللي معندهمش تفاعل خالص كملف إكسيل - ممكن تتفلتر بمجموعة"""
+    query, params = _never_engaged_query_and_params(group_id)
     with get_connection() as conn:
-        students = [dict(r) for r in conn.execute(_NEVER_ENGAGED_QUERY).fetchall()]
+        students = [dict(r) for r in conn.execute(query, params).fetchall()]
     buf = _never_engaged_workbook(students)
     filename = "طلاب معندهمش تفاعل.xlsx"
     return StreamingResponse(
@@ -1652,10 +1660,14 @@ def export_never_engaged_students(session=Depends(require_roles("admin"))):
 
 
 @app.delete("/api/students/never-engaged")
-def delete_never_engaged_students(session=Depends(require_roles("admin"))):
-    """حذف كل الطلاب اللي معندهمش أي حضور خالص ومعندهمش أي واجب متسلّم خالص من السيستم نهائيًا"""
+def delete_never_engaged_students(group_id: Optional[int] = None, session=Depends(require_roles("admin"))):
+    """
+    حذف كل الطلاب اللي معندهمش أي حضور خالص ومعندهمش أي واجب متسلّم خالص من
+    السيستم نهائيًا - لو اتبعت group_id بيتحذف بس طلاب المجموعة دي
+    """
+    query, params = _never_engaged_query_and_params(group_id)
     with get_connection() as conn:
-        rows = conn.execute(_NEVER_ENGAGED_QUERY).fetchall()
+        rows = conn.execute(query, params).fetchall()
         ids = [r["id"] for r in rows]
         if not ids:
             return {"message": "مفيش طلاب لحذفهم", "deleted": 0}
@@ -1663,7 +1675,7 @@ def delete_never_engaged_students(session=Depends(require_roles("admin"))):
         conn.execute(f"DELETE FROM students WHERE id IN ({placeholders})", ids)
         log_session_activity(
             conn, session, "student_delete",
-            f"حذف {len(ids)} طالب دفعة واحدة (معندهمش تفاعل خالص)"
+            f"حذف {len(ids)} طالب دفعة واحدة (معندهمش تفاعل خالص)" + (f" - مجموعة #{group_id}" if group_id else "")
         )
         return {"message": f"تم حذف {len(ids)} طالب", "deleted": len(ids)}
 
