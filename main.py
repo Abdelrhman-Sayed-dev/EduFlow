@@ -457,20 +457,20 @@ def current_month_str():
 
 def is_student_subscribed(conn, student_id: int) -> bool:
     """
-    هل الطالب مسموحله يشوف المحتوى؟ - ده اللي بيتحكم في السماح بمشاهدة المحتوى من عدمه.
-    - الطالب "الفري الدائم" (students.is_free) بيتحسب مشترك دايمًا في كل الشهور.
-    - أو لو الشهر الحالي بالذات مسدد أو اتمنح فري لشهر واحد بس (payments.is_free).
+    هل الطالب مسموحله يدخل المنصة أصلاً؟ - ده بس بيتحكم في شاشة "محتاج تسدد
+    الاشتراك" اللي بتمنعه يدخل خالص. مش بيتحكم في *أي* محتوى بالتحديد يظهرله
+    (ده شغل is_content_visible / get_student_paid_months اللي بتفلتر بالشهر).
+    - الطالب "الفري الدائم" (students.is_free) بيتحسب مشترك دايمًا.
+    - أو لو سدد أي شهر على الإطلاق (مش لازم يكون الشهر الحالي بالذات) - يعني
+      لو سدد يوليو ومسددش أغسطس، برضه يدخل عادي ويشوف محتوى يوليو بس، من
+      غير ما يتقفل بره المنصة خالص.
     - أو لو عنده أي اشتراك بالحصص فعّال (نظام منفصل تمامًا) - عشان يقدر يدخل
-      المنصة يشوف الحصص اللي اشتراها، حتى لو مسددش الاشتراك الشهري خالص.
+      المنصة يشوف الحصص اللي اشتراها، حتى لو مسددش أي اشتراك شهري خالص.
     """
     student = conn.execute("SELECT is_free FROM students WHERE id=?", (student_id,)).fetchone()
     if student and student["is_free"]:
         return True
-    row = conn.execute(
-        "SELECT is_paid, is_free FROM payments WHERE student_id=? AND month=?",
-        (student_id, current_month_str())
-    ).fetchone()
-    if row and (row["is_paid"] or row["is_free"]):
+    if get_paid_months(conn, student_id):
         return True
     return has_active_session_purchase(conn, student_id)
 
