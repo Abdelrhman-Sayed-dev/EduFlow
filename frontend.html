@@ -8829,13 +8829,13 @@ async function loadQbankAnalytics(){
         <thead><tr><th>الباب</th><th>المرحلة</th><th>عدد المحاولات</th><th>عدد الأخطاء</th><th>نسبة الغلط</th><th></th></tr></thead>
         <tbody>
           ${data.weak_chapters.map(ch=>`
-            <tr class="qb-clickable-row" onclick="openQbWeakStudentsModal(${jsAttr(ch.chapter)}, null, ${ch.stage_id||"null"}, ${jsAttr(ch.chapter)})" style="cursor:pointer;">
+            <tr class="qb-clickable-row" onclick="openQbWeakStudentsModal('${jsAttr(ch.chapter)}', null, ${ch.stage_id||"null"}, '${jsAttr(ch.chapter)}')" style="cursor:pointer;">
               <td class="td-name">${escapeHtml(ch.chapter)}</td>
               <td>${ch.stage_name?`<span class="badge badge-blue">${escapeHtml(ch.stage_name)}</span>`:"—"}</td>
               <td>${ch.total_attempts}</td>
               <td>${ch.wrong_attempts}</td>
               <td><span class="badge ${ch.wrong_rate>=50?'badge-red':(ch.wrong_rate>=25?'badge-amber':'badge-green')}">${ch.wrong_rate}%</span></td>
-              <td><button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openQbWeakStudentsModal(${jsAttr(ch.chapter)}, null, ${ch.stage_id||"null"}, ${jsAttr(ch.chapter)})"><i data-lucide="users" style="width:13px;height:13px;"></i> الطلاب الضعاف</button></td>
+              <td><button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openQbWeakStudentsModal('${jsAttr(ch.chapter)}', null, ${ch.stage_id||"null"}, '${jsAttr(ch.chapter)}')"><i data-lucide="users" style="width:13px;height:13px;"></i> الطلاب الضعاف</button></td>
             </tr>`).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:20px;">لا يوجد بيانات</td></tr>`}
         </tbody>
       </table></div>
@@ -8846,13 +8846,13 @@ async function loadQbankAnalytics(){
         <thead><tr><th>السؤال</th><th>الباب / الدرس</th><th>عدد المحاولات</th><th>عدد الأخطاء</th><th>نسبة الغلط</th><th></th></tr></thead>
         <tbody>
           ${data.top_missed_questions.map(q=>`
-            <tr class="qb-clickable-row" onclick="openQbQuestionStudentsModal(${q.id}, ${jsAttr(q.question_text)})" style="cursor:pointer;">
+            <tr class="qb-clickable-row" onclick="openQbQuestionStudentsModal(${q.id}, '${jsAttr(q.question_text)}')" style="cursor:pointer;">
               <td class="td-name" style="max-width:320px;">${escapeHtml(q.question_text)}</td>
               <td><span class="badge badge-gray">${escapeHtml(q.chapter)}</span><div style="font-size:11px;color:var(--text-3);margin-top:3px;">${escapeHtml(q.lesson)}</div></td>
               <td>${q.total_attempts}</td>
               <td>${q.wrong_attempts}</td>
               <td><span class="badge ${q.wrong_rate>=50?'badge-red':(q.wrong_rate>=25?'badge-amber':'badge-green')}">${q.wrong_rate}%</span></td>
-              <td><button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openQbQuestionStudentsModal(${q.id}, ${jsAttr(q.question_text)})"><i data-lucide="users" style="width:13px;height:13px;"></i> الطلاب</button></td>
+              <td><button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openQbQuestionStudentsModal(${q.id}, '${jsAttr(q.question_text)}')"><i data-lucide="users" style="width:13px;height:13px;"></i> الطلاب</button></td>
             </tr>`).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:20px;">لا يوجد بيانات</td></tr>`}
         </tbody>
       </table></div>
