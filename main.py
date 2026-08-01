@@ -1581,6 +1581,93 @@ def toggle_student_free(student_id: int, session=Depends(require_roles("admin", 
         return {"is_free": bool(new_state), "message": "تم تحديث حالة الطالب الفري"}
 
 
+# ---------------------------------------------------------------------------
+# الطلاب اللي محضروش خالص ولا سلموا واجب خالص - Never Engaged Students
+# قايمة عند الأدمن للطلاب اللي معندهمش أي حضور مسجل (ولا مرة) ومعندهمش أي
+# واجب متسلّم (ولا مرة) - تسهّل حذفهم دفعة واحدة لو مش فاعلين خالص في المنصة
+# لازم الراوتس دي تتسجل قبل "/api/students/{student_id}" عشان ماتتحجبش منه
+# ---------------------------------------------------------------------------
+
+_NEVER_ENGAGED_QUERY = """
+    SELECT s.id, s.full_name, s.phone, s.parent_phone, s.group_id, g.name as group_name,
+           s.created_at
+    FROM students s
+    LEFT JOIN groups g ON g.id = s.group_id
+    WHERE s.is_active = 1
+      AND NOT EXISTS (
+          SELECT 1 FROM attendance a WHERE a.student_id = s.id AND a.status IN ('present','late')
+      )
+      AND NOT EXISTS (
+          SELECT 1 FROM homework_submissions hs WHERE hs.student_id = s.id AND hs.done = 1
+      )
+    ORDER BY s.full_name
+"""
+
+
+@app.get("/api/students/never-engaged")
+def get_never_engaged_students(session=Depends(require_roles("admin"))):
+    """قايمة الطلاب اللي معندهمش أي حضور مسجل خالص ومعندهمش أي واجب متسلّم خالص"""
+    with get_connection() as conn:
+        rows = conn.execute(_NEVER_ENGAGED_QUERY).fetchall()
+        return [dict(r) for r in rows]
+
+
+def _never_engaged_workbook(students):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "طلاب ملهمش تفاعل"
+    ws.sheet_view.rightToLeft = True
+    headers = ["الطالب", "المجموعة", "رقم هاتف الطالب", "رقم هاتف ولي الأمر", "تاريخ الإضافة"]
+    ws.append(headers)
+    for s in students:
+        ws.append([
+            s["full_name"], s.get("group_name") or "-", s.get("phone") or "-",
+            s.get("parent_phone") or "-", (s.get("created_at") or "-")[:10],
+        ])
+    for col_idx, header in enumerate(headers, start=1):
+        col_values = [header] + [str(row[col_idx - 1]) for row in [
+            [s["full_name"], s.get("group_name") or "-", s.get("phone") or "-",
+             s.get("parent_phone") or "-", (s.get("created_at") or "-")[:10]]
+            for s in students
+        ]]
+        ws.column_dimensions[chr(64 + col_idx)].width = min(max(len(v) for v in col_values) + 4, 40)
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+@app.get("/api/students/never-engaged/export")
+def export_never_engaged_students(session=Depends(require_roles("admin"))):
+    """تصدير قايمة الطلاب اللي معندهمش تفاعل خالص كملف إكسيل"""
+    with get_connection() as conn:
+        students = [dict(r) for r in conn.execute(_NEVER_ENGAGED_QUERY).fetchall()]
+    buf = _never_engaged_workbook(students)
+    filename = "طلاب معندهمش تفاعل.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
+
+
+@app.delete("/api/students/never-engaged")
+def delete_never_engaged_students(session=Depends(require_roles("admin"))):
+    """حذف كل الطلاب اللي معندهمش أي حضور خالص ومعندهمش أي واجب متسلّم خالص من السيستم نهائيًا"""
+    with get_connection() as conn:
+        rows = conn.execute(_NEVER_ENGAGED_QUERY).fetchall()
+        ids = [r["id"] for r in rows]
+        if not ids:
+            return {"message": "مفيش طلاب لحذفهم", "deleted": 0}
+        placeholders = ",".join("?" for _ in ids)
+        conn.execute(f"DELETE FROM students WHERE id IN ({placeholders})", ids)
+        log_session_activity(
+            conn, session, "student_delete",
+            f"حذف {len(ids)} طالب دفعة واحدة (معندهمش تفاعل خالص)"
+        )
+        return {"message": f"تم حذف {len(ids)} طالب", "deleted": len(ids)}
+
+
 @app.delete("/api/students/{student_id}")
 def delete_student(student_id: int, session=Depends(require_roles("admin"))):
     with get_connection() as conn:
