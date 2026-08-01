@@ -8769,31 +8769,42 @@ async function renderQbankAnalyticsPage(){
   const stages = await loadStages();
   CACHE_STAGES = stages;
   c.innerHTML = `
-    <div class="page-header"><div><h1>تحليل الأخطاء الشائعة في بنك الأسئلة</h1><p>أكتر الأبواب والأسئلة اللي بيغلط فيها الطلاب - عشان تركز شرحك عليها</p></div></div>
-    <div class="table-card" style="padding:12px 14px;margin-bottom:14px;">
-      <div class="form-group" style="margin:0;max-width:320px;"><label class="form-label">المرحلة الدراسية</label>
-        <select class="form-select" id="qbAnalyticsStageFilter" onchange="qbAnalyticsStageChanged()">
+    <div class="page-header"><div><h1>تحليل الأخطاء الشائعة</h1><p>أكتر الأبواب والأسئلة اللي بيغلط فيها الطلاب - عشان تركز شرحك عليها</p></div></div>
+
+    <div class="table-card" style="padding:10px 12px;margin-bottom:12px;">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <select class="form-select" id="qbAnalyticsStageFilter" onchange="qbAnalyticsStageChanged()" style="flex:1;min-width:140px;">
           <option value="">كل المراحل</option>
           ${stages.map(s=>`<option value="${s.id}">${escapeHtml(s.name)}</option>`).join("")}
         </select>
+        <button type="button" class="btn btn-ghost btn-sm" id="qbAnalyticsSearchToggleBtn" onclick="qbAnalyticsToggleSearchPanel()">
+          <i data-lucide="search" style="width:14px;height:14px;"></i> دور على باب/درس معين
+        </button>
+      </div>
+      <div id="qbAnalyticsSearchPanel" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+        <div class="form-row-2">
+          <div class="form-group" style="margin:0;"><label class="form-label">الباب</label>
+            <select class="form-select" id="qbAnalyticsChapterSelect" onchange="qbAnalyticsChapterChanged()">
+              <option value="">اختار الباب</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin:0;"><label class="form-label">الدرس (اختياري)</label>
+            <select class="form-select" id="qbAnalyticsLessonSelect">
+              <option value="">كل دروس الباب</option>
+            </select>
+          </div>
+        </div>
+        <button type="button" class="btn btn-primary btn-sm" style="margin-top:10px;width:100%;" onclick="qbAnalyticsSearchWeakStudents()"><i data-lucide="users" style="width:14px;height:14px;"></i> اعرض الطلاب الضعاف</button>
       </div>
     </div>
-    <div class="table-card" style="padding:12px 14px;margin-bottom:14px;">
-      <div class="toolbar" style="padding:0 0 10px;"><b style="font-size:14px;">🔍 دور على الطلاب الضعاف في باب أو درس معين</b></div>
-      <div class="form-row-2">
-        <div class="form-group" style="margin:0;"><label class="form-label">الباب</label>
-          <select class="form-select" id="qbAnalyticsChapterSelect" onchange="qbAnalyticsChapterChanged()">
-            <option value="">اختار الباب</option>
-          </select>
-        </div>
-        <div class="form-group" style="margin:0;"><label class="form-label">الدرس (اختياري)</label>
-          <select class="form-select" id="qbAnalyticsLessonSelect">
-            <option value="">كل دروس الباب</option>
-          </select>
-        </div>
+
+    <div class="table-card" style="padding:10px 12px;margin-bottom:12px;">
+      <div class="seg-toggle" id="qbAnalyticsTabs" style="width:100%;">
+        <button type="button" class="seg-btn active-green" data-val="chapters" onclick="qbAnalyticsSwitchTab('chapters')" style="flex:1;">🔴 الأبواب</button>
+        <button type="button" class="seg-btn" data-val="questions" onclick="qbAnalyticsSwitchTab('questions')" style="flex:1;">❌ الأسئلة</button>
       </div>
-      <button type="button" class="btn btn-primary btn-sm" style="margin-top:12px;" onclick="qbAnalyticsSearchWeakStudents()"><i data-lucide="search" style="width:14px;height:14px;"></i> اعرض الطلاب الضعاف</button>
     </div>
+
     <div id="qbAnalyticsWrap"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>
   `;
   icons();
@@ -8802,6 +8813,19 @@ async function renderQbankAnalyticsPage(){
 }
 
 let QBANK_ANALYTICS_CHAPTERS = [];
+let QBANK_ANALYTICS_DATA = null;
+let QBANK_ANALYTICS_TAB = "chapters";
+
+function qbAnalyticsToggleSearchPanel(){
+  const panel = document.getElementById("qbAnalyticsSearchPanel");
+  panel.style.display = panel.style.display === "none" ? "block" : "none";
+}
+
+function qbAnalyticsSwitchTab(tab){
+  QBANK_ANALYTICS_TAB = tab;
+  document.querySelectorAll("#qbAnalyticsTabs .seg-btn").forEach(b=>b.classList.toggle("active-green", b.dataset.val===tab));
+  qbAnalyticsRenderTab();
+}
 
 async function qbAnalyticsLoadChapterOptions(){
   const stageId = document.getElementById("qbAnalyticsStageFilter")?.value || "";
@@ -8845,49 +8869,56 @@ async function loadQbankAnalytics(){
   const wrap = document.getElementById("qbAnalyticsWrap");
   wrap.innerHTML = `<div class="empty-state"><div class="empty-title">بتحمّل...</div></div>`;
   const stageId = document.getElementById("qbAnalyticsStageFilter")?.value || "";
-  const data = await api(`/api/qbank/analytics${stageId?`?stage_id=${stageId}`:""}`);
+  QBANK_ANALYTICS_DATA = await api(`/api/qbank/analytics${stageId?`?stage_id=${stageId}`:""}`);
 
-  if (!data.weak_chapters.length && !data.top_missed_questions.length){
+  if (!QBANK_ANALYTICS_DATA.weak_chapters.length && !QBANK_ANALYTICS_DATA.top_missed_questions.length){
     wrap.innerHTML = `<div class="empty-state"><div class="empty-icon"><i data-lucide="bar-chart-3" style="width:26px;height:26px;"></i></div><div class="empty-title">لسه مفيش بيانات كفاية</div><div class="empty-desc">لازم الطلاب يحلوا أسئلة في بنك الأسئلة الأول عشان يظهر التحليل.</div></div>`;
     return;
   }
+  qbAnalyticsRenderTab();
+}
 
-  wrap.innerHTML = `
-    <div class="table-card" style="margin-bottom:16px;">
-      <div class="toolbar"><b style="font-size:14px;">🔴 أكتر الأبواب اللي فيها غلط</b></div>
-      <div class="table-wrap"><table>
-        <thead><tr><th>الباب</th><th>المرحلة</th><th>عدد المحاولات</th><th>عدد الأخطاء</th><th>نسبة الغلط</th><th></th></tr></thead>
-        <tbody>
-          ${data.weak_chapters.map(ch=>`
-            <tr class="qb-clickable-row" onclick="openQbWeakStudentsModal('${jsAttr(ch.chapter)}', null, ${ch.stage_id||"null"}, '${jsAttr(ch.chapter)}')" style="cursor:pointer;">
-              <td class="td-name">${escapeHtml(ch.chapter)}</td>
-              <td>${ch.stage_name?`<span class="badge badge-blue">${escapeHtml(ch.stage_name)}</span>`:"—"}</td>
-              <td>${ch.total_attempts}</td>
-              <td>${ch.wrong_attempts}</td>
-              <td><span class="badge ${ch.wrong_rate>=50?'badge-red':(ch.wrong_rate>=25?'badge-amber':'badge-green')}">${ch.wrong_rate}%</span></td>
-              <td><button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openQbWeakStudentsModal('${jsAttr(ch.chapter)}', null, ${ch.stage_id||"null"}, '${jsAttr(ch.chapter)}')"><i data-lucide="users" style="width:13px;height:13px;"></i> الطلاب الضعاف</button></td>
-            </tr>`).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:20px;">لا يوجد بيانات</td></tr>`}
-        </tbody>
-      </table></div>
-    </div>
-    <div class="table-card">
-      <div class="toolbar"><b style="font-size:14px;">❌ أكتر الأسئلة اللي بيتغلط فيها</b></div>
-      <div class="table-wrap"><table>
-        <thead><tr><th>السؤال</th><th>الباب / الدرس</th><th>عدد المحاولات</th><th>عدد الأخطاء</th><th>نسبة الغلط</th><th></th></tr></thead>
-        <tbody>
-          ${data.top_missed_questions.map(q=>`
-            <tr class="qb-clickable-row" onclick="openQbQuestionStudentsModal(${q.id}, '${jsAttr(q.question_text)}')" style="cursor:pointer;">
-              <td class="td-name" style="max-width:320px;">${escapeHtml(q.question_text)}</td>
-              <td><span class="badge badge-gray">${escapeHtml(q.chapter)}</span><div style="font-size:11px;color:var(--text-3);margin-top:3px;">${escapeHtml(q.lesson)}</div></td>
-              <td>${q.total_attempts}</td>
-              <td>${q.wrong_attempts}</td>
-              <td><span class="badge ${q.wrong_rate>=50?'badge-red':(q.wrong_rate>=25?'badge-amber':'badge-green')}">${q.wrong_rate}%</span></td>
-              <td><button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openQbQuestionStudentsModal(${q.id}, '${jsAttr(q.question_text)}')"><i data-lucide="users" style="width:13px;height:13px;"></i> الطلاب</button></td>
-            </tr>`).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:20px;">لا يوجد بيانات</td></tr>`}
-        </tbody>
-      </table></div>
-    </div>
-  `;
+function qbWrongRateBadge(rate){
+  return `<span class="badge ${rate>=50?'badge-red':(rate>=25?'badge-amber':'badge-green')}">${rate}%</span>`;
+}
+
+function qbAnalyticsRenderTab(){
+  const wrap = document.getElementById("qbAnalyticsWrap");
+  if (!QBANK_ANALYTICS_DATA) return;
+
+  if (QBANK_ANALYTICS_TAB === "chapters"){
+    const list = QBANK_ANALYTICS_DATA.weak_chapters;
+    wrap.innerHTML = !list.length
+      ? `<div class="empty-state"><div class="empty-title">لا يوجد بيانات</div></div>`
+      : `<div class="table-card" style="padding:4px 12px;">
+          ${list.map(ch=>`
+            <div class="student-more-item" onclick="openQbWeakStudentsModal('${jsAttr(ch.chapter)}', null, ${ch.stage_id||"null"}, '${jsAttr(ch.chapter)}')">
+              <div class="student-more-ic"><i data-lucide="book-open" style="width:17px;height:17px;"></i></div>
+              <div style="flex:1;min-width:0;">
+                <div style="font-weight:700;font-size:13.5px;">${escapeHtml(ch.chapter)}</div>
+                <div style="font-size:11.5px;color:var(--text-3);">${ch.stage_name?escapeHtml(ch.stage_name)+' · ':''}${ch.total_attempts} محاولة · ${ch.wrong_attempts} غلط</div>
+              </div>
+              ${qbWrongRateBadge(ch.wrong_rate)}
+              <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);flex-shrink:0;"></i>
+            </div>`).join("")}
+        </div>`;
+  } else {
+    const list = QBANK_ANALYTICS_DATA.top_missed_questions;
+    wrap.innerHTML = !list.length
+      ? `<div class="empty-state"><div class="empty-title">لا يوجد بيانات</div></div>`
+      : `<div class="table-card" style="padding:4px 12px;">
+          ${list.map(q=>`
+            <div class="student-more-item" onclick="openQbQuestionStudentsModal(${q.id}, '${jsAttr(q.question_text)}')">
+              <div class="student-more-ic"><i data-lucide="help-circle" style="width:17px;height:17px;"></i></div>
+              <div style="flex:1;min-width:0;">
+                <div style="font-weight:700;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(q.question_text)}</div>
+                <div style="font-size:11.5px;color:var(--text-3);">${escapeHtml(q.chapter)} · ${escapeHtml(q.lesson)} · ${q.wrong_attempts}/${q.total_attempts} غلط</div>
+              </div>
+              ${qbWrongRateBadge(q.wrong_rate)}
+              <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);flex-shrink:0;"></i>
+            </div>`).join("")}
+        </div>`;
+  }
   icons();
 }
 
