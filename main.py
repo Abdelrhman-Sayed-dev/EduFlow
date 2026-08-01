@@ -4357,10 +4357,13 @@ def get_participation_by_date(session_date: str, group_id: Optional[int] = None,
         query = """
             SELECT s.id as student_id, s.full_name, s.attendance_code, s.group_id,
                    p.points as today_points, p.notes as today_notes, p.id as participation_id,
-                   (SELECT COALESCE(SUM(points), 0) FROM participation WHERE student_id = s.id) as total_points
+                   COALESCE(tot.total_points, 0) as total_points
             FROM students s
             LEFT JOIN participation p ON p.student_id = s.id
                 AND p.session_date = ? AND p.session_number = ?
+            LEFT JOIN (
+                SELECT student_id, SUM(points) as total_points FROM participation GROUP BY student_id
+            ) tot ON tot.student_id = s.id
             WHERE s.is_active = 1
         """
         params = [session_date, session_number]
