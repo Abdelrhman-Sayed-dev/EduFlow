@@ -4167,11 +4167,17 @@ async function renderImportStudentsPage(){
 let NEVER_ENGAGED_CACHE = [];
 
 async function renderNeverEngagedPage(){
+  const groups = await loadGroups();
+  CACHE_ALL_GROUPS = groups;
   const c = document.getElementById("pageContainer");
   c.innerHTML = `
     <div class="page-header">
       <div><h1>طلاب بدون تفاعل</h1><p>طلاب معندهمش أي حضور مسجل خالص ولا سلّموا أي واجب ولا مرة</p></div>
       <div class="header-actions">
+        <select class="form-select" id="neverEngagedGroupFilter" onchange="loadNeverEngagedTable()" style="min-width:200px;">
+          <option value="">كل المجموعات</option>
+          ${groupOptionsAll()}
+        </select>
         <button class="btn btn-ghost" onclick="exportNeverEngagedStudents()"><i data-lucide="download" style="width:14px;height:14px;"></i> تحميل كشيت</button>
         <button class="btn btn-danger" id="deleteAllNeverEngagedBtn" onclick="deleteAllNeverEngagedStudents()"><i data-lucide="trash-2" style="width:14px;height:14px;"></i> حذف الكل</button>
       </div>
@@ -4187,10 +4193,17 @@ async function renderNeverEngagedPage(){
   await loadNeverEngagedTable();
 }
 
+function getNeverEngagedGroupFilter(){
+  const sel = document.getElementById("neverEngagedGroupFilter");
+  return sel && sel.value ? sel.value : "";
+}
+
 async function loadNeverEngagedTable(){
+  const groupId = getNeverEngagedGroupFilter();
+  const qs = groupId ? `?group_id=${groupId}` : "";
   let rows = [];
   try{
-    rows = await api("/api/students/never-engaged");
+    rows = await api(`/api/students/never-engaged${qs}`);
   }catch(e){ rows = []; }
   NEVER_ENGAGED_CACHE = rows;
   const tbody = document.getElementById("neverEngagedTableBody");
@@ -4210,18 +4223,24 @@ async function loadNeverEngagedTable(){
 }
 
 function exportNeverEngagedStudents(){
-  downloadFile("/api/students/never-engaged/export", "طلاب معندهمش تفاعل.xlsx");
+  const groupId = getNeverEngagedGroupFilter();
+  const qs = groupId ? `?group_id=${groupId}` : "";
+  downloadFile(`/api/students/never-engaged/export${qs}`, "طلاب معندهمش تفاعل.xlsx");
 }
 
 function deleteAllNeverEngagedStudents(){
   const count = (NEVER_ENGAGED_CACHE || []).length;
   if (!count){ showToast("مفيش طلاب لحذفهم", "error"); return; }
+  const groupId = getNeverEngagedGroupFilter();
+  const groupSel = document.getElementById("neverEngagedGroupFilter");
+  const groupLabel = groupId && groupSel ? groupSel.options[groupSel.selectedIndex].text : null;
   confirmAction(
     "حذف كل الطلاب اللي معندهمش تفاعل",
-    `هيتم حذف ${count} طالب نهائيًا من السيستم (بيانتهم، حضورهم، درجاتهم، كل حاجة). الإجراء ده لا يمكن التراجع عنه. متأكد؟`,
+    `هيتم حذف ${count} طالب نهائيًا من السيستم${groupLabel ? ` (من مجموعة "${groupLabel}" بس)` : ""} (بيانتهم، حضورهم، درجاتهم، كل حاجة). الإجراء ده لا يمكن التراجع عنه. متأكد؟`,
     async ()=>{
       try{
-        const res = await api("/api/students/never-engaged", {method:"DELETE"});
+        const qs = groupId ? `?group_id=${groupId}` : "";
+        const res = await api(`/api/students/never-engaged${qs}`, {method:"DELETE"});
         showToast(res.message || "تم الحذف", "success");
         await loadNeverEngagedTable();
       }catch(e){
