@@ -3024,6 +3024,68 @@ def qb_analytics(stage_id: Optional[int] = None, session=Depends(require_roles("
         return {"weak_chapters": weak_chapters, "top_missed_questions": top_missed_questions}
 
 
+@app.get("/api/qbank/analytics/weak-students")
+def qb_weak_students(chapter: str, lesson: Optional[str] = None, stage_id: Optional[int] = None,
+                      session=Depends(require_roles("admin", "head_supervisor"))):
+    """
+    قايمة بأسماء الطلاب اللي ضعاف في باب معين (أو درس معين جوه الباب)، مع مجموعة كل طالب،
+    عشان تقدر تعمل كونترول وتقف معاهم على طول.
+    """
+    with get_connection() as conn:
+        query = """
+            SELECT s.id as student_id, s.full_name, s.group_id, g.name as group_name,
+                   COUNT(a.id) as total_attempts,
+                   SUM(CASE WHEN a.is_correct=0 THEN 1 ELSE 0 END) as wrong_attempts
+            FROM qb_answers a
+            JOIN qb_questions qq ON qq.id = a.question_id
+            JOIN students s ON s.id = a.student_id
+            LEFT JOIN groups g ON g.id = s.group_id
+            WHERE qq.chapter=?
+        """
+        params = [chapter]
+        if lesson:
+            query += " AND qq.lesson=?"
+            params.append(lesson)
+        if stage_id:
+            query += " AND qq.stage_id=?"
+            params.append(stage_id)
+        query += """
+            GROUP BY s.id
+            HAVING wrong_attempts > 0
+            ORDER BY (wrong_attempts * 1.0 / total_attempts) DESC, wrong_attempts DESC
+        """
+        rows = conn.execute(query, params).fetchall()
+        result = []
+        for r in rows:
+            rate = round((r["wrong_attempts"] / r["total_attempts"]) * 100, 1) if r["total_attempts"] else 0
+            result.append({
+                "student_id": r["student_id"], "full_name": r["full_name"],
+                "group_id": r["group_id"], "group_name": r["group_name"],
+                "total_attempts": r["total_attempts"], "wrong_attempts": r["wrong_attempts"],
+                "wrong_rate": rate,
+            })
+        return result
+
+
+@app.get("/api/qbank/analytics/question/{question_id}/students")
+def qb_question_weak_students(question_id: int, session=Depends(require_roles("admin", "head_supervisor"))):
+    """قايمة بالطلاب اللي غلطوا في سؤال معين، مع مجموعة كل طالب"""
+    with get_connection() as conn:
+        question = conn.execute("SELECT id FROM qb_questions WHERE id=?", (question_id,)).fetchone()
+        if not question:
+            raise HTTPException(status_code=404, detail="السؤال غير موجود")
+        rows = conn.execute("""
+            SELECT s.id as student_id, s.full_name, s.group_id, g.name as group_name,
+                   a.selected_answer, a.answered_at
+            FROM qb_answers a
+            JOIN students s ON s.id = a.student_id
+            LEFT JOIN groups g ON g.id = s.group_id
+            WHERE a.question_id=? AND a.is_correct=0
+            ORDER BY a.answered_at DESC
+        """, (question_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+
 # --- واجهة الطالب في بنك الأسئلة ---
 
 @app.get("/api/qbank/student/chapters")
@@ -3085,18 +3147,27 @@ def qb_student_questions(chapter: Optional[str] = None, lesson: Optional[str] = 
         later_ids = {r["question_id"] for r in conn.execute(
             "SELECT question_id FROM qb_solve_later WHERE student_id=?", (session["id"],)).fetchall()}
         answered_rows = conn.execute("""
-            SELECT question_id, MAX(is_correct) as ever_correct, COUNT(*) as attempts
-            FROM qb_answers WHERE student_id=? GROUP BY question_id
-        """, (session["id"],)).fetchall()
+            SELECT a.question_id, a.selected_answer, a.is_correct, cnt.attempts
+            FROM qb_answers a
+            JOIN (
+                SELECT question_id, MAX(id) as max_id, COUNT(*) as attempts
+                FROM qb_answers WHERE student_id=? GROUP BY question_id
+            ) cnt ON cnt.question_id = a.question_id AND cnt.max_id = a.id
+            WHERE a.student_id=?
+        """, (session["id"], session["id"])).fetchall()
         answered_map = {r["question_id"]: dict(r) for r in answered_rows}
 
         result = []
         for row in rows:
+            prev = answered_map.get(row["id"])
             extra = {
                 "is_favorite": row["id"] in fav_ids,
                 "is_solve_later": row["id"] in later_ids,
-                "attempts": answered_map.get(row["id"], {}).get("attempts", 0),
-                "ever_correct": bool(answered_map.get(row["id"], {}).get("ever_correct", 0)),
+                "attempts": prev["attempts"] if prev else 0,
+                "ever_correct": bool(prev["is_correct"]) if prev else False,
+                "selected_answer": prev["selected_answer"] if prev else None,
+                "correct_answer": row["correct_answer"] if prev else None,
+                "explanation": row["explanation"] if (prev and not prev["is_correct"]) else None,
             }
             result.append(_qb_question_out(row, extra))
         return result
@@ -3104,7 +3175,7 @@ def qb_student_questions(chapter: Optional[str] = None, lesson: Optional[str] = 
 
 @app.post("/api/qbank/student/questions/{question_id}/answer")
 def qb_student_answer(question_id: int, payload: QBAnswerIn, session=Depends(require_roles("student"))):
-    """الطالب بيبعت إجابته المختارة - بيرجعله صح/غلط + التفسير لو غلط"""
+    """الطالب بيبعت إجابته المختارة - محاولة واحدة بس لكل سؤال، بيرجعله صح/غلط + التفسير لو غلط"""
     with get_connection() as conn:
         question = conn.execute("SELECT * FROM qb_questions WHERE id=? AND is_active=1", (question_id,)).fetchone()
         if not question:
@@ -3112,6 +3183,12 @@ def qb_student_answer(question_id: int, payload: QBAnswerIn, session=Depends(req
         stage_id = _student_stage_id(conn, session)
         if question["stage_id"] != stage_id:
             raise HTTPException(status_code=403, detail="السؤال ده مش لمرحلتك")
+
+        existing = conn.execute(
+            "SELECT id FROM qb_answers WHERE student_id=? AND question_id=?", (session["id"], question_id)
+        ).fetchone()
+        if existing:
+            raise HTTPException(status_code=400, detail="لقد أجبت على هذا السؤال من قبل، مسموح بمحاولة واحدة فقط")
 
         is_correct = payload.selected_answer.strip() == question["correct_answer"].strip()
         conn.execute("""

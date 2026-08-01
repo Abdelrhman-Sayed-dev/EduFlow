@@ -8742,16 +8742,73 @@ async function renderQbankAnalyticsPage(){
     <div class="page-header"><div><h1>تحليل الأخطاء الشائعة في بنك الأسئلة</h1><p>أكتر الأبواب والأسئلة اللي بيغلط فيها الطلاب - عشان تركز شرحك عليها</p></div></div>
     <div class="table-card" style="padding:12px 14px;margin-bottom:14px;">
       <div class="form-group" style="margin:0;max-width:320px;"><label class="form-label">المرحلة الدراسية</label>
-        <select class="form-select" id="qbAnalyticsStageFilter" onchange="loadQbankAnalytics()">
+        <select class="form-select" id="qbAnalyticsStageFilter" onchange="qbAnalyticsStageChanged()">
           <option value="">كل المراحل</option>
           ${stages.map(s=>`<option value="${s.id}">${escapeHtml(s.name)}</option>`).join("")}
         </select>
       </div>
     </div>
+    <div class="table-card" style="padding:12px 14px;margin-bottom:14px;">
+      <div class="toolbar" style="padding:0 0 10px;"><b style="font-size:14px;">🔍 دور على الطلاب الضعاف في باب أو درس معين</b></div>
+      <div class="form-row-2">
+        <div class="form-group" style="margin:0;"><label class="form-label">الباب</label>
+          <select class="form-select" id="qbAnalyticsChapterSelect" onchange="qbAnalyticsChapterChanged()">
+            <option value="">اختار الباب</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin:0;"><label class="form-label">الدرس (اختياري)</label>
+          <select class="form-select" id="qbAnalyticsLessonSelect">
+            <option value="">كل دروس الباب</option>
+          </select>
+        </div>
+      </div>
+      <button type="button" class="btn btn-primary btn-sm" style="margin-top:12px;" onclick="qbAnalyticsSearchWeakStudents()"><i data-lucide="search" style="width:14px;height:14px;"></i> اعرض الطلاب الضعاف</button>
+    </div>
     <div id="qbAnalyticsWrap"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>
   `;
   icons();
+  await qbAnalyticsLoadChapterOptions();
   await loadQbankAnalytics();
+}
+
+let QBANK_ANALYTICS_CHAPTERS = [];
+
+async function qbAnalyticsLoadChapterOptions(){
+  const stageId = document.getElementById("qbAnalyticsStageFilter")?.value || "";
+  const chapterSelect = document.getElementById("qbAnalyticsChapterSelect");
+  const lessonSelect = document.getElementById("qbAnalyticsLessonSelect");
+  QBANK_ANALYTICS_CHAPTERS = await api(`/api/qbank/chapters${stageId?`?stage_id=${stageId}`:""}`);
+  const names = [...new Set(QBANK_ANALYTICS_CHAPTERS.map(c=>c.chapter))];
+  chapterSelect.innerHTML = `<option value="">اختار الباب</option>` + names.map(n=>`<option value="${jsAttr(n)}">${escapeHtml(n)}</option>`).join("");
+  lessonSelect.innerHTML = `<option value="">كل دروس الباب</option>`;
+}
+
+function qbAnalyticsChapterChanged(){
+  const chapter = document.getElementById("qbAnalyticsChapterSelect").value;
+  const lessonSelect = document.getElementById("qbAnalyticsLessonSelect");
+  if (chapter){
+    const lessons = [...new Set(QBANK_ANALYTICS_CHAPTERS.filter(c=>c.chapter===chapter).map(c=>c.lesson))];
+    lessonSelect.innerHTML = `<option value="">كل دروس الباب</option>` + lessons.map(l=>`<option value="${jsAttr(l)}">${escapeHtml(l)}</option>`).join("");
+  } else {
+    lessonSelect.innerHTML = `<option value="">كل دروس الباب</option>`;
+  }
+}
+
+async function qbAnalyticsStageChanged(){
+  await qbAnalyticsLoadChapterOptions();
+  await loadQbankAnalytics();
+}
+
+function qbAnalyticsSearchWeakStudents(){
+  const chapter = document.getElementById("qbAnalyticsChapterSelect").value;
+  const lesson = document.getElementById("qbAnalyticsLessonSelect").value;
+  const stageId = document.getElementById("qbAnalyticsStageFilter").value || null;
+  if (!chapter){
+    showToast("اختار الباب الأول", "error");
+    return;
+  }
+  const label = lesson ? `${chapter} - ${lesson}` : chapter;
+  openQbWeakStudentsModal(chapter, lesson || null, stageId, label);
 }
 
 async function loadQbankAnalytics(){
@@ -8769,37 +8826,115 @@ async function loadQbankAnalytics(){
     <div class="table-card" style="margin-bottom:16px;">
       <div class="toolbar"><b style="font-size:14px;">🔴 أكتر الأبواب اللي فيها غلط</b></div>
       <div class="table-wrap"><table>
-        <thead><tr><th>الباب</th><th>المرحلة</th><th>عدد المحاولات</th><th>عدد الأخطاء</th><th>نسبة الغلط</th></tr></thead>
+        <thead><tr><th>الباب</th><th>المرحلة</th><th>عدد المحاولات</th><th>عدد الأخطاء</th><th>نسبة الغلط</th><th></th></tr></thead>
         <tbody>
           ${data.weak_chapters.map(ch=>`
-            <tr>
+            <tr class="qb-clickable-row" onclick="openQbWeakStudentsModal(${jsAttr(ch.chapter)}, null, ${ch.stage_id||"null"}, ${jsAttr(ch.chapter)})" style="cursor:pointer;">
               <td class="td-name">${escapeHtml(ch.chapter)}</td>
               <td>${ch.stage_name?`<span class="badge badge-blue">${escapeHtml(ch.stage_name)}</span>`:"—"}</td>
               <td>${ch.total_attempts}</td>
               <td>${ch.wrong_attempts}</td>
               <td><span class="badge ${ch.wrong_rate>=50?'badge-red':(ch.wrong_rate>=25?'badge-amber':'badge-green')}">${ch.wrong_rate}%</span></td>
-            </tr>`).join("") || `<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:20px;">لا يوجد بيانات</td></tr>`}
+              <td><button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openQbWeakStudentsModal(${jsAttr(ch.chapter)}, null, ${ch.stage_id||"null"}, ${jsAttr(ch.chapter)})"><i data-lucide="users" style="width:13px;height:13px;"></i> الطلاب الضعاف</button></td>
+            </tr>`).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:20px;">لا يوجد بيانات</td></tr>`}
         </tbody>
       </table></div>
     </div>
     <div class="table-card">
       <div class="toolbar"><b style="font-size:14px;">❌ أكتر الأسئلة اللي بيتغلط فيها</b></div>
       <div class="table-wrap"><table>
-        <thead><tr><th>السؤال</th><th>الباب / الدرس</th><th>عدد المحاولات</th><th>عدد الأخطاء</th><th>نسبة الغلط</th></tr></thead>
+        <thead><tr><th>السؤال</th><th>الباب / الدرس</th><th>عدد المحاولات</th><th>عدد الأخطاء</th><th>نسبة الغلط</th><th></th></tr></thead>
         <tbody>
           ${data.top_missed_questions.map(q=>`
-            <tr>
+            <tr class="qb-clickable-row" onclick="openQbQuestionStudentsModal(${q.id}, ${jsAttr(q.question_text)})" style="cursor:pointer;">
               <td class="td-name" style="max-width:320px;">${escapeHtml(q.question_text)}</td>
               <td><span class="badge badge-gray">${escapeHtml(q.chapter)}</span><div style="font-size:11px;color:var(--text-3);margin-top:3px;">${escapeHtml(q.lesson)}</div></td>
               <td>${q.total_attempts}</td>
               <td>${q.wrong_attempts}</td>
               <td><span class="badge ${q.wrong_rate>=50?'badge-red':(q.wrong_rate>=25?'badge-amber':'badge-green')}">${q.wrong_rate}%</span></td>
-            </tr>`).join("") || `<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:20px;">لا يوجد بيانات</td></tr>`}
+              <td><button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openQbQuestionStudentsModal(${q.id}, ${jsAttr(q.question_text)})"><i data-lucide="users" style="width:13px;height:13px;"></i> الطلاب</button></td>
+            </tr>`).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:20px;">لا يوجد بيانات</td></tr>`}
         </tbody>
       </table></div>
     </div>
   `;
   icons();
+}
+
+/* --- قايمة الطلاب الضعاف في باب/درس معين، أو في سؤال معين --- */
+
+async function openQbWeakStudentsModal(chapter, lesson, stageId, titleLabel){
+  openModal(
+    `الطلاب الضعاف في: ${escapeHtml(titleLabel)}`,
+    `<div id="qbWeakStudentsBody"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>`,
+    `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`,
+    {width: "560px"}
+  );
+  const params = new URLSearchParams();
+  params.set("chapter", chapter);
+  if (lesson) params.set("lesson", lesson);
+  if (stageId) params.set("stage_id", stageId);
+  const body = document.getElementById("qbWeakStudentsBody");
+  try{
+    const students = await api(`/api/qbank/analytics/weak-students?${params.toString()}`);
+    body.innerHTML = qbWeakStudentsListHtml(students);
+    icons();
+  }catch(e){
+    body.innerHTML = `<div class="empty-state"><div class="empty-title">حصل خطأ في تحميل البيانات</div></div>`;
+  }
+}
+
+async function openQbQuestionStudentsModal(questionId, questionText){
+  openModal(
+    `الطلاب اللي غلطوا في السؤال ده`,
+    `<div style="font-size:13px;color:var(--text-2);margin-bottom:12px;">${escapeHtml(questionText)}</div><div id="qbQuestionStudentsBody"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>`,
+    `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`,
+    {width: "560px"}
+  );
+  const body = document.getElementById("qbQuestionStudentsBody");
+  try{
+    const students = await api(`/api/qbank/analytics/question/${questionId}/students`);
+    if (!students.length){
+      body.innerHTML = `<div class="empty-state"><div class="empty-title">مفيش طلاب غلطوا في السؤال ده</div></div>`;
+      return;
+    }
+    body.innerHTML = `
+      <div class="table-wrap"><table>
+        <thead><tr><th>الطالب</th><th>المجموعة</th><th>الإجابة اللي اختارها</th></tr></thead>
+        <tbody>
+          ${students.map(s=>`
+            <tr>
+              <td class="td-name">${escapeHtml(s.full_name)}</td>
+              <td>${s.group_name?`<span class="badge badge-blue">${escapeHtml(s.group_name)}</span>`:"—"}</td>
+              <td>${escapeHtml(s.selected_answer)}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table></div>
+    `;
+  }catch(e){
+    body.innerHTML = `<div class="empty-state"><div class="empty-title">حصل خطأ في تحميل البيانات</div></div>`;
+  }
+}
+
+function qbWeakStudentsListHtml(students){
+  if (!students.length){
+    return `<div class="empty-state"><div class="empty-title">مفيش طلاب ضعاف مسجلين هنا</div></div>`;
+  }
+  return `
+    <div class="table-wrap"><table>
+      <thead><tr><th>الطالب</th><th>المجموعة</th><th>عدد المحاولات</th><th>عدد الأخطاء</th><th>نسبة الغلط</th></tr></thead>
+      <tbody>
+        ${students.map(s=>`
+          <tr>
+            <td class="td-name">${escapeHtml(s.full_name)}</td>
+            <td>${s.group_name?`<span class="badge badge-blue">${escapeHtml(s.group_name)}</span>`:"—"}</td>
+            <td>${s.total_attempts}</td>
+            <td>${s.wrong_attempts}</td>
+            <td><span class="badge ${s.wrong_rate>=50?'badge-red':(s.wrong_rate>=25?'badge-amber':'badge-green')}">${s.wrong_rate}%</span></td>
+          </tr>`).join("")}
+      </tbody>
+    </table></div>
+  `;
 }
 
 /* =====================================================================
@@ -8993,12 +9128,25 @@ function qbQuestionCardHtml(q){
       </div>
     </div>
     <div style="font-size:14.5px;font-weight:700;color:var(--text);margin:10px 0 12px;">${escapeHtml(q.question_text)}</div>
-    <div class="qb-options" id="qb_options_${q.id}">
-      ${q.options.map(opt=>`
-        <button type="button" class="qb-option-btn" data-opt="${jsAttr(opt)}" onclick="qbAnswer(${q.id}, this)">${escapeHtml(opt)}</button>
-      `).join("")}
+    <div class="qb-options" id="qb_options_${q.id}" data-locked="${answered?'1':''}">
+      ${q.options.map(opt=>{
+        let cls = "qb-option-btn";
+        if (answered){
+          if (opt === q.correct_answer) cls += " correct";
+          else if (opt === q.selected_answer && !q.ever_correct) cls += " wrong";
+        }
+        return `<button type="button" class="${cls}" data-opt="${jsAttr(opt)}" onclick="qbAnswer(${q.id}, this)" ${answered?'disabled':''}>${escapeHtml(opt)}</button>`;
+      }).join("")}
     </div>
-    <div id="qb_feedback_${q.id}"></div>
+    <div id="qb_feedback_${q.id}">
+      ${answered ? `
+        <div style="margin-top:10px;font-weight:700;font-size:13px;color:${q.ever_correct?'var(--success)':'var(--danger)'};">
+          ${q.ever_correct ? '✅ إجابة صح!' : '❌ إجابة غلط'}
+        </div>
+        ${!q.ever_correct && q.explanation ? `<div class="qb-feedback-explain"><b>التفسير:</b> ${escapeHtml(q.explanation)}</div>` : ""}
+        <div style="margin-top:8px;font-size:11.5px;color:var(--text-3);">مسموح بمحاولة واحدة بس لكل سؤال</div>
+      ` : ""}
+    </div>
   </div>`;
 }
 
@@ -9029,20 +9177,10 @@ async function qbAnswer(qid, btnEl){
       ${res.is_correct ? '✅ إجابة صح!' : '❌ إجابة غلط'}
     </div>
     ${!res.is_correct && res.explanation ? `<div class="qb-feedback-explain"><b>التفسير:</b> ${escapeHtml(res.explanation)}</div>` : ""}
-    <button class="btn btn-ghost btn-sm" style="margin-top:10px;" onclick="qbRetry(${qid})"><i data-lucide="rotate-ccw" style="width:13px;height:13px;"></i> جرب تاني</button>
+    <div style="margin-top:8px;font-size:11.5px;color:var(--text-3);">مسموح بمحاولة واحدة بس لكل سؤال</div>
   `;
   icons();
   qbRefreshTabCounts();
-}
-
-function qbRetry(qid){
-  const optionsWrap = document.getElementById(`qb_options_${qid}`);
-  optionsWrap.dataset.locked = "";
-  optionsWrap.querySelectorAll(".qb-option-btn").forEach(b=>{
-    b.disabled = false;
-    b.classList.remove("correct", "wrong");
-  });
-  document.getElementById(`qb_feedback_${qid}`).innerHTML = "";
 }
 
 async function qbToggleFavorite(qid){
