@@ -728,7 +728,6 @@ body.is-student .bottom-nav, body.is-supervisor .bottom-nav, body.is-teacher .bo
 <!-- لايت بوكس للصور -->
 <div class="overlay" id="imageLightbox" onclick="closeOverlay('imageLightbox')">
   <img id="lightboxImg" src="" style="max-width:90vw;max-height:90vh;border-radius:12px;box-shadow:var(--shadow-xl);">
-  <button class="lightbox-download-btn" id="lightboxDownloadBtn" onclick="event.stopPropagation();downloadLightboxImage()"><i data-lucide="download" style="width:15px;height:15px;"></i> تحميل الصورة</button>
 </div>
 
 <!-- شاشة خوض الامتحان الآمنة - overlay كامل الشاشة مستقل عن باقي الواجهة،
@@ -957,22 +956,9 @@ function showImageLightbox(src, filename){
   window._lightboxCurrentName = filename || "board-image.jpg";
   // الطالب يقدر يفتح الصورة فُل سكرين بس - مفيش زرار تحميل ولا حفظ بالراىت كليك
   const isStudent = SESSION && SESSION.role === "student";
-  const downloadBtn = document.getElementById("lightboxDownloadBtn");
-  if (downloadBtn) downloadBtn.style.display = isStudent ? "none" : "";
   img.oncontextmenu = isStudent ? (e)=>{ e.preventDefault(); return false; } : null;
   img.draggable = !isStudent;
   openOverlay("imageLightbox");
-}
-
-function downloadLightboxImage(){
-  const src = window._lightboxCurrentSrc;
-  if (!src) return;
-  const a = document.createElement("a");
-  a.href = src;
-  a.download = window._lightboxCurrentName || "board-image.jpg";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
 }
 
 /* =====================================================================
@@ -6024,7 +6010,7 @@ async function renderParticipationPage(){
         <label class="form-label">رقم الحصة</label>
         <input class="form-input" id="part_session_num" type="number" min="1" step="1" value="1" style="width:90px;">
       </div>
-      <button class="btn btn-primary" onclick="loadParticipationTable()"><i data-lucide="refresh-cw" style="width:14px;height:14px;"></i> تحميل الطلاب</button>
+      <button class="btn btn-primary" id="part_load_btn" onclick="loadParticipationTable()"><i data-lucide="refresh-cw" style="width:14px;height:14px;"></i> تحميل الطلاب</button>
     </div>
     <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:10px 14px;font-size:12.5px;color:var(--text-2);display:flex;gap:14px;flex-wrap:wrap;margin-bottom:14px;">
       <span><span class="badge badge-blue">مستجيب</span> من 1 لـ 5 نقاط إجمالي</span>
@@ -6049,29 +6035,51 @@ function participationTodayCellHtml(r){
   </button>`;
 }
 
+let PART_LOADING = false;
+
 async function loadParticipationTable(){
+  if (PART_LOADING) return; // منع دوسة تانية وهو لسه بيحمّل (بتعمل طلبات متضاربة وتبان وكأنها متعلقة)
+  PART_LOADING = true;
+
   const canEdit = SESSION.role === "supervisor";
   const groupSel = document.getElementById("part_group");
   const groupId = groupSel ? groupSel.value : "";
   const date = document.getElementById("part_date").value || todayStr();
   const sn = parseInt(document.getElementById("part_session_num").value) || 1;
   const qs = groupId ? `?group_id=${groupId}&session_number=${sn}` : `?session_number=${sn}`;
+
+  const btn = document.getElementById("part_load_btn");
+  const tbody = document.getElementById("partTableBody");
+  if (btn){ btn.disabled = true; btn.innerHTML = `<span class="spinner"></span> بيحمّل...`; }
+  if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="loading-row"><span class="spinner"></span> بتحمّل...</td></tr>`;
+
   let rows = [];
+  let failed = false;
   try{
     rows = await api(`/api/participation/${date}${qs}`);
-  }catch(e){ rows = []; }
+  }catch(e){
+    rows = [];
+    failed = true;
+  }
+
   PART_ROWS_CACHE = rows;
-  const tbody = document.getElementById("partTableBody");
-  if (!tbody) return;
-  tbody.innerHTML = rows.map(r=>`
-    <tr id="part_row_${r.student_id}">
-      <td style="color:var(--text-3);font-family:monospace;font-size:12px;">#${r.student_id}</td>
-      <td class="td-name">${escapeHtml(r.full_name)}</td>
-      ${canEdit ? `<td id="part_cell_${r.student_id}">${participationTodayCellHtml(r)}</td>` : ""}
-      <td id="part_total_${r.student_id}" style="font-weight:700;">${r.total_points}</td>
-      <td id="part_level_${r.student_id}">${participationLevelBadgeHtml(r.level, r.level_label)}</td>
-    </tr>`).join("") || `<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:24px;">لا يوجد طلاب</td></tr>`;
+  if (tbody){
+    if (failed){
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--danger);padding:24px;">حصل خطأ في تحميل الطلاب - دوس "تحميل الطلاب" تاني</td></tr>`;
+    } else {
+      tbody.innerHTML = rows.map(r=>`
+        <tr id="part_row_${r.student_id}">
+          <td style="color:var(--text-3);font-family:monospace;font-size:12px;">#${r.student_id}</td>
+          <td class="td-name">${escapeHtml(r.full_name)}</td>
+          ${canEdit ? `<td id="part_cell_${r.student_id}">${participationTodayCellHtml(r)}</td>` : ""}
+          <td id="part_total_${r.student_id}" style="font-weight:700;">${r.total_points}</td>
+          <td id="part_level_${r.student_id}">${participationLevelBadgeHtml(r.level, r.level_label)}</td>
+        </tr>`).join("") || `<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:24px;">لا يوجد طلاب</td></tr>`;
+    }
+  }
+  if (btn){ btn.disabled = false; btn.innerHTML = `<i data-lucide="refresh-cw" style="width:14px;height:14px;"></i> تحميل الطلاب`; }
   icons();
+  PART_LOADING = false;
 }
 
 async function toggleParticipation(studentId){
