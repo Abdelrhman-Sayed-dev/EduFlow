@@ -6009,7 +6009,7 @@ async function renderParticipationPage(){
   const c = document.getElementById("pageContainer");
   c.innerHTML = `
     <div class="page-header">
-      <div><h1>تفاعل الطلاب</h1><p>سجّل نقاط مشاركة كل طالب في الحصة (من 1 لـ 5)، ونوعه بيتحسب تلقائيًا من إجمالي نقاطه المتراكمة</p></div>
+      <div><h1>تفاعل الطلاب</h1><p>كل ما الطالب يجاوب أو يتفاعل مع المستر في الحصة، دوس "جاوب" وهتضاف نقطة على إجماليه (لحد 5 نقط في الحصة الواحدة)</p></div>
     </div>
     <div class="table-card" style="padding:12px 16px;margin-bottom:16px;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
       <div style="min-width:220px;">
@@ -6021,8 +6021,10 @@ async function renderParticipationPage(){
         <input class="form-input" id="part_date" type="date" value="${todayStr()}" style="width:150px;">
       </div>
       <div>
-        <label class="form-label">رقم الحصة</label>
-        <input class="form-input" id="part_session_num" type="number" min="1" step="1" value="1" style="width:90px;">
+        <label class="form-label">الحصة</label>
+        <select class="form-select" id="part_session_num" style="width:130px;">
+          ${[1,2,3,4].map(n=>`<option value="${n}">الحصة ${ATT_SESSION_NAMES[n]}</option>`).join("")}
+        </select>
       </div>
       <button class="btn btn-primary" onclick="loadParticipationTable()"><i data-lucide="refresh-cw" style="width:14px;height:14px;"></i> تحميل الطلاب</button>
     </div>
@@ -6033,13 +6035,23 @@ async function renderParticipationPage(){
     </div>
     <div class="table-card">
       <div class="table-wrap"><table>
-        <thead><tr><th>#</th><th>الطالب</th>${canEdit ? "<th>نقاط الحصة دي</th>" : ""}<th>إجمالي النقاط</th><th>نوع الطالب</th></tr></thead>
+        <thead><tr><th>#</th><th>الطالب</th>${canEdit ? "<th>تفاعل الحصة دي</th>" : ""}<th>إجمالي النقاط</th><th>نوع الطالب</th></tr></thead>
         <tbody id="partTableBody"><tr><td colspan="5" class="loading-row"><span class="spinner"></span> بتحمّل...</td></tr></tbody>
       </table></div>
     </div>
   `;
   icons();
   await loadParticipationTable();
+}
+
+function participationTodayCellHtml(r){
+  const p = r.today_points || 0;
+  return `
+    <div style="display:flex;align-items:center;gap:8px;">
+      <button type="button" class="act-btn" title="تراجع عن نقطة" onclick="tickParticipation(${r.student_id}, -1)" ${p<=0?"disabled":""}><i data-lucide="minus" style="width:13px;height:13px;"></i></button>
+      <span id="part_today_${r.student_id}" style="min-width:34px;text-align:center;font-weight:700;font-family:monospace;">${p}/5</span>
+      <button type="button" class="btn btn-primary btn-sm" onclick="tickParticipation(${r.student_id}, 1)" ${p>=5?"disabled":""}><i data-lucide="check" style="width:13px;height:13px;"></i> جاوب</button>
+    </div>`;
 }
 
 async function loadParticipationTable(){
@@ -6060,31 +6072,24 @@ async function loadParticipationTable(){
     <tr id="part_row_${r.student_id}">
       <td style="color:var(--text-3);font-family:monospace;font-size:12px;">#${r.student_id}</td>
       <td class="td-name">${escapeHtml(r.full_name)}</td>
-      ${canEdit ? `<td>
-        <div class="pill-group sm">
-          ${[1,2,3,4,5].map(p=>`<button type="button" class="pill-btn ${r.today_points===p?'active':''}" onclick="saveParticipation(${r.student_id}, ${p})">${p}</button>`).join("")}
-        </div>
-      </td>` : ""}
+      ${canEdit ? `<td id="part_cell_${r.student_id}">${participationTodayCellHtml(r)}</td>` : ""}
       <td id="part_total_${r.student_id}" style="font-weight:700;">${r.total_points}</td>
       <td id="part_level_${r.student_id}">${participationLevelBadgeHtml(r.level, r.level_label)}</td>
     </tr>`).join("") || `<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:24px;">لا يوجد طلاب</td></tr>`;
   icons();
 }
 
-async function saveParticipation(studentId, points){
+async function tickParticipation(studentId, delta){
   const date = document.getElementById("part_date").value || todayStr();
   const sn = parseInt(document.getElementById("part_session_num").value) || 1;
   try{
-    const res = await api("/api/participation", {method:"POST", body: JSON.stringify({
-      student_id: studentId, session_date: date, session_number: sn, points,
+    const res = await api("/api/participation/tick", {method:"POST", body: JSON.stringify({
+      student_id: studentId, session_date: date, session_number: sn, delta,
     })});
-    showToast("تم حفظ نقاط التفاعل", "success");
     const row = PART_ROWS_CACHE.find(r=>r.student_id===studentId);
-    if (row) row.today_points = points;
-    const tr = document.getElementById(`part_row_${studentId}`);
-    if (tr){
-      tr.querySelectorAll(".pill-btn").forEach((b,i)=>b.classList.toggle("active", (i+1)===points));
-    }
+    if (row) row.today_points = res.today_points;
+    const cell = document.getElementById(`part_cell_${studentId}`);
+    if (cell && row) cell.innerHTML = participationTodayCellHtml(row);
     const totalEl = document.getElementById(`part_total_${studentId}`);
     if (totalEl) totalEl.textContent = res.total_points;
     const levelEl = document.getElementById(`part_level_${studentId}`);
