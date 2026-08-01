@@ -1199,6 +1199,7 @@ const NAV_BY_ROLE = {
     {id:"groups", label:"المجموعات", icon:"users"},
     {id:"students", label:"الطلاب", icon:"user"},
     {id:"import_students", label:"استيراد طلاب (CSV)", icon:"upload"},
+    {id:"never_engaged", label:"طلاب بدون تفاعل", icon:"user-x"},
     {id:"subscriptions", label:"اشتراكات الطلاب", icon:"credit-card"},
     {id:"subscriptions_report", label:"تقرير الاشتراكات الشهري", icon:"file-bar-chart"},
     {id:"session_subscriptions", label:"الاشتراك بالحصص", icon:"ticket"},
@@ -1382,7 +1383,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
    موجه الصفحات الرئيسي
 ===================================================================== */
 const PAGE_TITLES = {
-  dashboard:"لوحة التحكم", groups:"المجموعات", students:"الطلاب", import_students:"استيراد طلاب", subscriptions:"اشتراكات الطلاب",
+  dashboard:"لوحة التحكم", groups:"المجموعات", students:"الطلاب", import_students:"استيراد طلاب", never_engaged:"طلاب بدون تفاعل", subscriptions:"اشتراكات الطلاب",
   supervisors:"المشرفين", teachers:"المدرسين", schedule:"جدول المواعيد",
   head_supervisors:"مشرفي المشرفين",
   quizzes:"الكويزات والامتحانات", attendance:"الحضور والغياب", participation:"تفاعل الطلاب", boards:"سبورة الحصص",
@@ -1417,6 +1418,7 @@ async function renderPage(page){
       groups: renderGroupsPage,
       students: renderStudentsPage,
       import_students: renderImportStudentsPage,
+      never_engaged: renderNeverEngagedPage,
       subscriptions: renderSubscriptionsPage,
       supervisors: ()=>renderUsersPage("supervisor"),
       teachers: ()=>renderUsersPage("teacher"),
@@ -4158,6 +4160,77 @@ async function renderImportStudentsPage(){
   `;
   icons();
 }
+
+/* =====================================================================
+   الطلاب اللي معندهمش تفاعل خالص - محضروش ولا سلموا واجب ولا مرة
+===================================================================== */
+let NEVER_ENGAGED_CACHE = [];
+
+async function renderNeverEngagedPage(){
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>طلاب بدون تفاعل</h1><p>طلاب معندهمش أي حضور مسجل خالص ولا سلّموا أي واجب ولا مرة</p></div>
+      <div class="header-actions">
+        <button class="btn btn-ghost" onclick="exportNeverEngagedStudents()"><i data-lucide="download" style="width:14px;height:14px;"></i> تحميل كشيت</button>
+        <button class="btn btn-danger" id="deleteAllNeverEngagedBtn" onclick="deleteAllNeverEngagedStudents()"><i data-lucide="trash-2" style="width:14px;height:14px;"></i> حذف الكل</button>
+      </div>
+    </div>
+    <div class="table-card">
+      <div class="table-wrap"><table>
+        <thead><tr><th>#</th><th>الطالب</th><th>المجموعة</th><th>هاتف الطالب</th><th>هاتف ولي الأمر</th><th>تاريخ الإضافة</th></tr></thead>
+        <tbody id="neverEngagedTableBody"><tr><td colspan="6" class="loading-row"><span class="spinner"></span> بتحمّل...</td></tr></tbody>
+      </table></div>
+    </div>
+  `;
+  icons();
+  await loadNeverEngagedTable();
+}
+
+async function loadNeverEngagedTable(){
+  let rows = [];
+  try{
+    rows = await api("/api/students/never-engaged");
+  }catch(e){ rows = []; }
+  NEVER_ENGAGED_CACHE = rows;
+  const tbody = document.getElementById("neverEngagedTableBody");
+  if (!tbody) return;
+  const deleteBtn = document.getElementById("deleteAllNeverEngagedBtn");
+  if (deleteBtn) deleteBtn.disabled = rows.length === 0;
+  tbody.innerHTML = rows.map(r=>`
+    <tr>
+      <td style="color:var(--text-3);font-family:monospace;font-size:12px;">#${r.id}</td>
+      <td class="td-name">${escapeHtml(r.full_name)}</td>
+      <td>${escapeHtml(r.group_name || "-")}</td>
+      <td>${escapeHtml(r.phone || "-")}</td>
+      <td>${escapeHtml(r.parent_phone || "-")}</td>
+      <td>${(r.created_at || "-").slice(0,10)}</td>
+    </tr>`).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:24px;">مفيش طلاب - كل الطلاب اتفاعلوا (حضروا أو سلّموا واجب)</td></tr>`;
+  icons();
+}
+
+function exportNeverEngagedStudents(){
+  downloadFile("/api/students/never-engaged/export", "طلاب معندهمش تفاعل.xlsx");
+}
+
+function deleteAllNeverEngagedStudents(){
+  const count = (NEVER_ENGAGED_CACHE || []).length;
+  if (!count){ showToast("مفيش طلاب لحذفهم", "error"); return; }
+  confirmAction(
+    "حذف كل الطلاب اللي معندهمش تفاعل",
+    `هيتم حذف ${count} طالب نهائيًا من السيستم (بيانتهم، حضورهم، درجاتهم، كل حاجة). الإجراء ده لا يمكن التراجع عنه. متأكد؟`,
+    async ()=>{
+      try{
+        const res = await api("/api/students/never-engaged", {method:"DELETE"});
+        showToast(res.message || "تم الحذف", "success");
+        await loadNeverEngagedTable();
+      }catch(e){
+        // api() بتظهر رسالة الخطأ لوحدها
+      }
+    }
+  );
+}
+
 
 function handleImportCsvFile(file){
   if (!file) return;
