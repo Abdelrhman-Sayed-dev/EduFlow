@@ -293,6 +293,15 @@ class ParticipationIn(BaseModel):
     session_number: int = 1
 
 
+class ParticipationTickIn(BaseModel):
+    """كل مرة الطالب يجاوب/يتفاعل، المشرف بيدوس زر واحد فبيضيف نقطة على نقاط
+    الحصة دي (delta=1)، أو يتراجع لو غلط (delta=-1). النقاط بتتقفل عند 5 لكل حصة"""
+    student_id: int
+    session_date: str
+    session_number: int = 1
+    delta: int = Field(1, ge=-1, le=1)
+
+
 class VideoGroupLinkIn(BaseModel):
     """ربط فيديو موجود بالفعل بمجموعة إضافية (من غير إعادة رفع الملف تاني)"""
     group_id: int
@@ -4399,6 +4408,51 @@ def set_participation(data: ParticipationIn, session=Depends(require_roles("admi
         )
         summary = _student_participation_summary(conn, data.student_id)
         return {"message": "تم حفظ نقاط التفاعل", **summary}
+
+
+@app.post("/api/participation/tick")
+def tick_participation(data: ParticipationTickIn, session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
+    """
+    تسجيل تفاعل الطالب بضغطة واحدة: كل مرة جاوب/اتفاعل بتضاف نقطة على نقاط
+    الحصة دي (مقفولة عند 5 لكل حصة)، أو تراجع لو غلط. النقاط بتتجمع تلقائيًا
+    على إجمالي الطالب المتراكم عبر كل الحصص
+    """
+    with get_connection() as conn:
+        student = conn.execute("SELECT full_name, group_id FROM students WHERE id=?", (data.student_id,)).fetchone()
+        if not student:
+            raise HTTPException(status_code=404, detail="الطالب غير موجود")
+        if session["role"] == "supervisor":
+            assert_supervisor_owns_group(conn, session, student["group_id"])
+
+        row = conn.execute(
+            "SELECT points FROM participation WHERE student_id=? AND session_date=? AND session_number=?",
+            (data.student_id, data.session_date, data.session_number)
+        ).fetchone()
+        current = row["points"] if row else 0
+        new_points = max(0, min(5, current + data.delta))
+
+        if new_points == 0:
+            conn.execute(
+                "DELETE FROM participation WHERE student_id=? AND session_date=? AND session_number=?",
+                (data.student_id, data.session_date, data.session_number)
+            )
+        else:
+            conn.execute("""
+                INSERT INTO participation (student_id, group_id, session_date, session_number, points, author_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(student_id, session_date, session_number)
+                DO UPDATE SET points=excluded.points
+            """, (data.student_id, student["group_id"], data.session_date, data.session_number,
+                  new_points, session["id"]))
+
+        log_session_activity(
+            conn, session, "participation",
+            f"تسجيل تفاعل للطالب \"{student['full_name']}\" - حصة {data.session_number}: {new_points} نقاط",
+            group_id=student["group_id"]
+        )
+        summary = _student_participation_summary(conn, data.student_id)
+        summary["today_points"] = new_points
+        return {"message": "تم التسجيل", **summary}
 
 
 @app.get("/api/students/{student_id}/participation")
