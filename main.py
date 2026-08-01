@@ -19,8 +19,9 @@ import uuid
 import asyncio
 import calendar
 import secrets
+from urllib.parse import quote
 from datetime import datetime, timedelta
-from openpyxl import load_workbook
+from openpyxl import load_workbook, Workbook
 from fastapi import FastAPI, HTTPException, Header, Depends, Request, UploadFile, File, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse, Response
@@ -3033,7 +3034,7 @@ def qb_weak_students(chapter: str, lesson: Optional[str] = None, stage_id: Optio
     """
     with get_connection() as conn:
         query = """
-            SELECT s.id as student_id, s.full_name, s.group_id, g.name as group_name,
+            SELECT s.id as student_id, s.full_name, s.phone, s.parent_phone, s.group_id, g.name as group_name,
                    COUNT(a.id) as total_attempts,
                    SUM(CASE WHEN a.is_correct=0 THEN 1 ELSE 0 END) as wrong_attempts
             FROM qb_answers a
@@ -3060,6 +3061,7 @@ def qb_weak_students(chapter: str, lesson: Optional[str] = None, stage_id: Optio
             rate = round((r["wrong_attempts"] / r["total_attempts"]) * 100, 1) if r["total_attempts"] else 0
             result.append({
                 "student_id": r["student_id"], "full_name": r["full_name"],
+                "phone": r["phone"], "parent_phone": r["parent_phone"],
                 "group_id": r["group_id"], "group_name": r["group_name"],
                 "total_attempts": r["total_attempts"], "wrong_attempts": r["wrong_attempts"],
                 "wrong_rate": rate,
@@ -3067,15 +3069,55 @@ def qb_weak_students(chapter: str, lesson: Optional[str] = None, stage_id: Optio
         return result
 
 
+def _qb_weak_students_workbook(students, title):
+    """يبني ملف إكسيل بقايمة الطلاب الضعاف - عمود لكل بيانة"""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "الطلاب الضعاف"
+    ws.sheet_view.rightToLeft = True
+    headers = ["الطالب", "المجموعة", "رقم هاتف الطالب", "رقم هاتف ولي الأمر",
+               "عدد المحاولات", "عدد الأخطاء", "نسبة الغلط %"]
+    ws.append(headers)
+    for s in students:
+        ws.append([
+            s["full_name"], s.get("group_name") or "-", s.get("phone") or "-",
+            s.get("parent_phone") or "-", s["total_attempts"], s["wrong_attempts"], s["wrong_rate"],
+        ])
+    for col_idx, header in enumerate(headers, start=1):
+        max_len = max([len(header)] + [len(str(row[col_idx - 1])) for row in
+                       [[s["full_name"], s.get("group_name") or "-", s.get("phone") or "-",
+                         s.get("parent_phone") or "-", s["total_attempts"], s["wrong_attempts"], s["wrong_rate"]]
+                        for s in students]] or [len(header)])
+        ws.column_dimensions[chr(64 + col_idx)].width = min(max_len + 4, 40)
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+@app.get("/api/qbank/analytics/weak-students/export")
+def qb_weak_students_export(chapter: str, lesson: Optional[str] = None, stage_id: Optional[int] = None,
+                             session=Depends(require_roles("admin", "head_supervisor"))):
+    """تصدير قايمة الطلاب الضعاف في باب/درس معين كملف إكسيل"""
+    students = qb_weak_students(chapter=chapter, lesson=lesson, stage_id=stage_id, session=session)
+    buf = _qb_weak_students_workbook(students, chapter)
+    filename = f"الطلاب الضعاف - {chapter}{(' - ' + lesson) if lesson else ''}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
+
+
 @app.get("/api/qbank/analytics/question/{question_id}/students")
 def qb_question_weak_students(question_id: int, session=Depends(require_roles("admin", "head_supervisor"))):
-    """قايمة بالطلاب اللي غلطوا في سؤال معين، مع مجموعة كل طالب"""
+    """قايمة بالطلاب اللي غلطوا في سؤال معين، مع مجموعة كل طالب وأرقام التليفونات"""
     with get_connection() as conn:
-        question = conn.execute("SELECT id FROM qb_questions WHERE id=?", (question_id,)).fetchone()
+        question = conn.execute("SELECT id, question_text FROM qb_questions WHERE id=?", (question_id,)).fetchone()
         if not question:
             raise HTTPException(status_code=404, detail="السؤال غير موجود")
         rows = conn.execute("""
-            SELECT s.id as student_id, s.full_name, s.group_id, g.name as group_name,
+            SELECT s.id as student_id, s.full_name, s.phone, s.parent_phone, s.group_id, g.name as group_name,
                    a.selected_answer, a.answered_at
             FROM qb_answers a
             JOIN students s ON s.id = a.student_id
@@ -3084,6 +3126,41 @@ def qb_question_weak_students(question_id: int, session=Depends(require_roles("a
             ORDER BY a.answered_at DESC
         """, (question_id,)).fetchall()
         return [dict(r) for r in rows]
+
+
+@app.get("/api/qbank/analytics/question/{question_id}/students/export")
+def qb_question_weak_students_export(question_id: int, session=Depends(require_roles("admin", "head_supervisor"))):
+    """تصدير قايمة الطلاب اللي غلطوا في سؤال معين كملف إكسيل"""
+    with get_connection() as conn:
+        question = conn.execute("SELECT id, question_text FROM qb_questions WHERE id=?", (question_id,)).fetchone()
+        if not question:
+            raise HTTPException(status_code=404, detail="السؤال غير موجود")
+    students = qb_question_weak_students(question_id=question_id, session=session)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "الطلاب"
+    ws.sheet_view.rightToLeft = True
+    headers = ["الطالب", "المجموعة", "رقم هاتف الطالب", "رقم هاتف ولي الأمر", "الإجابة اللي اختارها"]
+    ws.append(headers)
+    for s in students:
+        ws.append([
+            s["full_name"], s.get("group_name") or "-", s.get("phone") or "-",
+            s.get("parent_phone") or "-", s["selected_answer"],
+        ])
+    for col_idx, header in enumerate(headers, start=1):
+        rows_vals = [[s["full_name"], s.get("group_name") or "-", s.get("phone") or "-",
+                      s.get("parent_phone") or "-", s["selected_answer"]] for s in students]
+        max_len = max([len(header)] + [len(str(row[col_idx - 1])) for row in rows_vals] or [len(header)])
+        ws.column_dimensions[chr(64 + col_idx)].width = min(max_len + 4, 40)
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    filename = f"الطلاب اللي غلطوا - سؤال {question_id}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
 
 
 # --- واجهة الطالب في بنك الأسئلة ---

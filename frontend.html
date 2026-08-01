@@ -878,6 +878,36 @@ async function api(path, options={}){
 }
 
 function openOverlay(id){ document.getElementById(id).classList.add("open"); icons(); }
+
+async function downloadFile(path, fallbackFilename){
+  try{
+    const headers = {};
+    if (TOKEN) headers["Authorization"] = "Bearer " + TOKEN;
+    const res = await fetch(API + path, {headers});
+    if (!res.ok){
+      let msg = "حصل خطأ أثناء تحميل الملف";
+      try{ const data = await res.json(); if (data && data.detail) msg = data.detail; }catch(e){}
+      showToast(msg, "error");
+      return;
+    }
+    const blob = await res.blob();
+    let filename = fallbackFilename;
+    const disposition = res.headers.get("Content-Disposition") || "";
+    const match = disposition.match(/filename\*=UTF-8''([^;]+)/) || disposition.match(/filename="?([^";]+)"?/);
+    if (match && match[1]) filename = decodeURIComponent(match[1]);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 2000);
+  }catch(e){
+    showToast("في مشكلة في الاتصال بالسيرفر", "error");
+  }
+}
+
 function closeOverlay(id){
   const el = document.getElementById(id);
   el.classList.remove("open");
@@ -8863,17 +8893,23 @@ async function loadQbankAnalytics(){
 
 /* --- قايمة الطلاب الضعاف في باب/درس معين، أو في سؤال معين --- */
 
+let QB_WEAK_STUDENTS_EXPORT_PARAMS = null;
+
 async function openQbWeakStudentsModal(chapter, lesson, stageId, titleLabel){
-  openModal(
-    `الطلاب الضعاف في: ${escapeHtml(titleLabel)}`,
-    `<div id="qbWeakStudentsBody"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>`,
-    `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`,
-    {width: "560px"}
-  );
   const params = new URLSearchParams();
   params.set("chapter", chapter);
   if (lesson) params.set("lesson", lesson);
   if (stageId) params.set("stage_id", stageId);
+  QB_WEAK_STUDENTS_EXPORT_PARAMS = params.toString();
+
+  openModal(
+    `الطلاب الضعاف في: ${escapeHtml(titleLabel)}`,
+    `<div id="qbWeakStudentsBody"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>`,
+    `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>
+     <button class="btn btn-primary" onclick="qbExportWeakStudents('${jsAttr(titleLabel)}')"><i data-lucide="download" style="width:14px;height:14px;"></i> تحميل كشيت إكسيل</button>`,
+    {width: "680px"}
+  );
+  icons();
   const body = document.getElementById("qbWeakStudentsBody");
   try{
     const students = await api(`/api/qbank/analytics/weak-students?${params.toString()}`);
@@ -8884,13 +8920,20 @@ async function openQbWeakStudentsModal(chapter, lesson, stageId, titleLabel){
   }
 }
 
+function qbExportWeakStudents(titleLabel){
+  if (!QB_WEAK_STUDENTS_EXPORT_PARAMS) return;
+  downloadFile(`/api/qbank/analytics/weak-students/export?${QB_WEAK_STUDENTS_EXPORT_PARAMS}`, `الطلاب الضعاف - ${titleLabel || ""}.xlsx`);
+}
+
 async function openQbQuestionStudentsModal(questionId, questionText){
   openModal(
     `الطلاب اللي غلطوا في السؤال ده`,
     `<div style="font-size:13px;color:var(--text-2);margin-bottom:12px;">${escapeHtml(questionText)}</div><div id="qbQuestionStudentsBody"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>`,
-    `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`,
-    {width: "560px"}
+    `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>
+     <button class="btn btn-primary" onclick="downloadFile('/api/qbank/analytics/question/${questionId}/students/export', 'الطلاب اللي غلطوا.xlsx')"><i data-lucide="download" style="width:14px;height:14px;"></i> تحميل كشيت إكسيل</button>`,
+    {width: "680px"}
   );
+  icons();
   const body = document.getElementById("qbQuestionStudentsBody");
   try{
     const students = await api(`/api/qbank/analytics/question/${questionId}/students`);
@@ -8900,12 +8943,14 @@ async function openQbQuestionStudentsModal(questionId, questionText){
     }
     body.innerHTML = `
       <div class="table-wrap"><table>
-        <thead><tr><th>الطالب</th><th>المجموعة</th><th>الإجابة اللي اختارها</th></tr></thead>
+        <thead><tr><th>الطالب</th><th>المجموعة</th><th>هاتف الطالب</th><th>هاتف ولي الأمر</th><th>الإجابة اللي اختارها</th></tr></thead>
         <tbody>
           ${students.map(s=>`
             <tr>
               <td class="td-name">${escapeHtml(s.full_name)}</td>
               <td>${s.group_name?`<span class="badge badge-blue">${escapeHtml(s.group_name)}</span>`:"—"}</td>
+              <td>${s.phone?`<a href="tel:${escapeHtml(s.phone)}" style="color:var(--text);text-decoration:none;">${escapeHtml(s.phone)}</a>`:"—"}</td>
+              <td>${s.parent_phone?`<a href="tel:${escapeHtml(s.parent_phone)}" style="color:var(--text);text-decoration:none;">${escapeHtml(s.parent_phone)}</a>`:"—"}</td>
               <td>${escapeHtml(s.selected_answer)}</td>
             </tr>`).join("")}
         </tbody>
@@ -8922,12 +8967,14 @@ function qbWeakStudentsListHtml(students){
   }
   return `
     <div class="table-wrap"><table>
-      <thead><tr><th>الطالب</th><th>المجموعة</th><th>عدد المحاولات</th><th>عدد الأخطاء</th><th>نسبة الغلط</th></tr></thead>
+      <thead><tr><th>الطالب</th><th>المجموعة</th><th>هاتف الطالب</th><th>هاتف ولي الأمر</th><th>عدد المحاولات</th><th>عدد الأخطاء</th><th>نسبة الغلط</th></tr></thead>
       <tbody>
         ${students.map(s=>`
           <tr>
             <td class="td-name">${escapeHtml(s.full_name)}</td>
             <td>${s.group_name?`<span class="badge badge-blue">${escapeHtml(s.group_name)}</span>`:"—"}</td>
+            <td>${s.phone?`<a href="tel:${escapeHtml(s.phone)}" style="color:var(--text);text-decoration:none;">${escapeHtml(s.phone)}</a>`:"—"}</td>
+            <td>${s.parent_phone?`<a href="tel:${escapeHtml(s.parent_phone)}" style="color:var(--text);text-decoration:none;">${escapeHtml(s.parent_phone)}</a>`:"—"}</td>
             <td>${s.total_attempts}</td>
             <td>${s.wrong_attempts}</td>
             <td><span class="badge ${s.wrong_rate>=50?'badge-red':(s.wrong_rate>=25?'badge-amber':'badge-green')}">${s.wrong_rate}%</span></td>
