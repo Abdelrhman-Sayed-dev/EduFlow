@@ -1259,6 +1259,7 @@ const NAV_BY_ROLE = {
     {id:"quizzes", label:"الكويزات والامتحانات", icon:"file-check-2"},
     {id:"homework", label:"الواجبات", icon:"clipboard-list"},
     {id:"attendance", label:"الحضور والغياب", icon:"calendar-check"},
+    {id:"participation", label:"تفاعل الطلاب", icon:"sparkles"},
     {id:"event_calendar", label:"التقويم", icon:"calendar-days"},
     {id:"monthly_reports", label:"التقرير الشهري", icon:"file-bar-chart"},
     {id:"student_requests", label:"طلبات الطلاب", icon:"inbox"},
@@ -1268,6 +1269,7 @@ const NAV_BY_ROLE = {
     {id:"mydashboard", label:"لوحتي", icon:"layout-dashboard"},
     {id:"mycontent", label:"محتوى مجموعتي بالشهور", icon:"calendar-range"},
     {id:"myexams", label:"كويزات", icon:"shield-check"},
+    {id:"myscores", label:"درجاتي", icon:"file-check-2"},
     {id:"qbank_student", label:"بنك الأسئلة", icon:"library"},
     {id:"event_calendar", label:"التقويم", icon:"calendar-days"},
     {id:"myrequests", label:"طلباتي", icon:"send"},
@@ -1397,7 +1399,7 @@ const PAGE_TITLES = {
   dashboard:"لوحة التحكم", groups:"المجموعات", students:"الطلاب", import_students:"استيراد طلاب", subscriptions:"اشتراكات الطلاب",
   supervisors:"المشرفين", teachers:"المدرسين", schedule:"جدول المواعيد",
   head_supervisors:"مشرفي المشرفين",
-  quizzes:"الكويزات والامتحانات", attendance:"الحضور والغياب", boards:"سبورة الحصص",
+  quizzes:"الكويزات والامتحانات", attendance:"الحضور والغياب", participation:"تفاعل الطلاب", boards:"سبورة الحصص",
   homework:"الواجبات", monthly_reports:"التقرير الشهري",
   mygroup:"مجموعتي", mydashboard:"لوحتي", myscores:"درجاتي", myhomework:"واجباتي",
   myattendance:"حضوري", myboard:"سبورة مجموعتي", student_more:"المزيد",
@@ -1438,6 +1440,7 @@ async function renderPage(page){
       hs_quizzes: renderHsQuizzesPage,
       homework: renderSupervisorHomeworkPage,
       attendance: renderAttendancePage,
+      participation: renderParticipationPage,
       boards: renderBoardsPage,
       monthly_reports: renderMonthlyReportsPage,
       mygroup: renderMyGroupPage,
@@ -5986,6 +5989,113 @@ function prepareUploadForSession(sessionNum, sessionDate){
 }
 
 /* =====================================================================
+   تفاعل الطلاب - Participation Points
+   المشرف بيسجل كل حصة نقاط تفاعل الطالب (من 1 لـ 5)، ومجموع النقاط
+   المتراكم بيحدد نوع الطالب: مستجيب (1-5) / فائق (6-10) / فريد (11+)
+===================================================================== */
+const PART_LEVEL_LABELS = {responsive:"مستجيب", outstanding:"فائق", unique:"فريد"};
+const PART_LEVEL_BADGE = {responsive:"badge-blue", outstanding:"badge-amber", unique:"badge-teal"};
+let PART_ROWS_CACHE = [];
+
+function participationLevelBadgeHtml(level, levelLabel){
+  if (!level) return `<span class="badge badge-gray">لسه معندوش نقاط</span>`;
+  return `<span class="badge ${PART_LEVEL_BADGE[level] || 'badge-gray'}">${levelLabel || PART_LEVEL_LABELS[level] || ''}</span>`;
+}
+
+async function renderParticipationPage(){
+  const canEdit = SESSION.role === "supervisor";
+  const groups = await loadGroups();
+  CACHE_ALL_GROUPS = groups;
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>تفاعل الطلاب</h1><p>سجّل نقاط مشاركة كل طالب في الحصة (من 1 لـ 5)، ونوعه بيتحسب تلقائيًا من إجمالي نقاطه المتراكمة</p></div>
+    </div>
+    <div class="table-card" style="padding:12px 16px;margin-bottom:16px;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+      <div style="min-width:220px;">
+        <label class="form-label">المجموعة</label>
+        <select class="form-select" id="part_group">${groupOptionsAll()}</select>
+      </div>
+      <div>
+        <label class="form-label">تاريخ الحصة</label>
+        <input class="form-input" id="part_date" type="date" value="${todayStr()}" style="width:150px;">
+      </div>
+      <div>
+        <label class="form-label">رقم الحصة</label>
+        <input class="form-input" id="part_session_num" type="number" min="1" step="1" value="1" style="width:90px;">
+      </div>
+      <button class="btn btn-primary" onclick="loadParticipationTable()"><i data-lucide="refresh-cw" style="width:14px;height:14px;"></i> تحميل الطلاب</button>
+    </div>
+    <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:10px 14px;font-size:12.5px;color:var(--text-2);display:flex;gap:14px;flex-wrap:wrap;margin-bottom:14px;">
+      <span><span class="badge badge-blue">مستجيب</span> من 1 لـ 5 نقاط إجمالي</span>
+      <span><span class="badge badge-amber">فائق</span> من 6 لـ 10 نقاط إجمالي</span>
+      <span><span class="badge badge-teal">فريد</span> أكتر من 10 نقاط إجمالي</span>
+    </div>
+    <div class="table-card">
+      <div class="table-wrap"><table>
+        <thead><tr><th>#</th><th>الطالب</th>${canEdit ? "<th>نقاط الحصة دي</th>" : ""}<th>إجمالي النقاط</th><th>نوع الطالب</th></tr></thead>
+        <tbody id="partTableBody"><tr><td colspan="5" class="loading-row"><span class="spinner"></span> بتحمّل...</td></tr></tbody>
+      </table></div>
+    </div>
+  `;
+  icons();
+  await loadParticipationTable();
+}
+
+async function loadParticipationTable(){
+  const canEdit = SESSION.role === "supervisor";
+  const groupSel = document.getElementById("part_group");
+  const groupId = groupSel ? groupSel.value : "";
+  const date = document.getElementById("part_date").value || todayStr();
+  const sn = parseInt(document.getElementById("part_session_num").value) || 1;
+  const qs = groupId ? `?group_id=${groupId}&session_number=${sn}` : `?session_number=${sn}`;
+  let rows = [];
+  try{
+    rows = await api(`/api/participation/${date}${qs}`);
+  }catch(e){ rows = []; }
+  PART_ROWS_CACHE = rows;
+  const tbody = document.getElementById("partTableBody");
+  if (!tbody) return;
+  tbody.innerHTML = rows.map(r=>`
+    <tr id="part_row_${r.student_id}">
+      <td style="color:var(--text-3);font-family:monospace;font-size:12px;">#${r.student_id}</td>
+      <td class="td-name">${escapeHtml(r.full_name)}</td>
+      ${canEdit ? `<td>
+        <div class="pill-group sm">
+          ${[1,2,3,4,5].map(p=>`<button type="button" class="pill-btn ${r.today_points===p?'active':''}" onclick="saveParticipation(${r.student_id}, ${p})">${p}</button>`).join("")}
+        </div>
+      </td>` : ""}
+      <td id="part_total_${r.student_id}" style="font-weight:700;">${r.total_points}</td>
+      <td id="part_level_${r.student_id}">${participationLevelBadgeHtml(r.level, r.level_label)}</td>
+    </tr>`).join("") || `<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:24px;">لا يوجد طلاب</td></tr>`;
+  icons();
+}
+
+async function saveParticipation(studentId, points){
+  const date = document.getElementById("part_date").value || todayStr();
+  const sn = parseInt(document.getElementById("part_session_num").value) || 1;
+  try{
+    const res = await api("/api/participation", {method:"POST", body: JSON.stringify({
+      student_id: studentId, session_date: date, session_number: sn, points,
+    })});
+    showToast("تم حفظ نقاط التفاعل", "success");
+    const row = PART_ROWS_CACHE.find(r=>r.student_id===studentId);
+    if (row) row.today_points = points;
+    const tr = document.getElementById(`part_row_${studentId}`);
+    if (tr){
+      tr.querySelectorAll(".pill-btn").forEach((b,i)=>b.classList.toggle("active", (i+1)===points));
+    }
+    const totalEl = document.getElementById(`part_total_${studentId}`);
+    if (totalEl) totalEl.textContent = res.total_points;
+    const levelEl = document.getElementById(`part_level_${studentId}`);
+    if (levelEl) levelEl.innerHTML = participationLevelBadgeHtml(res.level, res.level_label);
+    icons();
+  }catch(e){
+    // api() بتظهر رسالة الخطأ لوحدها
+  }
+}
+
+/* =====================================================================
    الواجبات - متابقة أن نظام رفع صور السبورة منفصل عن الواجبات
    (إدارة الواجبات بقت كلها في تاب "الواجبات" - renderSupervisorHomeworkPage)
 ===================================================================== */
@@ -6770,12 +6880,13 @@ async function renderMyGroupPage(){
    صفحات الطالب
 ===================================================================== */
 async function renderStudentDashboardPage(){
-  const [scores, attendance, groupInfo, ranking, payments] = await Promise.all([
+  const [scores, attendance, groupInfo, ranking, payments, participation] = await Promise.all([
     api(`/api/students/${SESSION.id}/scores`),
     api(`/api/students/${SESSION.id}/attendance`),
     SESSION.group_id ? api(`/api/groups/${SESSION.group_id}/info`).catch(()=>null) : Promise.resolve(null),
     api(`/api/students/${SESSION.id}/ranking`).catch(()=>null),
     api(`/api/students/${SESSION.id}/payments`).catch(()=>[]),
+    api(`/api/students/${SESSION.id}/participation`).catch(()=>null),
   ]);
   const present = attendance.filter(a=>a.status==='present'||a.status==='late').length;
   const avg = scores.length ? (scores.reduce((s,x)=>s+(x.score||0)/x.max_score*100,0)/scores.length).toFixed(0) : "—";
@@ -6837,7 +6948,9 @@ async function renderStudentDashboardPage(){
           <div class="student-group-badges">
             <span class="student-group-badge">${escapeHtml(groupInfo.stage_name)}</span>
             <span class="student-group-badge">${groupInfo.governorate_name}</span>
+            ${participation && participation.level ? `<span class="student-group-badge" style="background:${participation.level==='unique'?'#0d9488':(participation.level==='outstanding'?'#d97706':'#2563eb')};color:#fff;">⭐ طالب ${PART_LEVEL_LABELS[participation.level]}</span>` : ""}
           </div>
+          ${participation && participation.level ? `<div style="font-size:11px;color:var(--text-3);margin-top:4px;">نوعك محسوب من إجمالي نقاط تفاعلك مع المستر (${participation.total_points} نقطة)</div>` : ""}
           <div class="student-group-meta">
             ${scheduleRows.length ? scheduleRows.map(s=>`${s.day_of_week} ${formatTime12h(s.start_time)}${s.end_time?' - '+formatTime12h(s.end_time):''}`).join(" · ") : "لا يوجد مواعيد مضافة بعد"}
           </div>
@@ -7010,6 +7123,11 @@ async function renderSupervisorMorePage(){
         <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">التقرير الشهري</div><div style="font-size:11.5px;color:var(--text-3);">تقرير حضور ودرجات كل طالب جاهز للطباعة</div></div>
         <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
       </div>
+      <div class="student-more-item" onclick="navigateTo('participation')">
+        <div class="student-more-ic"><i data-lucide="sparkles" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">تفاعل الطلاب</div><div style="font-size:11.5px;color:var(--text-3);">سجّل مشاركة كل طالب في الحصة واحسب نقاطه</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
       <div class="student-more-item" onclick="navigateTo('student_search')">
         <div class="student-more-ic"><i data-lucide="search" style="width:18px;height:18px;"></i></div>
         <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">بحث عن طالب</div><div style="font-size:11.5px;color:var(--text-3);">دور على أي طالب بالاسم أو الكود</div></div>
@@ -7031,6 +7149,11 @@ async function renderStudentMorePage(){
   c.innerHTML = `
     <div class="page-header"><div><h1>المزيد</h1><p>باقي صفحاتك وإعدادات حسابك</p></div></div>
     <div class="table-card" style="padding:6px 12px;margin-bottom:14px;">
+      <div class="student-more-item" onclick="navigateTo('myscores')">
+        <div class="student-more-ic"><i data-lucide="file-check-2" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">درجاتي</div><div style="font-size:11.5px;color:var(--text-3);">كل درجات الكويزات اللي خدتها</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
       <div class="student-more-item" onclick="navigateTo('qbank_student')">
         <div class="student-more-ic"><i data-lucide="library" style="width:18px;height:18px;"></i></div>
         <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">بنك الأسئلة</div><div style="font-size:11.5px;color:var(--text-3);">حل أسئلة اختيارية، واحفظ اللي يهمك في المفضلة</div></div>

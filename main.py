@@ -33,7 +33,8 @@ from database import (
     get_connection, init_db, hash_password, verify_password, gen_token,
     gen_access_code, gen_numeric_code, gen_temp_password, session_expiry, cleanup_expired_sessions,
     is_login_blocked, record_failed_login, clear_failed_logins, cleanup_old_login_attempts,
-    get_first_subscription_date, get_paid_months, LOGIN_ATTEMPT_MAX
+    get_first_subscription_date, get_paid_months, LOGIN_ATTEMPT_MAX,
+    participation_level, PARTICIPATION_LEVELS
 )
 
 app = FastAPI(title="منصة المدرس - نظام إدارة الطلاب والمجموعات")
@@ -280,6 +281,15 @@ class AttendanceCodeIn(BaseModel):
     access_code: str
     session_date: str
     status: str
+    session_number: int = 1
+
+
+class ParticipationIn(BaseModel):
+    """تسجيل نقاط تفاعل/مشاركة الطالب في حصة معينة (المشرف بيقيّم من 1 لـ 5)"""
+    student_id: int
+    session_date: str
+    points: int = Field(..., ge=1, le=5)
+    notes: Optional[str] = Field(None, max_length=1000)
     session_number: int = 1
 
 
@@ -656,6 +666,7 @@ ACTION_LABELS = {
     "board_image_upload": "رفع صورة سبورة",
     "board_image_delete": "حذف صورة سبورة",
     "attendance": "تسجيل حضور/غياب",
+    "participation": "تسجيل نقاط تفاعل",
     "quiz_score": "رصد درجة",
     "behavior_note_add": "إضافة ملاحظة سلوكية",
     "behavior_note_delete": "حذف ملاحظة سلوكية",
@@ -4302,6 +4313,112 @@ def get_student_attendance(student_id: int, session=Depends(get_current_session)
         paid_months = get_student_paid_months(conn, session)
         session_access = get_student_session_access(conn, session, session.get("group_id"))
         return [dict(r) for r in rows if is_content_visible(r["session_date"], r["session_number"], paid_months, session_access)]
+
+
+# ---------------------------------------------------------------------------
+# نقاط التفاعل/المشاركة - Participation
+# المشرف بيسجل كل حصة هل الطالب جاوب واتفاعل مع المستر، وبيدّي نقاط من 1 لـ 5.
+# مجموع النقاط المتراكم عبر كل الحصص بيحدد "نوع الطالب":
+#   1-5 نقاط -> مستجيب | 5-10 -> فائق | أكتر من 10 -> فريد
+# ---------------------------------------------------------------------------
+
+def _student_participation_summary(conn, student_id: int):
+    """يرجع dict فيه إجمالي نقاط التفاعل للطالب + نوعه (key + label)"""
+    row = conn.execute(
+        "SELECT COALESCE(SUM(points), 0) as total FROM participation WHERE student_id=?",
+        (student_id,)
+    ).fetchone()
+    total = row["total"] or 0
+    level_key, level_label = participation_level(total)
+    return {"total_points": total, "level": level_key, "level_label": level_label}
+
+
+@app.get("/api/participation/{session_date}")
+def get_participation_by_date(session_date: str, group_id: Optional[int] = None,
+                               session_number: int = 1,
+                               session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
+    """
+    كل طلاب المجموعة مع نقاط تفاعلهم المسجلة في الحصة/التاريخ ده (لو موجودة) +
+    إجمالي نقاطهم المتراكم ونوعهم الحالي - المشرف بيستخدمها عشان يبدأ يسجل التفاعل
+    """
+    with get_connection() as conn:
+        if session["role"] == "supervisor" and group_id:
+            assert_supervisor_owns_group(conn, session, group_id)
+
+        query = """
+            SELECT s.id as student_id, s.full_name, s.attendance_code, s.group_id,
+                   p.points as today_points, p.notes as today_notes, p.id as participation_id,
+                   (SELECT COALESCE(SUM(points), 0) FROM participation WHERE student_id = s.id) as total_points
+            FROM students s
+            LEFT JOIN participation p ON p.student_id = s.id
+                AND p.session_date = ? AND p.session_number = ?
+            WHERE s.is_active = 1
+        """
+        params = [session_date, session_number]
+        if group_id:
+            query += " AND s.group_id = ?"
+            params.append(group_id)
+        if session["role"] == "supervisor":
+            query += " AND s.group_id IN (SELECT group_id FROM group_supervisors WHERE supervisor_id=?)"
+            params.append(session["id"])
+
+        query += " ORDER BY s.full_name"
+        rows = conn.execute(query, params).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            level_key, level_label = participation_level(d["total_points"])
+            d["level"] = level_key
+            d["level_label"] = level_label
+            result.append(d)
+        return result
+
+
+@app.post("/api/participation")
+def set_participation(data: ParticipationIn, session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
+    """تسجيل/تعديل نقاط تفاعل الطالب في حصة معينة (upsert لكل طالب/تاريخ/حصة)"""
+    with get_connection() as conn:
+        student = conn.execute("SELECT full_name, group_id FROM students WHERE id=?", (data.student_id,)).fetchone()
+        if not student:
+            raise HTTPException(status_code=404, detail="الطالب غير موجود")
+        if session["role"] == "supervisor":
+            assert_supervisor_owns_group(conn, session, student["group_id"])
+
+        conn.execute("""
+            INSERT INTO participation (student_id, group_id, session_date, session_number, points, notes, author_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(student_id, session_date, session_number)
+            DO UPDATE SET points=excluded.points, notes=COALESCE(excluded.notes, participation.notes)
+        """, (data.student_id, student["group_id"], data.session_date, data.session_number,
+              data.points, data.notes, session["id"]))
+
+        log_session_activity(
+            conn, session, "participation",
+            f"تسجيل {data.points} نقاط تفاعل للطالب \"{student['full_name']}\" - حصة {data.session_number}",
+            group_id=student["group_id"]
+        )
+        summary = _student_participation_summary(conn, data.student_id)
+        return {"message": "تم حفظ نقاط التفاعل", **summary}
+
+
+@app.get("/api/students/{student_id}/participation")
+def get_student_participation(student_id: int, session=Depends(get_current_session)):
+    """إجمالي نقاط تفاعل الطالب ونوعه + سجل كل الحصص - متاحة للطالب نفسه أو مشرف مجموعته أو الأدمن"""
+    with get_connection() as conn:
+        if session["role"] == "student" and session["id"] != student_id:
+            raise HTTPException(status_code=403, detail="تقدر تشوف نقاطك بس")
+        if session["role"] == "supervisor":
+            student = conn.execute("SELECT group_id FROM students WHERE id=?", (student_id,)).fetchone()
+            if student:
+                assert_supervisor_owns_group(conn, session, student["group_id"])
+
+        summary = _student_participation_summary(conn, student_id)
+        rows = conn.execute(
+            "SELECT session_date, session_number, points, notes FROM participation WHERE student_id=? ORDER BY session_date DESC",
+            (student_id,)
+        ).fetchall()
+        summary["history"] = [dict(r) for r in rows]
+        return summary
 
 
 # ---------------------------------------------------------------------------

@@ -88,6 +88,29 @@ def get_paid_months(conn, student_id: int):
     return [r["month"] for r in rows]
 
 
+# ---------------------------------------------------------------------------
+# نظام نقاط التفاعل (المشاركة) - يحدد "نوع الطالب" بناءً على مجموع نقاطه
+# المتراكمة عبر كل الحصص: مستجيب (1-5) / فائق (5-10] / فريد (10+)
+# ---------------------------------------------------------------------------
+PARTICIPATION_LEVELS = {
+    "responsive": "مستجيب",
+    "outstanding": "فائق",
+    "unique": "فريد",
+}
+
+
+def participation_level(total_points: int):
+    """بياخد مجموع نقاط التفاعل المتراكمة للطالب ويرجع (key, label) لنوعه،
+    أو (None, None) لو معندوش نقاط تفاعل مسجلة لسه"""
+    if not total_points or total_points <= 0:
+        return None, None
+    if total_points <= 5:
+        return "responsive", PARTICIPATION_LEVELS["responsive"]
+    if total_points <= 10:
+        return "outstanding", PARTICIPATION_LEVELS["outstanding"]
+    return "unique", PARTICIPATION_LEVELS["unique"]
+
+
 def gen_token() -> str:
     return secrets.token_hex(24)
 
@@ -585,6 +608,31 @@ def init_db():
         )
         """)
         _safe_alter(cur, "ALTER TABLE attendance ADD COLUMN session_number INTEGER NOT NULL DEFAULT 1")
+
+        # ---------------------------------------------------------------
+        # جدول تفاعل الطالب (المشاركة) - المشرف بيسجل كل حصة هل الطالب
+        # جاوب/اتفاعل مع المستر وبيدي نقاط من 1 لـ 5. مجموع النقاط المتراكم
+        # عبر الحصص بيحدد "نوع الطالب": مستجيب (1-5) / فائق (5-10) / فريد (10+)
+        # ---------------------------------------------------------------
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS participation (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id INTEGER NOT NULL,
+            group_id INTEGER NOT NULL,
+            session_date TEXT NOT NULL,
+            session_number INTEGER NOT NULL DEFAULT 1,
+            points INTEGER NOT NULL CHECK(points BETWEEN 1 AND 5),
+            notes TEXT,
+            author_id INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+            FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+            FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE SET NULL,
+            UNIQUE(student_id, session_date, session_number)
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_participation_student ON participation(student_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_participation_group ON participation(group_id, session_date)")
 
         # ---------------------------------------------------------------
         # جدول الواجبات - واجب لكل حصة مجموعة
