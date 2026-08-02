@@ -5496,7 +5496,7 @@ async function renderAttendancePage(){
   const savedSessions = canEdit ? loadAttSessionsFromStorage() : [];
   c.innerHTML = `
     <div class="page-header">
-      <div><h1>الحضور والغياب</h1><p>اختار المجموعة والحصة وابدأ تاخد الغياب بتاريخ النهارده</p></div>
+      <div><h1>الحضور والغياب</h1><p>اختار المجموعة والحصة وابدأ تاخد الغياب - وتقدر كمان تفتح أي تاريخ سابق تراجعه أو تعدله</p></div>
       <div class="header-actions">
         ${canEdit ? `<button class="btn btn-primary" onclick="openTakeAttendanceModal()"><i data-lucide="clipboard-check" style="width:14px;height:14px;"></i> أخذ الغياب</button>` : ""}
         <select class="filter-select" id="att_status_filter" onchange="filterAttendanceRows()">
@@ -5514,7 +5514,7 @@ async function renderAttendancePage(){
   // استرجاع الحصص اللي كانت متفتحة قبل كده (تفضل ظاهرة بعد الحفظ أو تحديث الصفحة)
   if (canEdit && savedSessions.length){
     for (const s of savedSessions){
-      await openAttendancePanel(s.group_id, s.group_name, s.session_number);
+      await openAttendancePanel(s.group_id, s.group_name, s.session_number, s.date || todayStr());
     }
   }
 }
@@ -5585,13 +5585,19 @@ function openTakeAttendanceModal(){
       <label class="form-label">المجموعة</label>
       ${renderSearchableSelect("take_att_group", groupOptions, groups.length===1?groups[0].id:null, "دوس واكتب اسم المجموعة...")}
     </div>
-    <div style="margin-bottom:14px;">
-      <label class="form-label">رقم الحصة</label>
-      <input class="form-input" id="take_att_session_num" type="number" min="1" step="1" value="1" placeholder="مثال: 1">
+    <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:120px;">
+        <label class="form-label">رقم الحصة</label>
+        <input class="form-input" id="take_att_session_num" type="number" min="1" step="1" value="1" placeholder="مثال: 1">
+      </div>
+      <div style="flex:1;min-width:150px;">
+        <label class="form-label">التاريخ</label>
+        <input class="form-input" id="take_att_date" type="date" max="${todayStr()}" value="${todayStr()}">
+      </div>
     </div>
     <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:10px 14px;font-size:13px;color:var(--text-2);display:flex;align-items:center;gap:8px;">
       <i data-lucide="calendar" style="width:14px;height:14px;color:var(--primary);"></i>
-      هيتم تسجيل الغياب بتاريخ النهارده <b>${todayStr()}</b> تلقائيًا
+      التاريخ افتراضيًا النهارده - لو عايز تراجع أو تعدل غياب حصة فاتت غيّر التاريخ لفوق
     </div>
     `,
     `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
@@ -5605,10 +5611,11 @@ async function startTakeAttendance(){
   const groupName = document.getElementById("take_att_group_input").value.trim();
   const groupId = parseInt(groupIdRaw);
   const sn = parseInt(document.getElementById("take_att_session_num").value);
+  const date = document.getElementById("take_att_date").value || todayStr();
   if (!groupId){ showToast("لازم تختار مجموعة من القائمة", "error"); return; }
   if (!sn || sn < 1){ showToast("لازم تكتب رقم حصة صحيح", "error"); return; }
   closeOverlay("genericModal");
-  await openAttendancePanel(groupId, groupName, sn);
+  await openAttendancePanel(groupId, groupName, sn, date);
 }
 
 function attSessionsStorageKey(){
@@ -5621,23 +5628,24 @@ function loadAttSessionsFromStorage(){
   try{ return JSON.parse(localStorage.getItem(attSessionsStorageKey())) || []; }catch(e){ return []; }
 }
 
-async function openAttendancePanel(groupId, groupName, sn){
-  const key = `${groupId}_${sn}`;
-  const exists = ATT_ACTIVE_SESSIONS.find(s=>s.group_id===groupId && s.session_number===sn);
+async function openAttendancePanel(groupId, groupName, sn, date){
+  date = date || todayStr();
+  const key = `${groupId}_${sn}_${date}`;
+  const exists = ATT_ACTIVE_SESSIONS.find(s=>s.group_id===groupId && s.session_number===sn && s.date===date);
   if (exists){
     const card = document.getElementById(`att_panel_${key}`);
     if (card) card.scrollIntoView({behavior:"smooth", block:"start"});
     showToast("الحصة دي مفتوحة بالفعل تحت", "info");
     return;
   }
-  ATT_ACTIVE_SESSIONS.push({group_id: groupId, group_name: groupName, session_number: sn});
+  ATT_ACTIVE_SESSIONS.push({group_id: groupId, group_name: groupName, session_number: sn, date});
   saveAttSessionsToStorage();
   const emptyState = document.getElementById("attEmptyState");
   if (emptyState) emptyState.remove();
   const wrap = document.getElementById("attSessionsWrap");
-  wrap.insertAdjacentHTML("beforeend", renderAttendanceSessionShell(groupId, groupName, sn, true));
+  wrap.insertAdjacentHTML("beforeend", renderAttendanceSessionShell(groupId, groupName, sn, true, date));
   icons();
-  await loadAttendanceTableForSession(groupId, sn);
+  await loadAttendanceTableForSession(groupId, sn, date);
   const card = document.getElementById(`att_panel_${key}`);
   if (card) card.scrollIntoView({behavior:"smooth", block:"start"});
   setTimeout(()=>{
@@ -5646,9 +5654,10 @@ async function openAttendancePanel(groupId, groupName, sn){
   }, 350);
 }
 
-function closeAttendancePanel(groupId, sn){
-  const key = `${groupId}_${sn}`;
-  ATT_ACTIVE_SESSIONS = ATT_ACTIVE_SESSIONS.filter(s=>!(s.group_id===groupId && s.session_number===sn));
+function closeAttendancePanel(groupId, sn, date){
+  date = date || todayStr();
+  const key = `${groupId}_${sn}_${date}`;
+  ATT_ACTIVE_SESSIONS = ATT_ACTIVE_SESSIONS.filter(s=>!(s.group_id===groupId && s.session_number===sn && s.date===date));
   saveAttSessionsToStorage();
   const card = document.getElementById(`att_panel_${key}`);
   if (card) card.remove();
@@ -5658,18 +5667,21 @@ function closeAttendancePanel(groupId, sn){
   }
 }
 
-function renderAttendanceSessionShell(groupId, groupName, sn, isOpen){
+function renderAttendanceSessionShell(groupId, groupName, sn, isOpen, date){
+  date = date || todayStr();
   const label = ATT_SESSION_NAMES[sn] || sn;
-  const key = `${groupId}_${sn}`;
+  const key = `${groupId}_${sn}_${date}`;
+  const isPast = date !== todayStr();
   return `
     <div class="collapse-card" id="att_panel_${key}">
       <div class="collapse-header" onclick="toggleCollapse('att_session_body_${key}', this)">
         <div style="display:flex;align-items:center;gap:10px;flex:1;flex-wrap:wrap;">
           <i data-lucide="calendar-check" style="width:15px;height:15px;color:var(--primary);flex-shrink:0;"></i>
           <span style="font-weight:700;font-size:14px;">${groupName} <span style="color:var(--text-3);font-weight:500;">— الحصة ${label}</span></span>
+          <span class="badge ${isPast ? 'badge-amber' : 'badge-blue'}">${isPast ? `<i data-lucide="history" style="width:10px;height:10px;"></i> تعديل يوم سابق: ${date}` : `النهارده ${date}`}</span>
           <div style="display:flex;gap:6px;margin-right:auto;flex-wrap:wrap;" id="att_session_badges_${key}"></div>
         </div>
-        <button class="act-btn act-del" title="إغلاق الحصة" onclick="event.stopPropagation();closeAttendancePanel(${groupId}, ${sn})" style="margin-right:8px;"><i data-lucide="x" style="width:13px;height:13px;"></i></button>
+        <button class="act-btn act-del" title="إغلاق الحصة" onclick="event.stopPropagation();closeAttendancePanel(${groupId}, ${sn}, '${date}')" style="margin-right:8px;"><i data-lucide="x" style="width:13px;height:13px;"></i></button>
         <i data-lucide="${isOpen?'chevron-up':'chevron-down'}" class="collapse-icon" style="width:16px;height:16px;color:var(--text-3);transition:transform .2s;"></i>
       </div>
       <div class="collapse-body" id="att_session_body_${key}" style="display:${isOpen?'block':'none'};">
@@ -5678,12 +5690,12 @@ function renderAttendanceSessionShell(groupId, groupName, sn, isOpen){
             <label class="form-label">بحث سريع <span style="font-weight:400;color:var(--text-3);">(بالاسم أو كود الحضور أو رقم الهاتف)</span></label>
             <input class="form-input" id="quick_att_code_${key}" placeholder="اكتب أي حاجة: الاسم / الكود / رقم الهاتف..." style="font-family:monospace;" autocomplete="off"
               oninput="onQuickAttCodeInput('${key}')"
-              onkeydown="if(event.key==='Enter'){event.preventDefault();submitQuickAttendance(${groupId}, ${sn}, 'present');}">
+              onkeydown="if(event.key==='Enter'){event.preventDefault();submitQuickAttendance(${groupId}, ${sn}, 'present', '${date}');}">
           </div>
-          <button class="btn btn-primary" onclick="submitQuickAttendance(${groupId}, ${sn}, 'present')"><i data-lucide="check" style="width:14px;height:14px;"></i> تسجيل حضور</button>
-          <button class="btn" style="background:var(--danger-bg);color:var(--danger);" onclick="submitQuickAttendance(${groupId}, ${sn}, 'absent')"><i data-lucide="x" style="width:14px;height:14px;"></i> تسجيل غياب</button>
-          <button class="btn btn-ghost" title="يعلّم كل الطلاب اللي لسه من غير حالة كـ حاضر" onclick="markAllPresent(${groupId}, ${sn})"><i data-lucide="check-check" style="width:14px;height:14px;"></i> تحديد الكل حاضر</button>
-          <button class="btn btn-ghost" style="color:var(--danger);" title="يعلّم كل الطلاب اللي لسه من غير حالة كـ غايب" onclick="markAllAbsent(${groupId}, ${sn})"><i data-lucide="user-x" style="width:14px;height:14px;"></i> تحديد الباقي غايب</button>
+          <button class="btn btn-primary" onclick="submitQuickAttendance(${groupId}, ${sn}, 'present', '${date}')"><i data-lucide="check" style="width:14px;height:14px;"></i> تسجيل حضور</button>
+          <button class="btn" style="background:var(--danger-bg);color:var(--danger);" onclick="submitQuickAttendance(${groupId}, ${sn}, 'absent', '${date}')"><i data-lucide="x" style="width:14px;height:14px;"></i> تسجيل غياب</button>
+          <button class="btn btn-ghost" title="يعلّم كل الطلاب اللي لسه من غير حالة كـ حاضر" onclick="markAllPresent(${groupId}, ${sn}, '${date}')"><i data-lucide="check-check" style="width:14px;height:14px;"></i> تحديد الكل حاضر</button>
+          <button class="btn btn-ghost" style="color:var(--danger);" title="يعلّم كل الطلاب اللي لسه من غير حالة كـ غايب" onclick="markAllAbsent(${groupId}, ${sn}, '${date}')"><i data-lucide="user-x" style="width:14px;height:14px;"></i> تحديد الباقي غايب</button>
         </div>
         <div id="quick_att_profile_${key}" style="padding:10px 16px 0;"></div>
         <div id="quick_att_result_${key}" style="padding:10px 16px 0;"></div>
@@ -5698,9 +5710,9 @@ function renderAttendanceSessionShell(groupId, groupName, sn, isOpen){
   `;
 }
 
-async function loadAttendanceTableForSession(groupId, sn){
-  const date = todayStr();
-  const key = `${groupId}_${sn}`;
+async function loadAttendanceTableForSession(groupId, sn, date){
+  date = date || todayStr();
+  const key = `${groupId}_${sn}_${date}`;
   const rows = await api(`/api/attendance/${date}?group_id=${groupId}&session_number=${sn}`);
   ATT_ROWS_CACHE_BY_SESSION[key] = rows;
   const tbody = document.getElementById(`attTableBody_${key}`);
@@ -5854,46 +5866,46 @@ async function saveAttendanceNote(date, studentId, notes, key){
   showToast("تم حفظ الملاحظة", "success");
 }
 
-async function markAllPresent(groupId, sn){
-  const key = `${groupId}_${sn}`;
+async function markAllPresent(groupId, sn, date){
+  date = date || todayStr();
+  const key = `${groupId}_${sn}_${date}`;
   const rows = ATT_ROWS_CACHE_BY_SESSION[key] || [];
   const unmarked = rows.filter(r => !r.status);
   if (!unmarked.length){ showToast("كل الطلاب متحدد لهم حالة بالفعل", "info"); return; }
   confirmAction("تحديد الكل حاضر", `هيتم تحديد ${unmarked.length} طالب لسه من غير حالة كـ "حاضر". متأكد؟`, async ()=>{
-    const date = todayStr();
     for (const r of unmarked){
       await api("/api/attendance", {method:"POST", body: JSON.stringify({
         student_id: r.student_id, session_date: date, session_number: sn, status: "present",
       })});
     }
     showToast(`تم تحديد ${unmarked.length} طالب كـ حاضر`, "success");
-    loadAttendanceTableForSession(groupId, sn);
+    loadAttendanceTableForSession(groupId, sn, date);
   });
 }
 
-async function markAllAbsent(groupId, sn){
-  const key = `${groupId}_${sn}`;
+async function markAllAbsent(groupId, sn, date){
+  date = date || todayStr();
+  const key = `${groupId}_${sn}_${date}`;
   const rows = ATT_ROWS_CACHE_BY_SESSION[key] || [];
   const unmarked = rows.filter(r => !r.status);
   if (!unmarked.length){ showToast("كل الطلاب متحدد لهم حالة بالفعل", "info"); return; }
   confirmAction("تحديد الباقي غايب", `هيتم تحديد ${unmarked.length} طالب لسه من غير حالة كـ "غايب". متأكد؟`, async ()=>{
-    const date = todayStr();
     for (const r of unmarked){
       await api("/api/attendance", {method:"POST", body: JSON.stringify({
         student_id: r.student_id, session_date: date, session_number: sn, status: "absent",
       })});
     }
     showToast(`تم تحديد ${unmarked.length} طالب كـ غايب`, "success");
-    loadAttendanceTableForSession(groupId, sn);
+    loadAttendanceTableForSession(groupId, sn, date);
   });
 }
 
-async function submitQuickAttendance(groupId, sn, status){
+async function submitQuickAttendance(groupId, sn, status, date){
   status = status || "present";
-  const key = `${groupId}_${sn}`;
+  date = date || todayStr();
+  const key = `${groupId}_${sn}_${date}`;
   const codeInput = document.getElementById(`quick_att_code_${key}`);
   const query = codeInput.value.trim();
-  const date = todayStr();
   const resultEl = document.getElementById(`quick_att_result_${key}`);
   if (!query){ showToast("لازم تكتب اسم الطالب أو كود الحضور أو رقم الهاتف", "error"); return; }
   const sessionLabel = ATT_SESSION_NAMES[sn] || sn;
@@ -5920,7 +5932,7 @@ async function submitQuickAttendance(groupId, sn, status){
     const profileEl = document.getElementById(`quick_att_profile_${key}`);
     if (profileEl) profileEl.innerHTML = "";
     icons();
-    loadAttendanceTableForSession(groupId, sn);
+    loadAttendanceTableForSession(groupId, sn, date);
   };
 
   if (matches.length > 1){
