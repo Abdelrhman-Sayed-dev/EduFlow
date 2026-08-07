@@ -6741,20 +6741,19 @@ function _attachVideoWatermark(overlay){
   wm.id = "fsVideoWatermark";
   wm.textContent = label;
   wm.style.cssText = `
-    position:absolute; top:15%; left:10%; z-index:5; pointer-events:none;
+    position:absolute; top:40%; left:10%; z-index:100000; pointer-events:none;
     color:rgba(255,255,255,.55); font-size:15px; font-weight:700;
     text-shadow:0 0 3px rgba(0,0,0,.6); mix-blend-mode:difference;
     transform:rotate(-18deg); white-space:nowrap; transition:top 1.2s ease, left 1.2s ease;
     user-select:none;
   `;
-  const body = overlay.querySelector("#fsVideoBody");
-  if (body){
-    body.style.position = "relative";
-    body.appendChild(wm);
-  }
+  // بتتحط جوه الـ overlay نفسه (اللي مبيتمسحش طول ما المشغل مفتوح) مش جوه
+  // #fsVideoBody، لأن body.innerHTML بيتستبدل بالكامل لما نحط الفيديو/الـ
+  // iframe (upload/link/bunny) - فلو حطينا العلامة جواه هتتمسح فورًا.
+  overlay.appendChild(wm);
 
   const reposition = () => {
-    const top = 8 + Math.random() * 78;   // % من الارتفاع
+    const top = 20 + Math.random() * 65;  // % من الارتفاع - بعيد عن الهيدر فوق
     const left = 4 + Math.random() * 72;  // % من العرض
     wm.style.top = top + "%";
     wm.style.left = left + "%";
