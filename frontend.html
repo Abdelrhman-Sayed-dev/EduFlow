@@ -6776,7 +6776,7 @@ function _attachStudentWatermark(container){
   const label = _studentWatermarkLabel();
   if (!label) return;
 
-  const ROWS = 5, COLS = 3; // شبكة متكررة - عدد النسخ = ROWS × COLS
+  const ROWS = 2, COLS = 2; // شبكة متكررة - عدد النسخ = ROWS × COLS
 
   const layer = document.createElement("div");
   layer.className = "app-watermark-layer";
@@ -6791,7 +6791,7 @@ function _attachStudentWatermark(container){
       wm.textContent = label;
       wm.style.cssText = `
         position:absolute; z-index:100000; pointer-events:none;
-        color:rgba(255,40,40,.6); font-size:22px; font-weight:800;
+        color:rgba(255,40,40,.8); font-size:17px; font-weight:800;
         text-shadow:0 0 4px rgba(0,0,0,.7), 0 0 1px rgba(0,0,0,.9);
         transform:rotate(-18deg); white-space:nowrap;
         transition:top 1.4s ease, left 1.4s ease; user-select:none;
