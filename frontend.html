@@ -6772,27 +6772,47 @@ function _attachVideoWatermark(overlay){
 // اللي جواها (فيديو/iframe/صورة).
 function _attachStudentWatermark(container){
   if (!SESSION || SESSION.role !== "student") return;
-  if (container.querySelector(".app-watermark")) return; // موجودة بالفعل - ملزمش نكررها
+  if (container.querySelector(".app-watermark-layer")) return; // موجودة بالفعل - ملزمش نكررها
   const label = _studentWatermarkLabel();
   if (!label) return;
 
-  const wm = document.createElement("div");
-  wm.className = "app-watermark";
-  wm.textContent = label;
-  wm.style.cssText = `
-    position:absolute; top:40%; left:10%; z-index:100000; pointer-events:none;
-    color:rgba(255,255,255,.55); font-size:15px; font-weight:700;
-    text-shadow:0 0 3px rgba(0,0,0,.6); mix-blend-mode:difference;
-    transform:rotate(-18deg); white-space:nowrap; transition:top 1.2s ease, left 1.2s ease;
-    user-select:none;
-  `;
-  container.appendChild(wm);
+  const ROWS = 5, COLS = 3; // شبكة متكررة - عدد النسخ = ROWS × COLS
+
+  const layer = document.createElement("div");
+  layer.className = "app-watermark-layer";
+  layer.style.cssText = "position:absolute; inset:0; z-index:100000; pointer-events:none; overflow:hidden;";
+  container.appendChild(layer);
+
+  const tiles = [];
+  for (let r = 0; r < ROWS; r++){
+    for (let c = 0; c < COLS; c++){
+      const wm = document.createElement("div");
+      wm.className = "app-watermark";
+      wm.textContent = label;
+      wm.style.cssText = `
+        position:absolute; z-index:100000; pointer-events:none;
+        color:rgba(255,40,40,.6); font-size:22px; font-weight:800;
+        text-shadow:0 0 4px rgba(0,0,0,.7), 0 0 1px rgba(0,0,0,.9);
+        transform:rotate(-18deg); white-space:nowrap;
+        transition:top 1.4s ease, left 1.4s ease; user-select:none;
+      `;
+      layer.appendChild(wm);
+      tiles.push({ el: wm, r, c });
+    }
+  }
 
   const reposition = () => {
-    const top = 20 + Math.random() * 65;  // % من الارتفاع - بعيد عن الهيدر فوق
-    const left = 4 + Math.random() * 72;  // % من العرض
-    wm.style.top = top + "%";
-    wm.style.left = left + "%";
+    // إزاحة عشوائية بسيطة حوالين مكان كل نسخة في شبكتها، عشان تفضل متوزعة
+    // ومتغطيش بعض، لكن كمان تتحرك دوري عشان تصعّب قصّها بالمونتاج
+    const jitterX = 8, jitterY = 6; // % حد أقصى للإزاحة العشوائية
+    tiles.forEach(({ el, r, c }) => {
+      const baseTop = (r + 0.5) * (100 / ROWS);
+      const baseLeft = (c + 0.5) * (100 / COLS);
+      const top = Math.min(96, Math.max(2, baseTop + (Math.random() * 2 - 1) * jitterY));
+      const left = Math.min(94, Math.max(2, baseLeft + (Math.random() * 2 - 1) * jitterX));
+      el.style.top = top + "%";
+      el.style.left = left + "%";
+    });
   };
   reposition();
   container._watermarkInterval = setInterval(reposition, 9000);
@@ -6803,7 +6823,7 @@ function _detachStudentWatermark(container){
     clearInterval(container._watermarkInterval);
     container._watermarkInterval = null;
   }
-  container.querySelectorAll(".app-watermark").forEach(el => el.remove());
+  container.querySelectorAll(".app-watermark-layer").forEach(el => el.remove());
 }
 
 function openVideoPlayerModal(videoId, title, videoType, externalUrl, bunnyVideoId){
