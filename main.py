@@ -19,6 +19,7 @@ import uuid
 import asyncio
 import calendar
 import secrets
+import hashlib
 from urllib.parse import quote
 from datetime import datetime, timedelta
 from openpyxl import load_workbook, Workbook
@@ -122,6 +123,37 @@ VIDEOS_DIR = os.environ.get("VIDEOS_DIR", os.path.join(os.environ.get("DATA_DIR"
 os.makedirs(VIDEOS_DIR, exist_ok=True)
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v"}
 MAX_VIDEO_SIZE_BYTES = 2 * 1024 * 1024 * 1024  # 2 جيجا حد أقصى للفيديو الواحد
+
+# ---------------------------------------------------------------------------
+# Bunny Stream (مزود فيديو إضافي) - النظام فضل شغال بالكامل بـ YouTube/الرفع
+# المباشر زي ما هو، وده بس إعداد اختياري لتفعيل Bunny كخيار تاني. لو المتغيرات
+# دي فاضية، اختيار "Bunny Stream" في لوحة الإدارة هيرجّع خطأ واضح إنه مش مفعّل،
+# من غير ما يأثر على أي جزء تاني من المنصة.
+#   BUNNY_LIBRARY_ID          -> رقم مكتبة الفيديو (Video Library) في Bunny
+#   BUNNY_EMBED_TOKEN_KEY     -> "Token Authentication Key" من تبويب
+#                                Security بتاع المكتبة (مش الـ API Key العام)
+# ---------------------------------------------------------------------------
+BUNNY_LIBRARY_ID = os.environ.get("BUNNY_LIBRARY_ID", "").strip()
+BUNNY_EMBED_TOKEN_KEY = os.environ.get("BUNNY_EMBED_TOKEN_KEY", "").strip()
+BUNNY_EMBED_BASE_URL = os.environ.get("BUNNY_EMBED_BASE_URL", "https://iframe.mediadelivery.net/embed").rstrip("/")
+BUNNY_TOKEN_TTL_SECONDS = int(os.environ.get("BUNNY_TOKEN_TTL_SECONDS", str(60 * 60 * 4)))  # 4 ساعات زي فيديوهات الرفع
+BUNNY_ENABLED = bool(BUNNY_LIBRARY_ID and BUNNY_EMBED_TOKEN_KEY)
+
+
+def build_bunny_embed_url(bunny_video_id: str) -> dict:
+    """بيبني رابط تشغيل Bunny Stream موقّع (Embed Token Authentication) صالح
+    لمدة محدودة بس، بدل ما نستخدم رابط ثابت - على نفس مبدأ الـ vtoken بتاع
+    الفيديوهات المرفوعة. الخوارزمية موثّقة رسميًا من Bunny:
+    token = SHA256_HEX(security_key + video_id + expires)
+    https://docs.bunny.net/stream/token-authentication
+    """
+    if not BUNNY_ENABLED:
+        raise HTTPException(status_code=503, detail="خدمة Bunny Stream غير مفعّلة على السيرفر - لازم تضاف متغيرات BUNNY_LIBRARY_ID و BUNNY_EMBED_TOKEN_KEY")
+    expires = int((datetime.utcnow() + timedelta(seconds=BUNNY_TOKEN_TTL_SECONDS)).timestamp())
+    raw = f"{BUNNY_EMBED_TOKEN_KEY}{bunny_video_id}{expires}"
+    token = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    embed_url = f"{BUNNY_EMBED_BASE_URL}/{BUNNY_LIBRARY_ID}/{bunny_video_id}?token={token}&expires={expires}"
+    return {"embed_url": embed_url, "expires_in": BUNNY_TOKEN_TTL_SECONDS}
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +347,16 @@ class VideoLinkIn(BaseModel):
     description: Optional[str] = None
     session_number: Optional[int] = None
     video_url: str
+
+
+class VideoBunnyIn(BaseModel):
+    """إضافة فيديو مستضاف على Bunny Stream - بدل رفع ملف أو رابط عادي.
+    bunny_video_id هو الـ Video GUID الظاهر في لوحة تحكم Bunny (Stream Library)."""
+    group_ids: List[int]
+    title: str
+    description: Optional[str] = None
+    session_number: Optional[int] = None
+    bunny_video_id: str
 
 
 class LoginIn(BaseModel):
@@ -2055,7 +2097,7 @@ def issue_video_stream_token(video_id: int, session=Depends(get_current_session)
         vid = conn.execute("SELECT * FROM group_videos WHERE id=?", (video_id,)).fetchone()
         if not vid:
             raise HTTPException(status_code=404, detail="الفيديو غير موجود")
-        if vid["video_type"] == "link":
+        if vid["video_type"] in ("link", "bunny"):
             raise HTTPException(status_code=400, detail="الفيديو ده رابط خارجي مش ملف مرفوع على المنصة")
         assert_can_access_video(conn, session, video_id)
 
@@ -2085,7 +2127,7 @@ def list_group_videos(group_id: int, session=Depends(get_current_session)):
         assert_can_access_group_media(conn, session, group_id)
         query = """
             SELECT gv.id, gv.title, gv.description, gv.file_size, gv.mime_type,
-                   gv.video_type, gv.external_url,
+                   gv.video_type, gv.external_url, gv.provider, gv.provider_video_id,
                    vgl.session_number, gv.created_at, u.full_name as uploaded_by_name
             FROM video_group_links vgl
             JOIN group_videos gv ON gv.id = vgl.video_id
@@ -2204,7 +2246,7 @@ def get_group_content_by_month(
         # بالمجموعة الحالية من جدول الربط ورقم الحصة الخاص بيها هي ----------------
         rows = conn.execute(
             """SELECT gv.id, vgl.group_id, gv.title, gv.description, gv.file_size,
-                      gv.mime_type, gv.video_type, gv.external_url,
+                      gv.mime_type, gv.video_type, gv.external_url, gv.provider, gv.provider_video_id,
                       vgl.session_number, gv.created_at, u.full_name as uploaded_by_name
                FROM video_group_links vgl
                JOIN group_videos gv ON gv.id = vgl.video_id
@@ -2337,7 +2379,7 @@ def list_all_videos(session=Depends(require_roles("admin", "head_supervisor", "t
     with get_connection() as conn:
         videos = conn.execute("""
             SELECT gv.id, gv.title, gv.description, gv.file_size, gv.mime_type,
-                   gv.video_type, gv.external_url,
+                   gv.video_type, gv.external_url, gv.provider, gv.provider_video_id,
                    gv.created_at, u.full_name as uploaded_by_name
             FROM group_videos gv
             LEFT JOIN users u ON u.id = gv.uploaded_by
@@ -2506,6 +2548,85 @@ def add_group_video_link(
         return {"id": video_id, "linked_groups": group_id_list, "message": "تم إضافة رابط الفيديو بنجاح"}
 
 
+@app.post("/api/videos/bunny")
+def add_group_video_bunny(
+    payload: VideoBunnyIn,
+    session=Depends(require_roles("admin", "head_supervisor", "supervisor", "teacher")),
+):
+    """إضافة فيديو مستضاف على Bunny Stream (مزود إضافي بجانب اليوتيوب/الرفع
+    المباشر - من غير ما يأثر عليهم خالص). نفس فكرة /api/videos/link بالظبط
+    (فيديو واحد يترفعله لأكتر من مجموعة مرة واحدة) لكن بنخزن معرف الفيديو عند
+    Bunny (provider_video_id) بدل الرابط، ورابط التشغيل بيتولّد موقّع (Signed)
+    وقت الطلب بس عن طريق /api/videos/{id}/bunny-token - مفيش رابط ثابت مخزّن."""
+    if not BUNNY_ENABLED:
+        raise HTTPException(status_code=503, detail="خدمة Bunny Stream غير مفعّلة على السيرفر حاليًا")
+
+    group_id_list = sorted(set(payload.group_ids))
+    if not group_id_list:
+        raise HTTPException(status_code=400, detail="لازم تحدد مجموعة واحدة على الأقل")
+
+    title = payload.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="لازم تكتب عنوان للفيديو")
+
+    bunny_video_id = payload.bunny_video_id.strip()
+    if not bunny_video_id:
+        raise HTTPException(status_code=400, detail="لازم تكتب Bunny Video ID")
+
+    with get_connection() as conn:
+        for gid in group_id_list:
+            assert_can_access_group_media(conn, session, gid)
+
+        cur = conn.execute("""
+            INSERT INTO group_videos (group_id, title, description, file_path, file_size, mime_type,
+                                       session_number, uploaded_by, video_type, provider, provider_video_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'bunny', 'bunny', ?)
+        """, (group_id_list[0], title, (payload.description or "").strip() or None, "", None, None,
+              payload.session_number, session["id"], bunny_video_id))
+        video_id = cur.lastrowid
+
+        for gid in group_id_list:
+            conn.execute(
+                "INSERT OR IGNORE INTO video_group_links (video_id, group_id, session_number) VALUES (?, ?, ?)",
+                (video_id, gid, payload.session_number)
+            )
+            student_ids = [r["id"] for r in conn.execute("SELECT id FROM students WHERE group_id=? AND is_active=1", (gid,)).fetchall()]
+            for sid in student_ids:
+                create_notification(conn, sid, "فيديو جديد", f"المشرف رفع فيديو جديد: {title}")
+
+        log_session_activity(conn, session, "video_upload", f"إضافة فيديو Bunny Stream \"{title}\"",
+                              group_id=group_id_list[0])
+        return {"id": video_id, "linked_groups": group_id_list, "message": "تم إضافة فيديو Bunny Stream بنجاح"}
+
+
+@app.post("/api/videos/{video_id}/bunny-token")
+def issue_bunny_playback_token(video_id: int, session=Depends(get_current_session)):
+    """بيتنادى قبل ما نفتح مشغل Bunny مباشرة، بعد التحقق العادي بتوكن الدخول
+    (Authorization header) - بيرجع رابط Embed موقّع (Token Authentication)
+    صالح لمدة محدودة بس، نفس فلسفة /api/videos/{id}/stream-token بالظبط لكن
+    لمزود Bunny."""
+    with get_connection() as conn:
+        vid = conn.execute("SELECT * FROM group_videos WHERE id=?", (video_id,)).fetchone()
+        if not vid:
+            raise HTTPException(status_code=404, detail="الفيديو غير موجود")
+        if vid["video_type"] != "bunny" or not vid["provider_video_id"]:
+            raise HTTPException(status_code=400, detail="الفيديو ده مش مستضاف على Bunny Stream")
+        assert_can_access_video(conn, session, video_id)
+
+        paid_months = get_student_paid_months(conn, session)
+        student_group_id = session.get("group_id") if session.get("role") == "student" else None
+        link_row = conn.execute(
+            "SELECT session_number FROM video_group_links WHERE video_id=? AND group_id=?",
+            (video_id, student_group_id)
+        ).fetchone() if student_group_id else None
+        session_number = link_row["session_number"] if link_row else None
+        session_access = get_student_session_access(conn, session, student_group_id)
+        if not is_content_visible(vid["created_at"], session_number, paid_months, session_access):
+            raise HTTPException(status_code=404, detail="الفيديو غير موجود")
+
+        return build_bunny_embed_url(vid["provider_video_id"])
+
+
 @app.delete("/api/groups/{group_id}/videos/{video_id}")
 def delete_group_video(video_id: int, group_id: int, session=Depends(require_roles("admin", "head_supervisor", "supervisor", "teacher"))):
     """بيشيل ربط الفيديو بالمجموعة دي بس - الفيديو نفسه (الملف والصف في قاعدة
@@ -2536,8 +2657,9 @@ def delete_video_permanently(video_id: int, session=Depends(require_roles("admin
         conn.execute("DELETE FROM group_videos WHERE id=?", (video_id,))  # video_group_links بتتشال تلقائي بالـ CASCADE
         log_session_activity(conn, session, "video_delete", f"حذف فيديو \"{vid['title']}\" نهائيًا")
 
-        # لو الفيديو رابط خارجي (video_type='link') مفيش ملف نحذفه من الديسك أصلاً
-        if vid["video_type"] != "link" and vid["file_path"]:
+        # لو الفيديو رابط خارجي (video_type='link') أو مستضاف على مزود خارجي
+        # زي Bunny (video_type='bunny') مفيش ملف نحذفه من الديسك أصلاً
+        if vid["video_type"] not in ("link", "bunny") and vid["file_path"]:
             file_path = os.path.join(VIDEOS_DIR, vid["file_path"])
             try:
                 if os.path.exists(file_path):
@@ -2568,7 +2690,7 @@ def stream_group_video(video_id: int, request: Request, vtoken: Optional[str] = 
         vid = conn.execute("SELECT * FROM group_videos WHERE id=?", (video_id,)).fetchone()
         if not vid:
             raise HTTPException(status_code=404, detail="الفيديو غير موجود")
-        if vid["video_type"] == "link":
+        if vid["video_type"] in ("link", "bunny"):
             raise HTTPException(status_code=400, detail="الفيديو ده رابط خارجي مش ملف مرفوع على المنصة")
 
         file_path = os.path.join(VIDEOS_DIR, vid["file_path"])
