@@ -911,6 +911,7 @@ async function downloadFile(path, fallbackFilename){
 function closeOverlay(id){
   const el = document.getElementById(id);
   el.classList.remove("open");
+  _detachStudentWatermark(el);
   // إيقاف أي فيديو أو رابط خارجي (iframe) شغال جوه المودال ده - لو قفلنا المودال
   // من غير ما نعمل بوز، الفيديو أو الصوت كان بيفضل شغال في الخلفية من غير ما يبان
   el.querySelectorAll("video").forEach(v => {
@@ -960,6 +961,7 @@ function showImageLightbox(src, filename){
   img.oncontextmenu = isStudent ? (e)=>{ e.preventDefault(); return false; } : null;
   img.draggable = !isStudent;
   openOverlay("imageLightbox");
+  _attachStudentWatermark(document.getElementById("imageLightbox"));
 }
 
 /* =====================================================================
@@ -6710,7 +6712,7 @@ function videoLinkEmbedUrl(url){
 function _closeFsVideoOverlay(){
   const ov = document.getElementById("fsVideoOverlay");
   if (!ov) return;
-  if (ov._watermarkInterval) clearInterval(ov._watermarkInterval);
+  _detachStudentWatermark(ov);
   ov.querySelectorAll("video").forEach(v => { try{ v.pause(); v.removeAttribute("src"); v.load(); }catch(e){} });
   ov.querySelectorAll("iframe").forEach(f => { try{ f.src = "about:blank"; }catch(e){} });
   const exitFs = document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
@@ -6733,12 +6735,21 @@ function _studentWatermarkLabel(){
 }
 
 function _attachVideoWatermark(overlay){
+  _attachStudentWatermark(overlay);
+}
+
+// نسخة عامة من العلامة المائية - قابلة لإعادة الاستخدام فوق أي حاوية (مشغل
+// الفيديو، أو لايت بوكس صور السبورة). بتتحط كـ Overlay مستقل فوق الحاوية
+// نفسها (مش جوه أي عنصر بيتغيّر محتواه) عشان تفضل ظاهرة مهما اتغيّر المحتوى
+// اللي جواها (فيديو/iframe/صورة).
+function _attachStudentWatermark(container){
   if (!SESSION || SESSION.role !== "student") return;
+  if (container.querySelector(".app-watermark")) return; // موجودة بالفعل - ملزمش نكررها
   const label = _studentWatermarkLabel();
   if (!label) return;
 
   const wm = document.createElement("div");
-  wm.id = "fsVideoWatermark";
+  wm.className = "app-watermark";
   wm.textContent = label;
   wm.style.cssText = `
     position:absolute; top:40%; left:10%; z-index:100000; pointer-events:none;
@@ -6747,10 +6758,7 @@ function _attachVideoWatermark(overlay){
     transform:rotate(-18deg); white-space:nowrap; transition:top 1.2s ease, left 1.2s ease;
     user-select:none;
   `;
-  // بتتحط جوه الـ overlay نفسه (اللي مبيتمسحش طول ما المشغل مفتوح) مش جوه
-  // #fsVideoBody، لأن body.innerHTML بيتستبدل بالكامل لما نحط الفيديو/الـ
-  // iframe (upload/link/bunny) - فلو حطينا العلامة جواه هتتمسح فورًا.
-  overlay.appendChild(wm);
+  container.appendChild(wm);
 
   const reposition = () => {
     const top = 20 + Math.random() * 65;  // % من الارتفاع - بعيد عن الهيدر فوق
@@ -6759,7 +6767,15 @@ function _attachVideoWatermark(overlay){
     wm.style.left = left + "%";
   };
   reposition();
-  overlay._watermarkInterval = setInterval(reposition, 9000);
+  container._watermarkInterval = setInterval(reposition, 9000);
+}
+
+function _detachStudentWatermark(container){
+  if (container._watermarkInterval){
+    clearInterval(container._watermarkInterval);
+    container._watermarkInterval = null;
+  }
+  container.querySelectorAll(".app-watermark").forEach(el => el.remove());
 }
 
 function openVideoPlayerModal(videoId, title, videoType, externalUrl, bunnyVideoId){
