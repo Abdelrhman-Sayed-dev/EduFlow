@@ -727,7 +727,7 @@ body.is-student .bottom-nav, body.is-supervisor .bottom-nav, body.is-teacher .bo
 </div>
 
 <!-- لايت بوكس للصور -->
-<div class="overlay" id="imageLightbox" onclick="closeOverlay('imageLightbox')">
+<div class="overlay" id="imageLightbox" onclick="closeImageLightbox()">
   <img id="lightboxImg" src="" style="max-width:90vw;max-height:90vh;border-radius:12px;box-shadow:var(--shadow-xl);">
 </div>
 
@@ -961,7 +961,35 @@ function showImageLightbox(src, filename){
   img.oncontextmenu = isStudent ? (e)=>{ e.preventDefault(); return false; } : null;
   img.draggable = !isStudent;
   openOverlay("imageLightbox");
-  _attachStudentWatermark(document.getElementById("imageLightbox"));
+  const lb = document.getElementById("imageLightbox");
+  _attachStudentWatermark(lb);
+
+  // فتح ملء الشاشة فعليًا (Fullscreen API) - لازم يتنادى فورًا جوه نفس تفاعل
+  // المستخدم (الضغطة اللي فتحت الصورة) من غير أي انتظار قبله عشان المتصفح يسمح بيه.
+  const req = lb.requestFullscreen || lb.webkitRequestFullscreen || lb.msRequestFullscreen;
+  if (req) req.call(lb).catch(()=>{});
+
+  if (!lb._fsChangeBound){
+    lb._fsChangeBound = true;
+    const onFsChange = () => {
+      const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+      if (fsEl !== lb && lb.classList.contains("open")){
+        // خروج من وضع ملء الشاشة (Esc أو غيره) - بنقفل اللايت بوكس بالكامل معاه
+        closeOverlay("imageLightbox");
+      }
+    };
+    document.addEventListener("fullscreenchange", onFsChange);
+    document.addEventListener("webkitfullscreenchange", onFsChange);
+  }
+}
+
+function closeImageLightbox(){
+  const lb = document.getElementById("imageLightbox");
+  const exitFs = document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
+  if ((document.fullscreenElement === lb || document.webkitFullscreenElement === lb) && exitFs){
+    exitFs.call(document).catch(()=>{});
+  }
+  closeOverlay("imageLightbox");
 }
 
 /* =====================================================================
