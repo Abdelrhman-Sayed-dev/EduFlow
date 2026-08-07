@@ -6710,6 +6710,7 @@ function videoLinkEmbedUrl(url){
 function _closeFsVideoOverlay(){
   const ov = document.getElementById("fsVideoOverlay");
   if (!ov) return;
+  if (ov._watermarkInterval) clearInterval(ov._watermarkInterval);
   ov.querySelectorAll("video").forEach(v => { try{ v.pause(); v.removeAttribute("src"); v.load(); }catch(e){} });
   ov.querySelectorAll("iframe").forEach(f => { try{ f.src = "about:blank"; }catch(e){} });
   const exitFs = document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
@@ -6717,6 +6718,49 @@ function _closeFsVideoOverlay(){
     exitFs.call(document).catch(()=>{});
   }
   ov.remove();
+}
+
+// علامة مائية (Watermark) بتظهر لبيانات الطالب فوق الفيديو أثناء التشغيل -
+// هدفها ردع/تتبع أي محاولة تسجيل شاشة أو تسريب للمحتوى، لأنها بتربط الفيديو
+// اللي بيتفرج عليه بحساب الطالب نفسه. بتشتغل فوق أي نوع فيديو (رفع مباشر/
+// يوتيوب أو رابط/Bunny Stream) لأنها Overlay في الواجهة بس، مش جزء من الفيديو
+// نفسه - وبتتحرك مكانها كل شوية عشان تصعّب قصّها بالمونتاج.
+function _studentWatermarkLabel(){
+  const name = (SESSION.full_name || "").trim();
+  const phone = (SESSION.phone || "").trim();
+  const phoneTail = phone ? phone.slice(-4) : "";
+  return phoneTail ? `${name} · ${phoneTail}` : name;
+}
+
+function _attachVideoWatermark(overlay){
+  if (!SESSION || SESSION.role !== "student") return;
+  const label = _studentWatermarkLabel();
+  if (!label) return;
+
+  const wm = document.createElement("div");
+  wm.id = "fsVideoWatermark";
+  wm.textContent = label;
+  wm.style.cssText = `
+    position:absolute; top:15%; left:10%; z-index:5; pointer-events:none;
+    color:rgba(255,255,255,.55); font-size:15px; font-weight:700;
+    text-shadow:0 0 3px rgba(0,0,0,.6); mix-blend-mode:difference;
+    transform:rotate(-18deg); white-space:nowrap; transition:top 1.2s ease, left 1.2s ease;
+    user-select:none;
+  `;
+  const body = overlay.querySelector("#fsVideoBody");
+  if (body){
+    body.style.position = "relative";
+    body.appendChild(wm);
+  }
+
+  const reposition = () => {
+    const top = 8 + Math.random() * 78;   // % من الارتفاع
+    const left = 4 + Math.random() * 72;  // % من العرض
+    wm.style.top = top + "%";
+    wm.style.left = left + "%";
+  };
+  reposition();
+  overlay._watermarkInterval = setInterval(reposition, 9000);
 }
 
 function openVideoPlayerModal(videoId, title, videoType, externalUrl, bunnyVideoId){
@@ -6741,6 +6785,7 @@ function openVideoPlayerModal(videoId, title, videoType, externalUrl, bunnyVideo
   document.body.appendChild(overlay);
   document.getElementById("fsVideoCloseBtn").onclick = _closeFsVideoOverlay;
   icons();
+  _attachVideoWatermark(overlay);
 
   const requestFs = (el) => {
     const req = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;

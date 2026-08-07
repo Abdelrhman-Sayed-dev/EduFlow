@@ -654,6 +654,7 @@ def _resolve_session_by_token(token: Optional[str]):
             return {
                 "type": "student", "id": student["id"], "role": "student",
                 "full_name": student["full_name"], "group_id": student["group_id"],
+                "phone": student["phone"],
                 "subscription_since": subscription_since
             }
 
