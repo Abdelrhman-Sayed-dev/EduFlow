@@ -7263,14 +7263,13 @@ function renderOverallRatingCard(r){
 }
 
 async function renderStudentDashboardPage(){
-  const [scores, attendance, groupInfo, ranking, payments, participation, overallRating] = await Promise.all([
+  const [scores, attendance, groupInfo, ranking, payments, participation] = await Promise.all([
     api(`/api/students/${SESSION.id}/scores`),
     api(`/api/students/${SESSION.id}/attendance`),
     SESSION.group_id ? api(`/api/groups/${SESSION.group_id}/info`).catch(()=>null) : Promise.resolve(null),
     api(`/api/students/${SESSION.id}/ranking`).catch(()=>null),
     api(`/api/students/${SESSION.id}/payments`).catch(()=>[]),
     api(`/api/students/${SESSION.id}/participation`).catch(()=>null),
-    api(`/api/students/${SESSION.id}/overall-rating`).catch(()=>null),
   ]);
   const present = attendance.filter(a=>a.status==='present'||a.status==='late').length;
   const avg = scores.length ? (scores.reduce((s,x)=>s+(x.score||0)/x.max_score*100,0)/scores.length).toFixed(0) : "—";
@@ -7365,8 +7364,6 @@ async function renderStudentDashboardPage(){
         <div class="student-stats-value">${attendanceRate!==null ? attendanceRate+'%' : '—'}</div><div class="student-stats-label">نسبة الحضور</div>
       </div>
     </div>
-
-    ${overallRating ? renderOverallRatingCard(overallRating) : ""}
 
     ${ranking ? `
     <div class="table-card" style="padding:14px 16px;margin-bottom:14px;background:var(--warning-bg);border:none;box-shadow:none;">
