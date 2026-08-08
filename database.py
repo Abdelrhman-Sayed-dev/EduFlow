@@ -789,6 +789,38 @@ def init_db():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_type, user_id, is_read)")
 
         # ---------------------------------------------------------------
+        # استطلاعات رأي الطلاب - Surveys
+        # الأدمن بيبعت استطلاع لكل الطلاب النشطين (بيوصلهم إشعار)، والطالب بيقيّم
+        # رضاه عن أداء المنصة من 1 لـ 5 + ملاحظة اختيارية بيكتب فيها اقتراح تطوير.
+        # ---------------------------------------------------------------
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS surveys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL DEFAULT 'استطلاع رأي عن أداء المنصة',
+            question TEXT NOT NULL DEFAULT 'إيه رأيك في أداء المنصة والمتابعة معاك؟',
+            created_by INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+        )
+        """)
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS survey_responses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            survey_id INTEGER NOT NULL,
+            student_id INTEGER NOT NULL,
+            rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
+            notes TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (survey_id) REFERENCES surveys(id) ON DELETE CASCADE,
+            FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+            UNIQUE(survey_id, student_id)
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_survey_responses_survey ON survey_responses(survey_id)")
+
+        # ---------------------------------------------------------------
         # بنك الأسئلة - Question Bank
         # كل سؤال تابع لمرحلة دراسية + مُصنّف بـ "الباب" و"الدرس"، وله إجابة
         # صحيحة واحدة + 3 إجابات خاطئة + تفسير يظهر للطالب لو جاوب غلط.

@@ -316,6 +316,18 @@ class AttendanceCodeIn(BaseModel):
     session_number: int = 1
 
 
+class SurveyIn(BaseModel):
+    """إنشاء وإرسال استطلاع رأي جديد لكل الطلاب النشطين"""
+    title: Optional[str] = Field(None, max_length=200)
+    question: Optional[str] = Field(None, max_length=500)
+
+
+class SurveyResponseIn(BaseModel):
+    """رد الطالب على استطلاع الرأي"""
+    rating: int = Field(..., ge=1, le=5)
+    notes: Optional[str] = Field(None, max_length=2000)
+
+
 class ParticipationIn(BaseModel):
     """تسجيل نقاط تفاعل/مشاركة الطالب في حصة معينة (المشرف بيقيّم من 1 لـ 5)"""
     student_id: int
@@ -5548,6 +5560,213 @@ def get_monthly_report(student_id: int, month: str, session=Depends(get_current_
 
 
 # ---------------------------------------------------------------------------
+# التقييم التراكمي لكل طالب - Overall Cumulative Student Rating
+# ---------------------------------------------------------------------------
+# النسب المعتمدة (بتتحسب على تاريخ الطالب كله من أول ما اتسجل، مش على شهر معين):
+#   - 40% الامتحانات الشاملة (quiz_type='exam')
+#   - 15% الكويزات (quiz_type='quiz')
+#   - 15% الواجبات (homework)
+#   - 15% تفاعل الطالب (participation)
+#   - 15% الحضور والالتزام (attendance)
+# لو أحد البنود مفيهوش أي بيانات خالص (مثلاً المجموعة لسه ملهاش امتحانات شاملة)،
+# بيتم استبعاده وإعادة توزيع باقي الأوزان على بعضها بنفس النسبة، عشان النتيجة
+# تفضل من 0 لـ 100 وماتتظلمش الطالب بسبب بند لسه معملوش.
+# ---------------------------------------------------------------------------
+
+OVERALL_RATING_WEIGHTS = {
+    "exams": 40,
+    "quizzes": 15,
+    "homework": 15,
+    "participation": 15,
+    "attendance": 15,
+}
+
+# أوزان فرعية لحساب نسبة "الحضور والالتزام": حاضر بيتحسب كامل، والمتأخر بياخد نص
+# درجة (حضر بس مش ملتزم بالميعاد)، والمعتذر بياخد شبه كامل (عذره مقبول)، والغايب صفر.
+ATTENDANCE_STATUS_CREDIT = {
+    "present": 1.0,
+    "late": 0.75,
+    "excused": 0.9,
+    "absent": 0.0,
+}
+
+
+def compute_student_overall_rating(conn, student_id: int) -> dict:
+    """يحسب التقييم التراكمي الكلي للطالب من أول ما اتسجل (مش شهر معين)."""
+    student = conn.execute(
+        "SELECT s.*, g.stage_id FROM students s JOIN groups g ON g.id = s.group_id WHERE s.id = ?",
+        (student_id,),
+    ).fetchone()
+    if not student:
+        raise HTTPException(status_code=404, detail="الطالب غير موجود")
+
+    group_id = student["group_id"]
+    stage_id = student["stage_id"]
+
+    def _quiz_component(quiz_type: str):
+        """بيرجع (النسبة المئوية, عدد الامتحانات/الكويزات المحسوبة) لنوع معين.
+        أي امتحان اتوجّه للطالب (لمجموعته أو لمرحلته أو عام) ومفيهوش درجة مسجلة
+        للطالب بيتحسب صفر (يعني معملش الامتحان ده)."""
+        rows = conn.execute(
+            """
+            SELECT q.max_score, qs.score
+            FROM quizzes q
+            LEFT JOIN quiz_scores qs ON qs.quiz_id = q.id AND qs.student_id = ?
+            WHERE q.quiz_type = ?
+              AND ((q.group_id IS NULL AND q.stage_id IS NULL)
+                   OR q.group_id = ?
+                   OR q.stage_id = ?)
+            """,
+            (student_id, quiz_type, group_id, stage_id),
+        ).fetchall()
+        if not rows:
+            return None, 0
+        pcts = []
+        for r in rows:
+            if r["score"] is not None and r["max_score"]:
+                pcts.append(max(0.0, min(100.0, r["score"] / r["max_score"] * 100)))
+            else:
+                pcts.append(0.0)  # لم يحضر/لم تُسجل له درجة = صفر في هذا الامتحان
+        return round(sum(pcts) / len(pcts), 1), len(rows)
+
+    exam_pct, exam_count = _quiz_component("exam")
+    quiz_pct, quiz_count = _quiz_component("quiz")
+
+    # ---- الواجبات ----
+    hw_rows = conn.execute(
+        """
+        SELECT h.id, hs.done
+        FROM homework h
+        LEFT JOIN homework_submissions hs ON hs.homework_id = h.id AND hs.student_id = ?
+        WHERE h.group_id = ?
+        """,
+        (student_id, group_id),
+    ).fetchall()
+    if hw_rows:
+        done_count = sum(1 for r in hw_rows if r["done"])
+        hw_pct = round(done_count / len(hw_rows) * 100, 1)
+        hw_count = len(hw_rows)
+    else:
+        hw_pct, hw_count = None, 0
+
+    # ---- تفاعل الطالب (participation) ----
+    part_row = conn.execute(
+        "SELECT AVG(points) as avg_points, COUNT(*) as cnt FROM participation WHERE student_id = ?",
+        (student_id,),
+    ).fetchone()
+    if part_row and part_row["cnt"]:
+        part_pct = round(part_row["avg_points"] / 5 * 100, 1)
+        part_count = part_row["cnt"]
+    else:
+        part_pct, part_count = None, 0
+
+    # ---- الحضور والالتزام ----
+    att_rows = conn.execute(
+        "SELECT status FROM attendance WHERE student_id = ?", (student_id,)
+    ).fetchall()
+    if att_rows:
+        credit_sum = sum(ATTENDANCE_STATUS_CREDIT.get(r["status"], 0.0) for r in att_rows)
+        att_pct = round(credit_sum / len(att_rows) * 100, 1)
+        att_count = len(att_rows)
+        att_breakdown = {"present": 0, "absent": 0, "late": 0, "excused": 0}
+        for r in att_rows:
+            if r["status"] in att_breakdown:
+                att_breakdown[r["status"]] += 1
+    else:
+        att_pct, att_count = None, 0
+        att_breakdown = {"present": 0, "absent": 0, "late": 0, "excused": 0}
+
+    components = {
+        "exams": exam_pct,
+        "quizzes": quiz_pct,
+        "homework": hw_pct,
+        "participation": part_pct,
+        "attendance": att_pct,
+    }
+    counts = {
+        "exams": exam_count,
+        "quizzes": quiz_count,
+        "homework": hw_count,
+        "participation": part_count,
+        "attendance": att_count,
+    }
+
+    present_weight_sum = sum(
+        OVERALL_RATING_WEIGHTS[k] for k, v in components.items() if v is not None
+    )
+    if present_weight_sum > 0:
+        overall_pct = round(
+            sum(
+                OVERALL_RATING_WEIGHTS[k] * v
+                for k, v in components.items()
+                if v is not None
+            )
+            / present_weight_sum,
+            1,
+        )
+    else:
+        overall_pct = None
+
+    return {
+        "student_id": student_id,
+        "overall_percentage": overall_pct,
+        "breakdown": {
+            k: {
+                "weight": OVERALL_RATING_WEIGHTS[k],
+                "percentage": components[k],
+                "items_count": counts[k],
+            }
+            for k in OVERALL_RATING_WEIGHTS
+        },
+        "attendance_breakdown": att_breakdown,
+        "note": "التقييم تراكمي من أول ما الطالب اتسجل. أي بند مفيهوش بيانات لسه بيتم استبعاده وتوزيع وزنه على باقي البنود.",
+    }
+
+
+@app.get("/api/students/{student_id}/overall-rating")
+def get_student_overall_rating(student_id: int, session=Depends(get_current_session)):
+    """التقييم التراكمي الكلي للطالب (امتحانات 40% + كويزات 15% + واجبات 15% + تفاعل 15% + حضور والتزام 15%)."""
+    with get_connection() as conn:
+        student = conn.execute("SELECT * FROM students WHERE id=?", (student_id,)).fetchone()
+        if not student:
+            raise HTTPException(status_code=404, detail="الطالب غير موجود")
+        if session["role"] == "supervisor":
+            assert_supervisor_owns_group(conn, session, student["group_id"])
+        elif session["role"] == "student" and session["id"] != student_id:
+            raise HTTPException(status_code=403, detail="مش مسموح تشوف تقييم طالب تاني")
+
+        result = compute_student_overall_rating(conn, student_id)
+        result["student_name"] = student["full_name"]
+        return result
+
+
+@app.get("/api/groups/{group_id}/overall-ratings")
+def get_group_overall_ratings(group_id: int, session=Depends(get_current_session)):
+    """التقييم التراكمي لكل طلاب مجموعة معينة، مرتبين من الأعلى نسبة للأقل."""
+    with get_connection() as conn:
+        if session["role"] == "supervisor":
+            assert_supervisor_owns_group(conn, session, group_id)
+        elif session["role"] == "student":
+            raise HTTPException(status_code=403, detail="التقييم الجماعي متاح للمدرس والمشرف والأدمن بس")
+
+        students = conn.execute(
+            "SELECT id, full_name FROM students WHERE group_id = ? AND is_active = 1 ORDER BY full_name",
+            (group_id,),
+        ).fetchall()
+        results = []
+        for st in students:
+            r = compute_student_overall_rating(conn, st["id"])
+            results.append({
+                "student_id": st["id"],
+                "student_name": st["full_name"],
+                "overall_percentage": r["overall_percentage"],
+                "breakdown": r["breakdown"],
+            })
+        results.sort(key=lambda x: (x["overall_percentage"] is None, -(x["overall_percentage"] or 0)))
+        return results
+
+
+# ---------------------------------------------------------------------------
 # الواجبات - Homework
 # ---------------------------------------------------------------------------
 
@@ -5701,6 +5920,167 @@ def save_homework_submission(hw_id: int, data: HomeworkSubmissionIn,
             f"الحصة رقم {hw['session_number']}"
         )
         return {"message": "تم الحفظ"}
+
+
+# ---------------------------------------------------------------------------
+# استطلاعات رأي الطلاب - Surveys
+# الأدمن بيدوس "إرسال استطلاع رأي" فبيتبعت إشعار لكل الطلاب النشطين، وكل طالب
+# بيدخل يقيّم رضاه عن المنصة من 1 لـ 5 نجوم + يقدر يكتب ملاحظة/اقتراح تطوير.
+# ---------------------------------------------------------------------------
+
+@app.post("/api/surveys")
+def create_survey(data: SurveyIn, session=Depends(require_roles("admin"))):
+    """إنشاء استطلاع رأي جديد وإرساله فورًا لكل الطلاب النشطين (إشعار داخل التطبيق)"""
+    title = (data.title or "استطلاع رأي عن أداء المنصة").strip()
+    question = (data.question or "إيه رأيك في أداء المنصة والمتابعة معاك؟ ").strip()
+    with get_connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO surveys (title, question, created_by, is_active) VALUES (?, ?, ?, 1)",
+            (title, question, session["id"]),
+        )
+        survey_id = cur.lastrowid
+
+        students = conn.execute("SELECT id FROM students WHERE is_active = 1").fetchall()
+        for st in students:
+            create_notification(
+                conn, st["id"], f"📋 {title}",
+                f"{question} — ادخل قيّم رأيك، بياخد ثواني بس وهيفيدنا في التطوير."
+            )
+        return {
+            "id": survey_id,
+            "message": f"تم إرسال الاستطلاع لـ {len(students)} طالب",
+            "sent_to": len(students),
+        }
+
+
+@app.get("/api/surveys")
+def list_surveys(session=Depends(require_roles("admin", "head_supervisor", "teacher"))):
+    """قائمة كل الاستطلاعات مع نسبة الرضا وعدد الردود لكل واحد"""
+    with get_connection() as conn:
+        surveys = conn.execute("SELECT * FROM surveys ORDER BY created_at DESC").fetchall()
+        total_active_students = conn.execute(
+            "SELECT COUNT(*) as c FROM students WHERE is_active = 1"
+        ).fetchone()["c"]
+        result = []
+        for sv in surveys:
+            stats = conn.execute(
+                "SELECT COUNT(*) as cnt, AVG(rating) as avg_rating FROM survey_responses WHERE survey_id = ?",
+                (sv["id"],),
+            ).fetchone()
+            satisfaction_pct = round(stats["avg_rating"] / 5 * 100, 1) if stats["avg_rating"] else None
+            result.append({
+                **dict(sv),
+                "responses_count": stats["cnt"],
+                "total_sent": total_active_students,
+                "response_rate": round(stats["cnt"] / total_active_students * 100, 1) if total_active_students else 0,
+                "satisfaction_percentage": satisfaction_pct,
+            })
+        return result
+
+
+@app.get("/api/surveys/{survey_id}/results")
+def get_survey_results(survey_id: int, session=Depends(require_roles("admin", "head_supervisor", "teacher"))):
+    """نتائج تفصيلية لاستطلاع معين: نسبة الرضا + توزيع التقييمات + كل الملاحظات المكتوبة"""
+    with get_connection() as conn:
+        survey = conn.execute("SELECT * FROM surveys WHERE id = ?", (survey_id,)).fetchone()
+        if not survey:
+            raise HTTPException(status_code=404, detail="الاستطلاع غير موجود")
+
+        responses = conn.execute("""
+            SELECT sr.rating, sr.notes, sr.created_at, s.full_name as student_name, s.group_id,
+                   g.name as group_name
+            FROM survey_responses sr
+            JOIN students s ON s.id = sr.student_id
+            LEFT JOIN groups g ON g.id = s.group_id
+            WHERE sr.survey_id = ?
+            ORDER BY sr.created_at DESC
+        """, (survey_id,)).fetchall()
+        responses = [dict(r) for r in responses]
+
+        total_active_students = conn.execute(
+            "SELECT COUNT(*) as c FROM students WHERE is_active = 1"
+        ).fetchone()["c"]
+
+        rating_breakdown = {str(i): 0 for i in range(1, 6)}
+        for r in responses:
+            rating_breakdown[str(r["rating"])] += 1
+
+        avg_rating = round(sum(r["rating"] for r in responses) / len(responses), 2) if responses else None
+        satisfaction_pct = round(avg_rating / 5 * 100, 1) if avg_rating is not None else None
+        # راضيين = اللي بعتوا 4 أو 5 نجوم، مش راضيين = 1 أو 2، محايدين = 3
+        satisfied_count = sum(1 for r in responses if r["rating"] >= 4)
+        unsatisfied_count = sum(1 for r in responses if r["rating"] <= 2)
+        neutral_count = len(responses) - satisfied_count - unsatisfied_count
+
+        notes = [
+            {"student_name": r["student_name"], "group_name": r["group_name"],
+             "rating": r["rating"], "notes": r["notes"], "created_at": r["created_at"]}
+            for r in responses if r["notes"]
+        ]
+
+        return {
+            "survey": dict(survey),
+            "total_sent": total_active_students,
+            "responses_count": len(responses),
+            "response_rate": round(len(responses) / total_active_students * 100, 1) if total_active_students else 0,
+            "average_rating": avg_rating,
+            "satisfaction_percentage": satisfaction_pct,
+            "rating_breakdown": rating_breakdown,
+            "satisfied_count": satisfied_count,
+            "neutral_count": neutral_count,
+            "unsatisfied_count": unsatisfied_count,
+            "notes": notes,
+        }
+
+
+@app.put("/api/surveys/{survey_id}/close")
+def close_survey(survey_id: int, session=Depends(require_roles("admin"))):
+    """إقفال استطلاع (مايظهرش تاني للطلاب اللي لسه معملوش رد)"""
+    with get_connection() as conn:
+        survey = conn.execute("SELECT id FROM surveys WHERE id = ?", (survey_id,)).fetchone()
+        if not survey:
+            raise HTTPException(status_code=404, detail="الاستطلاع غير موجود")
+        conn.execute("UPDATE surveys SET is_active = 0 WHERE id = ?", (survey_id,))
+        return {"message": "تم إقفال الاستطلاع"}
+
+
+@app.get("/api/surveys/pending")
+def get_pending_survey(session=Depends(require_roles("student"))):
+    """بيرجع أحدث استطلاع نشط لسه الطالب معملوش عليه رد (أو null لو مفيش)"""
+    with get_connection() as conn:
+        row = conn.execute("""
+            SELECT sv.* FROM surveys sv
+            WHERE sv.is_active = 1
+              AND NOT EXISTS (
+                  SELECT 1 FROM survey_responses sr
+                  WHERE sr.survey_id = sv.id AND sr.student_id = ?
+              )
+            ORDER BY sv.created_at DESC
+            LIMIT 1
+        """, (session["id"],)).fetchone()
+        return dict(row) if row else None
+
+
+@app.post("/api/surveys/{survey_id}/respond")
+def respond_to_survey(survey_id: int, data: SurveyResponseIn, session=Depends(require_roles("student"))):
+    """رد الطالب على استطلاع الرأي - مرة واحدة بس لكل استطلاع"""
+    with get_connection() as conn:
+        survey = conn.execute("SELECT id, is_active FROM surveys WHERE id = ?", (survey_id,)).fetchone()
+        if not survey:
+            raise HTTPException(status_code=404, detail="الاستطلاع غير موجود")
+        if not survey["is_active"]:
+            raise HTTPException(status_code=400, detail="الاستطلاع ده مقفول")
+        existing = conn.execute(
+            "SELECT id FROM survey_responses WHERE survey_id=? AND student_id=?",
+            (survey_id, session["id"]),
+        ).fetchone()
+        if existing:
+            raise HTTPException(status_code=400, detail="أنت جاوبت على الاستطلاع ده قبل كده")
+        conn.execute(
+            "INSERT INTO survey_responses (survey_id, student_id, rating, notes) VALUES (?, ?, ?, ?)",
+            (survey_id, session["id"], data.rating, data.notes),
+        )
+        return {"message": "شكرًا لرأيك! 🙏"}
 
 
 # ---------------------------------------------------------------------------
