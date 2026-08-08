@@ -5883,19 +5883,42 @@ def compute_student_commitment(conn, student_id: int) -> dict:
         hw_pct, hw_count, missing_hw_count = None, 0, 0
 
     # ---- الحضور: بنفس أوزان ATTENDANCE_STATUS_CREDIT الموجودة فعلاً ----
-    att_rows = conn.execute(
-        "SELECT status FROM attendance WHERE student_id = ?", (student_id,)
+    # ملحوظة مهمة: مفيش جدول منفصل بيحصي "حصص المجموعة" زي الامتحانات/الواجبات،
+    # فبدل ما نعتمد على صفوف الطالب نفسه بس (لو معندوش ولا صف، ده مش معناه
+    # "لسه مفيش حصص" - ممكن يبقى معنى إن حد نساه من التحضير وهو فعليًا غايب)،
+    # بنحدد "حصص المجموعة" من كل صفوف الحضور المسجلة لأي طالب في نفس المجموعة،
+    # وأي حصة اتاخد فيها تحضير لغيره وهو معندوش صف فيها بتتحسب غياب فعلي (0%).
+    group_session_rows = conn.execute(
+        """
+        SELECT DISTINCT session_date, session_number
+        FROM attendance
+        WHERE student_id IN (SELECT id FROM students WHERE group_id = ?)
+        """,
+        (group_id,),
     ).fetchall()
-    if att_rows:
-        credit_sum = sum(ATTENDANCE_STATUS_CREDIT.get(r["status"], 0.0) for r in att_rows)
-        att_pct = round(credit_sum / len(att_rows) * 100, 1)
-        att_count = len(att_rows)
-        absences_count = sum(1 for r in att_rows if r["status"] == "absent")
+    if group_session_rows:
+        own_att = {
+            (r["session_date"], r["session_number"]): r["status"]
+            for r in conn.execute(
+                "SELECT session_date, session_number, status FROM attendance WHERE student_id = ?",
+                (student_id,),
+            ).fetchall()
+        }
+        credit_sum = 0.0
+        absences_count = 0
+        for s in group_session_rows:
+            key = (s["session_date"], s["session_number"])
+            status = own_att.get(key, "absent")  # حصة اتاخد فيها تحضير لغيره ومسجلش له = غياب
+            credit_sum += ATTENDANCE_STATUS_CREDIT.get(status, 0.0)
+            if status == "absent":
+                absences_count += 1
+        att_pct = round(credit_sum / len(group_session_rows) * 100, 1)
+        att_count = len(group_session_rows)
     else:
         att_pct, att_count, absences_count = None, 0, 0
 
     # ---- التفاعل: مبني على participation الموجود فعلاً، مطبّع بعدد حصص
-    # الحضور (أقصى نقطة ممكنة من الـ tick هي 1 لكل حصة) ----
+    # المجموعة (أقصى نقطة ممكنة من الـ tick هي 1 لكل حصة) ----
     part_row = conn.execute(
         "SELECT COALESCE(SUM(points), 0) as total FROM participation WHERE student_id = ?",
         (student_id,),
