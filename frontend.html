@@ -1252,6 +1252,7 @@ const NAV_BY_ROLE = {
     {id:"activity_log", label:"سجل الأنشطة", icon:"history"},
     {id:"fraud_alerts", label:"كشف التلاعب", icon:"shield-alert"},
     {id:"surveys", label:"استطلاعات رأي الطلاب", icon:"message-circle"},
+    {id:"student_commitment", label:"التزام الطلاب", icon:"shield-check"},
   ],
   teacher: [
     {id:"dashboard", label:"الرئيسية", icon:"layout-dashboard"},
@@ -1443,6 +1444,7 @@ const PAGE_TITLES = {
   online_exams_admin:"إدارة الامتحانات الإلكترونية", myexams:"كويزات",
   event_calendar:"التقويم",
   surveys:"استطلاعات رأي الطلاب",
+  student_commitment:"التزام الطلاب",
 };
 
 async function renderPage(page){
@@ -1503,6 +1505,7 @@ async function renderPage(page){
       myexams: renderMyExamsPage,
       event_calendar: renderEventCalendarPage,
       surveys: renderSurveysPage,
+      student_commitment: renderStudentCommitmentPage,
     };
     const fn = renderers[page];
     if (fn) await fn();
@@ -4289,6 +4292,132 @@ function deleteAllNeverEngagedStudents(){
   );
 }
 
+
+/* =====================================================================
+   التزام الطلاب - Student Commitment Percentage (أدمن فقط في المرحلة الأولى)
+   نظام مستقل عن "التقييم التراكمي" - completion-based (هل الطالب أدى
+   المطلوب منه ولا لأ) مش على أساس درجته. مش متاح لواجهة الطالب.
+===================================================================== */
+const COMMITMENT_LABELS = {
+  exams: {label: "الامتحانات الشاملة", icon: "file-check-2"},
+  quizzes: {label: "الكويزات", icon: "clipboard-check"},
+  homework: {label: "الواجبات", icon: "clipboard-list"},
+  attendance: {label: "الحضور والالتزام", icon: "calendar-check"},
+  interaction: {label: "التفاعل", icon: "sparkles"},
+};
+let COMMITMENT_CACHE = [];
+
+async function renderStudentCommitmentPage(){
+  const groups = await loadGroups();
+  CACHE_ALL_GROUPS = groups;
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>التزام الطلاب</h1><p>نسبة التزام كل طالب بناءً على إتمام المطلوب (حضور/تسليم) - مش على درجته الأكاديمية. مرئي للأدمن فقط</p></div>
+      <div class="header-actions">
+        <select class="form-select" id="commitmentGroupFilter" onchange="loadCommitmentTable()" style="min-width:200px;">
+          <option value="">كل المجموعات</option>
+          ${groupOptionsAll()}
+        </select>
+      </div>
+    </div>
+    <div class="table-card">
+      <div class="table-wrap"><table>
+        <thead><tr><th>#</th><th>الطالب</th><th>المجموعة</th><th>نسبة الالتزام</th><th></th></tr></thead>
+        <tbody id="commitmentTableBody"><tr><td colspan="5" class="loading-row"><span class="spinner"></span> بتحمّل...</td></tr></tbody>
+      </table></div>
+    </div>
+  `;
+  icons();
+  await loadCommitmentTable();
+}
+
+function getCommitmentGroupFilter(){
+  const sel = document.getElementById("commitmentGroupFilter");
+  return sel && sel.value ? sel.value : "";
+}
+
+async function loadCommitmentTable(){
+  const groupId = getCommitmentGroupFilter();
+  const qs = groupId ? `?group_id=${groupId}` : "";
+  let rows = [];
+  try{
+    rows = await api(`/api/admin/commitment${qs}`);
+  }catch(e){ rows = []; }
+  COMMITMENT_CACHE = rows;
+  const tbody = document.getElementById("commitmentTableBody");
+  if (!tbody) return;
+  tbody.innerHTML = rows.map((r,i)=>{
+    const pct = r.commitment_percentage;
+    const color = ratingColor(pct);
+    return `
+    <tr>
+      <td style="color:var(--text-3);font-family:monospace;font-size:12px;">${i+1}</td>
+      <td class="td-name">${escapeHtml(r.student_name)}</td>
+      <td>${escapeHtml(r.group_name || "-")}</td>
+      <td><span style="font-weight:700;color:${color};">${pct != null ? pct + '%' : '—'}</span></td>
+      <td><button class="btn btn-ghost btn-sm" onclick="openCommitmentDetail(${r.student_id})">التفاصيل</button></td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:24px;">مفيش طلاب</td></tr>`;
+  icons();
+}
+
+async function openCommitmentDetail(studentId){
+  let r;
+  try{
+    r = await api(`/api/students/${studentId}/commitment`);
+  }catch(e){ return; }
+  const pct = r.commitment_percentage;
+  const color = ratingColor(pct);
+  const rows = Object.keys(COMMITMENT_LABELS).map(key=>{
+    const b = r.breakdown[key];
+    const meta = COMMITMENT_LABELS[key];
+    const cpct = b.percentage;
+    const barColor = ratingColor(cpct);
+    return `
+      <div style="margin-bottom:10px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;font-size:12px;margin-bottom:4px;">
+          <div style="display:flex;align-items:center;gap:6px;color:var(--text-2);">
+            <i data-lucide="${meta.icon}" style="width:13px;height:13px;"></i>
+            ${meta.label} <span style="color:var(--text-3);">(وزنها ${b.weight}%)</span>
+          </div>
+          <div style="font-weight:700;color:${barColor};">${cpct != null ? cpct + '%' : 'لا يوجد بيانات بعد'}</div>
+        </div>
+        <div style="height:7px;border-radius:5px;background:var(--neutral-soft,#F2F1ED);overflow:hidden;">
+          <div style="height:100%;border-radius:5px;background:${barColor};width:${cpct != null ? Math.max(3,Math.min(100,cpct)) : 0}%;"></div>
+        </div>
+      </div>`;
+  }).join("");
+  const reasonsHtml = r.reasons && r.reasons.length ? `
+    <div style="margin-top:14px;padding:12px;border-radius:10px;background:var(--danger-bg,#FEF2F2);">
+      <div style="font-weight:700;font-size:12.5px;margin-bottom:6px;">أسباب نقص النسبة:</div>
+      <ul style="margin:0;padding-inline-start:18px;font-size:12px;color:var(--text-2);line-height:1.9;">
+        ${r.reasons.map(x=>`<li>${escapeHtml(x)}</li>`).join("")}
+      </ul>
+    </div>` : `<div style="margin-top:14px;text-align:center;color:var(--success);font-size:12.5px;">مفيش أي نقاط نقص - الطالب ملتزم بكل المطلوب منه 👌</div>`;
+
+  openModal(
+    `التزام الطالب: ${escapeHtml(r.student_name)}`,
+    `
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:16px;">
+        <div style="width:64px;height:64px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+                    background:conic-gradient(${color} ${pct != null ? Math.round(pct*3.6) : 0}deg, var(--neutral-soft,#F2F1ED) 0deg);">
+          <div style="width:50px;height:50px;border-radius:50%;background:var(--card-bg,#fff);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;color:${color};">
+            ${pct != null ? pct + '%' : '—'}
+          </div>
+        </div>
+        <div style="flex:1;font-size:11.5px;color:var(--text-3);line-height:1.6;">
+          مبنية على إتمام المطلوب (حضور/تسليم) مش على الدرجة الأكاديمية
+        </div>
+      </div>
+      ${rows}
+      ${reasonsHtml}
+    `,
+    `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`,
+    {width: "480px"}
+  );
+  icons();
+}
 
 function handleImportCsvFile(file){
   if (!file) return;

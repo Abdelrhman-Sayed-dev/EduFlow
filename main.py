@@ -5778,6 +5778,248 @@ def get_group_overall_ratings(group_id: int, session=Depends(get_current_session
 
 
 # ---------------------------------------------------------------------------
+# نسبة التزام الطالب - Student Commitment Percentage
+# ---------------------------------------------------------------------------
+# نظام مستقل تمامًا عن "التقييم التراكمي" (compute_student_overall_rating) اللي
+# فوق ده. الفرق الجوهري: النظام ده completion-based مش grade-based - يعني
+# بيقيس "هل الطالب أدى المطلوب منه" مش "قد إيه درجته"، فمثلاً طالب حضر امتحان
+# وجاب 20% وطالب تاني حضر نفس الامتحان وجاب 90% الاتنين ياخدوا نفس نسبة
+# الالتزام الخاصة بالامتحان ده لأن الاتنين حضروا وأدوه.
+#
+# الطالب يبدأ افتراضيًا من 100% ويخسر جزء من النسبة لما يفوّت حاجة مطلوبة منه:
+#   - 30% الامتحانات الشاملة (quiz_type='exam') - حضر وله درجة مسجلة = كامل
+#   - 20% الكويزات (quiz_type='quiz') - نفس المنطق
+#   - 20% الواجبات (homework) - submitted (done=1) = كامل
+#   - 20% الحضور - بنفس أوزان ATTENDANCE_STATUS_CREDIT الموجودة فعلاً
+#     (present=100%, late=75%, excused=90%, absent=0%)
+#   - 10% التفاعل (Interaction) - مبني على participation الموجود فعلاً (نفس
+#     الجدول ونفس طريقة تسجيل النقاط بالـ tick)، مطبّع كنسبة من عدد حصص
+#     الحضور المسجلة للطالب (أقصى نقطة ممكنة من الـ tick هي 1 لكل حصة)
+#
+# لو بند معينمفيهوش أي بيانات خالص (مثلاً لسه مفيش امتحانات شاملة اتعملت)
+# بيتشال من الحساب ووزنه بيتوزع على باقي البنود المتاحة تلقائيًا، بنفس أسلوب
+# compute_student_overall_rating فوق (إعادة توزيع نسبي عن طريق القسمة على
+# مجموع الأوزان المتاحة بدل الـ 100 الثابتة).
+# ---------------------------------------------------------------------------
+
+COMMITMENT_WEIGHTS = {
+    "exams": 30,
+    "quizzes": 20,
+    "homework": 20,
+    "attendance": 20,
+    "interaction": 10,
+}
+
+COMMITMENT_CATEGORY_LABELS = {
+    "exams": "الامتحانات الشاملة",
+    "quizzes": "الكويزات",
+    "homework": "الواجبات",
+    "attendance": "الحضور والالتزام",
+    "interaction": "التفاعل",
+}
+
+
+def compute_student_commitment(conn, student_id: int) -> dict:
+    """يحسب نسبة التزام الطالب (Commitment %) - completion-based مش grade-based.
+    الطالب يبدأ من 100% ويخسر جزء لكل حاجة مطلوبة منه ومعملهاش."""
+    student = conn.execute(
+        "SELECT s.*, g.stage_id FROM students s JOIN groups g ON g.id = s.group_id WHERE s.id = ?",
+        (student_id,),
+    ).fetchone()
+    if not student:
+        raise HTTPException(status_code=404, detail="الطالب غير موجود")
+
+    group_id = student["group_id"]
+    stage_id = student["stage_id"]
+
+    def _completion_component(quiz_type: str):
+        """بيرجع (نسبة الإتمام, تفاصيل الامتحانات/الكويزات المفوّتة) لنوع معين.
+        حضر وله score مسجل (status != absent) = كامل، غير كده (غاب أو معملوش
+        خالص) = صفر - بغض النظر عن قد إيه درجته."""
+        rows = conn.execute(
+            """
+            SELECT q.id, q.title, q.quiz_date, qs.score, qs.status
+            FROM quizzes q
+            LEFT JOIN quiz_scores qs ON qs.quiz_id = q.id AND qs.student_id = ?
+            WHERE q.quiz_type = ?
+              AND ((q.group_id IS NULL AND q.stage_id IS NULL)
+                   OR q.group_id = ?
+                   OR q.stage_id = ?)
+            ORDER BY q.quiz_date
+            """,
+            (student_id, quiz_type, group_id, stage_id),
+        ).fetchall()
+        if not rows:
+            return None, 0, []
+        completed = 0
+        missed = []
+        for r in rows:
+            if r["status"] == "absent" or r["score"] is None:
+                missed.append(r["title"])
+            else:
+                completed += 1
+        pct = round(completed / len(rows) * 100, 1)
+        return pct, len(rows), missed
+
+    exam_pct, exam_count, missed_exams = _completion_component("exam")
+    quiz_pct, quiz_count, missed_quizzes = _completion_component("quiz")
+
+    # ---- الواجبات: submitted (done=1) = كامل ----
+    hw_rows = conn.execute(
+        """
+        SELECT h.id, h.description, hs.done
+        FROM homework h
+        LEFT JOIN homework_submissions hs ON hs.homework_id = h.id AND hs.student_id = ?
+        WHERE h.group_id = ?
+        """,
+        (student_id, group_id),
+    ).fetchall()
+    if hw_rows:
+        done_count = sum(1 for r in hw_rows if r["done"])
+        hw_pct = round(done_count / len(hw_rows) * 100, 1)
+        hw_count = len(hw_rows)
+        missing_hw_count = len(hw_rows) - done_count
+    else:
+        hw_pct, hw_count, missing_hw_count = None, 0, 0
+
+    # ---- الحضور: بنفس أوزان ATTENDANCE_STATUS_CREDIT الموجودة فعلاً ----
+    att_rows = conn.execute(
+        "SELECT status FROM attendance WHERE student_id = ?", (student_id,)
+    ).fetchall()
+    if att_rows:
+        credit_sum = sum(ATTENDANCE_STATUS_CREDIT.get(r["status"], 0.0) for r in att_rows)
+        att_pct = round(credit_sum / len(att_rows) * 100, 1)
+        att_count = len(att_rows)
+        absences_count = sum(1 for r in att_rows if r["status"] == "absent")
+    else:
+        att_pct, att_count, absences_count = None, 0, 0
+
+    # ---- التفاعل: مبني على participation الموجود فعلاً، مطبّع بعدد حصص
+    # الحضور (أقصى نقطة ممكنة من الـ tick هي 1 لكل حصة) ----
+    part_row = conn.execute(
+        "SELECT COALESCE(SUM(points), 0) as total FROM participation WHERE student_id = ?",
+        (student_id,),
+    ).fetchone()
+    interaction_points = part_row["total"] or 0
+    if att_count > 0:
+        interaction_pct = round(min(100.0, interaction_points / att_count * 100), 1)
+    else:
+        interaction_pct = None
+
+    components = {
+        "exams": exam_pct,
+        "quizzes": quiz_pct,
+        "homework": hw_pct,
+        "attendance": att_pct,
+        "interaction": interaction_pct,
+    }
+    counts = {
+        "exams": exam_count,
+        "quizzes": quiz_count,
+        "homework": hw_count,
+        "attendance": att_count,
+        "interaction": att_count,
+    }
+
+    present_weight_sum = sum(
+        COMMITMENT_WEIGHTS[k] for k, v in components.items() if v is not None
+    )
+    if present_weight_sum > 0:
+        commitment_pct = round(
+            sum(
+                COMMITMENT_WEIGHTS[k] * v
+                for k, v in components.items()
+                if v is not None
+            )
+            / present_weight_sum,
+            1,
+        )
+    else:
+        commitment_pct = None
+
+    # ---- أسباب نقص النسبة (للعرض في الـ UI) ----
+    reasons = []
+    for title in missed_exams:
+        reasons.append(f"لم يحضر الامتحان الشامل: {title}")
+    for title in missed_quizzes:
+        reasons.append(f"لم يعمل الكويز: {title}")
+    if missing_hw_count > 0:
+        reasons.append(f"{missing_hw_count} واجب لم يُسلَّم")
+    if absences_count > 0:
+        reasons.append(f"{absences_count} غياب عن الحصص")
+
+    return {
+        "student_id": student_id,
+        "commitment_percentage": commitment_pct,
+        "breakdown": {
+            k: {
+                "weight": COMMITMENT_WEIGHTS[k],
+                "percentage": components[k],
+                "weighted_score": round(COMMITMENT_WEIGHTS[k] * components[k] / 100, 1) if components[k] is not None else None,
+                "items_count": counts[k],
+            }
+            for k in COMMITMENT_WEIGHTS
+        },
+        "interaction_points": interaction_points,
+        "reasons": reasons,
+        "note": "نسبة الالتزام مبنية على إتمام المطلوب (حضور/تسليم) مش على الدرجة. أي بند مفيهوش بيانات لسه بيتم استبعاده وتوزيع وزنه على باقي البنود.",
+    }
+
+
+@app.get("/api/students/{student_id}/commitment")
+def get_student_commitment(student_id: int, session=Depends(require_roles("admin"))):
+    """نسبة التزام الطالب بالتفصيل - للأدمن فقط في المرحلة الأولى."""
+    with get_connection() as conn:
+        student = conn.execute(
+            "SELECT s.*, g.name as group_name FROM students s JOIN groups g ON g.id = s.group_id WHERE s.id=?",
+            (student_id,),
+        ).fetchone()
+        if not student:
+            raise HTTPException(status_code=404, detail="الطالب غير موجود")
+
+        result = compute_student_commitment(conn, student_id)
+        result["student_name"] = student["full_name"]
+        result["group_name"] = student["group_name"]
+        return result
+
+
+@app.get("/api/admin/commitment")
+def list_students_commitment(group_id: Optional[int] = None, stage_id: Optional[int] = None,
+                              session=Depends(require_roles("admin"))):
+    """قائمة كل الطلاب النشطين ونسبة التزام كل واحد فيهم، مرتبين من الأقل للأعلى
+    (عشان الأدمن يلاقي الطلاب اللي محتاجين متابعة بسرعة). للأدمن فقط."""
+    with get_connection() as conn:
+        query = """
+            SELECT s.id, s.full_name, s.group_id, g.name as group_name, g.stage_id
+            FROM students s JOIN groups g ON g.id = s.group_id
+            WHERE s.is_active = 1
+        """
+        params = []
+        if group_id:
+            query += " AND s.group_id = ?"
+            params.append(group_id)
+        if stage_id:
+            query += " AND g.stage_id = ?"
+            params.append(stage_id)
+        query += " ORDER BY s.full_name"
+        students = conn.execute(query, params).fetchall()
+
+        results = []
+        for st in students:
+            r = compute_student_commitment(conn, st["id"])
+            results.append({
+                "student_id": st["id"],
+                "student_name": st["full_name"],
+                "group_id": st["group_id"],
+                "group_name": st["group_name"],
+                "commitment_percentage": r["commitment_percentage"],
+                "breakdown": r["breakdown"],
+            })
+        results.sort(key=lambda x: (x["commitment_percentage"] is None, x["commitment_percentage"] or 0))
+        return results
+
+
+# ---------------------------------------------------------------------------
 # الواجبات - Homework
 # ---------------------------------------------------------------------------
 
