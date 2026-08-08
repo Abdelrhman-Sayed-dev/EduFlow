@@ -299,6 +299,7 @@ class QuizScoreIn(BaseModel):
     quiz_id: int
     score: float
     notes: Optional[str] = Field(None, max_length=2000)
+    status: str = "present"  # present / absent (متغيب عن أداء الامتحان)
 
 
 class AttendanceIn(BaseModel):
@@ -2892,7 +2893,7 @@ def get_quiz_scores(quiz_id: int, session=Depends(get_current_session)):
 
         if quiz["group_id"]:
             rows = conn.execute("""
-                SELECT s.id as student_id, s.full_name, s.attendance_code, qs.score, qs.notes, qs.id as score_id
+                SELECT s.id as student_id, s.full_name, s.attendance_code, qs.score, qs.notes, qs.status, qs.id as score_id
                 FROM students s
                 LEFT JOIN quiz_scores qs ON qs.student_id = s.id AND qs.quiz_id = ?
                 WHERE s.group_id = ? AND s.is_active=1
@@ -2900,7 +2901,7 @@ def get_quiz_scores(quiz_id: int, session=Depends(get_current_session)):
             """, (quiz_id, quiz["group_id"])).fetchall()
         elif quiz["stage_id"]:
             base_query = """
-                SELECT s.id as student_id, s.full_name, s.attendance_code, qs.score, qs.notes, qs.id as score_id,
+                SELECT s.id as student_id, s.full_name, s.attendance_code, qs.score, qs.notes, qs.status, qs.id as score_id,
                        s.group_id, g.name as group_name
                 FROM students s
                 JOIN groups g ON g.id = s.group_id
@@ -2918,7 +2919,7 @@ def get_quiz_scores(quiz_id: int, session=Depends(get_current_session)):
             rows = conn.execute(base_query, params).fetchall()
         else:
             base_query = """
-                SELECT s.id as student_id, s.full_name, s.attendance_code, qs.score, qs.notes, qs.id as score_id,
+                SELECT s.id as student_id, s.full_name, s.attendance_code, qs.score, qs.notes, qs.status, qs.id as score_id,
                        s.group_id, g.name as group_name
                 FROM students s
                 JOIN groups g ON g.id = s.group_id
@@ -2957,25 +2958,31 @@ def set_score(score: QuizScoreIn, session=Depends(require_roles("admin", "head_s
                 if not grp or grp["stage_id"] != quiz["stage_id"]:
                     raise HTTPException(status_code=403, detail="الكويز ده مش لمرحلة مجموعتك")
 
+        status = score.status if score.status in ("present", "absent") else "present"
+        # الطالب المتغيب عن أداء الامتحان بتتسجل درجته صفر إجباريًا (بغض النظر عن أي قيمة اتبعتت)
+        final_score = 0.0 if status == "absent" else score.score
+
         is_new = conn.execute(
             "SELECT id FROM quiz_scores WHERE student_id=? AND quiz_id=?", (score.student_id, score.quiz_id)
         ).fetchone() is None
 
         conn.execute("""
-            INSERT INTO quiz_scores (student_id, quiz_id, score, notes)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO quiz_scores (student_id, quiz_id, score, notes, status)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(student_id, quiz_id)
-            DO UPDATE SET score=excluded.score, notes=excluded.notes
-        """, (score.student_id, score.quiz_id, score.score, score.notes))
+            DO UPDATE SET score=excluded.score, notes=excluded.notes, status=excluded.status
+        """, (score.student_id, score.quiz_id, final_score, score.notes, status))
 
+        notif_text = "متغيب عن الامتحان (0 درجة)" if status == "absent" else f"{quiz['title']}: {final_score} / {quiz['max_score']}"
         create_notification(
             conn, score.student_id,
             "تمت إضافة درجة جديدة ✅" if is_new else "تم تعديل درجتك 📝",
-            f"{quiz['title']}: {score.score} / {quiz['max_score']}"
+            notif_text
         )
         log_session_activity(
             conn, session, "quiz_score",
-            f"رصد درجة لطالب #{score.student_id} في \"{quiz['title']}\": {score.score}/{quiz['max_score']}",
+            (f"تسجيل غياب لطالب #{score.student_id} عن \"{quiz['title']}\"" if status == "absent"
+             else f"رصد درجة لطالب #{score.student_id} في \"{quiz['title']}\": {final_score}/{quiz['max_score']}"),
             group_id=student["group_id"]
         )
         return {"message": "تم حفظ الدرجة"}
@@ -5609,7 +5616,7 @@ def compute_student_overall_rating(conn, student_id: int) -> dict:
         للطالب بيتحسب صفر (يعني معملش الامتحان ده)."""
         rows = conn.execute(
             """
-            SELECT q.max_score, qs.score
+            SELECT q.max_score, qs.score, qs.status
             FROM quizzes q
             LEFT JOIN quiz_scores qs ON qs.quiz_id = q.id AND qs.student_id = ?
             WHERE q.quiz_type = ?
@@ -5623,7 +5630,11 @@ def compute_student_overall_rating(conn, student_id: int) -> dict:
             return None, 0
         pcts = []
         for r in rows:
-            if r["score"] is not None and r["max_score"]:
+            # الطالب المتغيب عن أداء الامتحان (status='absent') بياخد صفر دايمًا،
+            # وكمان لو مفيش درجة مسجلة له خالص (لم تُرصد بعد أو غاب) بتتحسب صفر.
+            if r["status"] == "absent":
+                pcts.append(0.0)
+            elif r["score"] is not None and r["max_score"]:
                 pcts.append(max(0.0, min(100.0, r["score"] / r["max_score"] * 100)))
             else:
                 pcts.append(0.0)  # لم يحضر/لم تُسجل له درجة = صفر في هذا الامتحان

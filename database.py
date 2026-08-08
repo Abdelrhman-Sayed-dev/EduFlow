@@ -588,11 +588,15 @@ def init_db():
             quiz_id INTEGER NOT NULL,
             score REAL NOT NULL,
             notes TEXT,
+            status TEXT NOT NULL DEFAULT 'present',
             FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
             FOREIGN KEY (quiz_id) REFERENCES quizzes(id) ON DELETE CASCADE,
             UNIQUE(student_id, quiz_id)
         )
         """)
+        # عمود حالة الطالب في الامتحان/الكويز: present (حاضر وأدى) أو absent (متغيب عن الأداء).
+        # الطالب المتغيب بتتسجل درجته صفر تلقائيًا وتنقص من نسبة الامتحانات (40%) في التقييم التراكمي.
+        _safe_alter(cur, "ALTER TABLE quiz_scores ADD COLUMN status TEXT NOT NULL DEFAULT 'present'")
 
         # جدول الحضور والغياب - بيسمح بأكتر من حصة لنفس الطالب في نفس اليوم
         cur.execute("""

@@ -269,6 +269,10 @@ tbody tr:hover{background:var(--primary-10);}
 .qs-name-cell{display:flex;align-items:center;gap:10px;}
 .qs-code-cell{font-size:12.5px;color:var(--text-2);font-weight:600;}
 .qs-score-input{width:76px;height:38px;text-align:center;display:inline-block;}
+.qs-score-input:disabled{background:var(--surface-3);color:var(--text-3);cursor:not-allowed;}
+.qs-score-cell{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.qs-absent-btn{height:30px;padding:0 10px;font-size:11px;}
+.qs-absent-badge{display:inline-flex;align-items:center;gap:5px;background:var(--danger-bg);color:#991B1B;font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:99px;}
 .qs-row-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;}
 .qs-kebab{width:32px;height:32px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface);color:var(--text-2);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:background .1s var(--ease);}
 .qs-kebab:hover{background:var(--surface-3);color:var(--text);}
@@ -5447,8 +5451,13 @@ function qsRenderRows(){
         </td>
         ${showGroupCol ? `<td><span class="badge badge-teal">${escapeHtml(r.group_name||"—")}</span></td>` : ""}
         <td>${st.canEdit
-          ? `<input class="form-input qs-score-input" id="score_${r.student_id}" type="number" max="${st.maxScore}" min="0" value="${r.score??''}" onkeydown="if(event.key==='Enter'){event.preventDefault();saveQuizScore(${st.quizId}, ${r.student_id}, this.value, this)}"> / ${st.maxScore}`
-          : `${r.score ?? "—"} / ${st.maxScore}`
+          ? `<div class="qs-score-cell">
+               <input class="form-input qs-score-input" id="score_${r.student_id}" type="number" max="${st.maxScore}" min="0"
+                 value="${r.status==='absent' ? '' : (r.score??'')}" ${r.status==='absent' ? 'disabled' : ''}
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();saveQuizScore(${st.quizId}, ${r.student_id}, this.value, this)}"> / ${st.maxScore}
+               <button type="button" class="pill-btn qs-absent-btn ${r.status==='absent' ? 'active' : ''}" data-status="absent" data-student="${r.student_id}" onclick="qsToggleAbsent(${r.student_id}, this)"><span class="dot"></span>غائب</button>
+             </div>`
+          : (r.status==='absent' ? `<span class="qs-absent-badge"><i data-lucide="user-x" style="width:12px;height:12px;"></i>غائب</span>` : `${r.score ?? "—"} / ${st.maxScore}`)
         }</td>
         ${st.canEdit ? `
           <td>
@@ -5463,33 +5472,60 @@ function qsRenderRows(){
 
 function qsClearScoreInput(studentId){
   const el = document.getElementById(`score_${studentId}`);
-  if (el) el.value = "";
+  if (el) { el.value = ""; el.disabled = false; }
+  const btn = document.querySelector(`.qs-absent-btn[data-student="${studentId}"]`);
+  if (btn) btn.classList.remove("active");
+  if (QS_STATE) { const row = QS_STATE.rows.find(r=>r.student_id===studentId); if (row) row.status = "present"; }
+}
+
+function qsToggleAbsent(studentId, btnEl){
+  const nowAbsent = !btnEl.classList.contains("active");
+  btnEl.classList.toggle("active", nowAbsent);
+  const input = document.getElementById(`score_${studentId}`);
+  if (input) {
+    input.disabled = nowAbsent;
+    if (nowAbsent) input.value = "";
+  }
+  if (QS_STATE) {
+    const row = QS_STATE.rows.find(r=>r.student_id===studentId);
+    if (row) row.status = nowAbsent ? "absent" : "present";
+  }
 }
 
 async function saveQuizScore(quizId, studentId, value, inputEl){
-  if (value === "") { showToast("لازم تكتب الدرجة الأول", "error"); return; }
-  const score = parseFloat(value);
-  if (isNaN(score)) { showToast("الدرجة مش صح", "error"); return; }
-  await api("/api/scores", {method:"POST", body: JSON.stringify({quiz_id: quizId, student_id: studentId, score})});
-  if (QS_STATE) { const row = QS_STATE.rows.find(r=>r.student_id===studentId); if (row) row.score = score; }
-  showToast("تم حفظ الدرجة ✅", "success");
+  const row = QS_STATE && QS_STATE.rows.find(r=>r.student_id===studentId);
+  const isAbsent = row && row.status === "absent";
+  let score = 0;
+  if (!isAbsent) {
+    if (value === "") { showToast("لازم تكتب الدرجة الأول", "error"); return; }
+    score = parseFloat(value);
+    if (isNaN(score)) { showToast("الدرجة مش صح", "error"); return; }
+  }
+  await api("/api/scores", {method:"POST", body: JSON.stringify({quiz_id: quizId, student_id: studentId, score, status: isAbsent ? "absent" : "present"})});
+  if (row) row.score = score;
+  showToast(isAbsent ? "تم تسجيل الطالب متغيب ✅" : "تم حفظ الدرجة ✅", "success");
   if (inputEl) { inputEl.style.borderColor = "var(--success)"; setTimeout(()=>{ inputEl.style.borderColor=""; }, 1500); }
 }
 
 async function saveAllQuizScores(){
   if (!QS_STATE) return;
   const toSave = QS_STATE.rows.filter(r=>{
+    if (r.status === "absent") return true;
     const el = document.getElementById(`score_${r.student_id}`);
     return el && el.value !== "";
   });
   if (!toSave.length) { showToast("مفيش درجات متكتوبة", "error"); return; }
   let ok = 0, fail = 0;
   for (const r of toSave){
-    const el = document.getElementById(`score_${r.student_id}`);
-    const score = parseFloat(el.value);
-    if (isNaN(score)) { fail++; continue; }
+    const isAbsent = r.status === "absent";
+    let score = 0;
+    if (!isAbsent) {
+      const el = document.getElementById(`score_${r.student_id}`);
+      score = parseFloat(el.value);
+      if (isNaN(score)) { fail++; continue; }
+    }
     try {
-      await api("/api/scores", {method:"POST", body: JSON.stringify({quiz_id: QS_STATE.quizId, student_id: r.student_id, score})});
+      await api("/api/scores", {method:"POST", body: JSON.stringify({quiz_id: QS_STATE.quizId, student_id: r.student_id, score, status: isAbsent ? "absent" : "present"})});
       r.score = score;
       ok++;
     } catch(e){ fail++; }
