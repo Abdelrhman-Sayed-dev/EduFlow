@@ -9001,12 +9001,12 @@ function surveyRatingDistHtml(q){
     const cnt = q.rating_breakdown[String(star)] || 0;
     const pct = Math.round(cnt / total * 100);
     return `
-      <div style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:5px;">
-        <div style="width:36px;flex-shrink:0;">${"⭐".repeat(star)}</div>
+      <div style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:6px;" dir="ltr">
+        <div style="width:14px;flex-shrink:0;color:var(--text-3);text-align:left;">${cnt}</div>
         <div style="flex:1;height:7px;border-radius:5px;background:var(--neutral-soft,#F2F1ED);overflow:hidden;">
           <div style="height:100%;border-radius:5px;background:${ratingColor(star/5*100)};width:${pct}%;"></div>
         </div>
-        <div style="width:34px;flex-shrink:0;color:var(--text-3);text-align:left;">${cnt}</div>
+        <div style="width:90px;flex-shrink:0;white-space:nowrap;letter-spacing:-2px;font-size:11px;text-align:left;">${"⭐".repeat(star)}</div>
       </div>`;
   }).join("");
 }
@@ -9067,10 +9067,20 @@ async function openSurveyResultsModal(surveyId){
     ${r.questions.map((q, i) => surveyQuestionResultHtml(q, i)).join("")}
     `,
     `${r.survey.is_active ? `<button class="btn btn-ghost" onclick="closeSurveyAndRefresh(${r.survey.id})">إقفال الاستطلاع</button>` : ""}
+     <button class="btn btn-ghost" style="color:var(--danger,#DC2626);" onclick="deleteSurveyAndRefresh(${r.survey.id})"><i data-lucide="trash-2" style="width:14px;height:14px;"></i> حذف الاستطلاع</button>
      <button class="btn btn-primary" onclick="closeOverlay('genericModal')">تمام</button>`,
     {width: "580px"}
   );
   icons();
+}
+
+async function deleteSurveyAndRefresh(surveyId){
+  confirmAction("حذف الاستطلاع", "هيتم حذف الاستطلاع وكل ردود الطلاب عليه نهائيًا ومش هترجع تاني. متأكد؟", async ()=>{
+    await api(`/api/surveys/${surveyId}`, {method:"DELETE"});
+    closeOverlay("genericModal");
+    showToast("تم حذف الاستطلاع", "success");
+    renderSurveysPage();
+  });
 }
 
 async function closeSurveyAndRefresh(surveyId){
