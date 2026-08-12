@@ -6427,6 +6427,17 @@ def get_survey_results(survey_id: int, session=Depends(require_roles("admin", "h
         }
 
 
+@app.delete("/api/surveys/{survey_id}")
+def delete_survey(survey_id: int, session=Depends(require_roles("admin"))):
+    """حذف استطلاع نهائيًا مع كل أسئلته وردود الطلاب عليه"""
+    with get_connection() as conn:
+        survey = conn.execute("SELECT id FROM surveys WHERE id = ?", (survey_id,)).fetchone()
+        if not survey:
+            raise HTTPException(status_code=404, detail="الاستطلاع غير موجود")
+        conn.execute("DELETE FROM surveys WHERE id = ?", (survey_id,))
+        return {"message": "تم حذف الاستطلاع"}
+
+
 @app.put("/api/surveys/{survey_id}/close")
 def close_survey(survey_id: int, session=Depends(require_roles("admin"))):
     """إقفال استطلاع (مايظهرش تاني للطلاب اللي لسه معملوش رد)"""
