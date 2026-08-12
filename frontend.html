@@ -8820,7 +8820,7 @@ async function renderSurveysPage(){
 
   c.innerHTML = `
     <div class="page-header">
-      <div><h1>استطلاعات رأي الطلاب</h1><p>ابعت استطلاع لكل الطلاب النشطين واعرف رضاهم عن أداء المنصة بالنسبة، وأي ملاحظات لتطويرها</p></div>
+      <div><h1>استطلاعات رأي الطلاب</h1><p>ابعت استطلاع بأسئلتك أنت لكل الطلاب أو لمجموعة معينة، واعرف رضاهم عن أداء المنصة وأي ملاحظات لتطويرها</p></div>
       <div class="header-actions">
         <button class="btn btn-primary btn-sm" onclick="openSendSurveyModal()"><i data-lucide="send" style="width:14px;height:14px;"></i> إرسال استطلاع رأي جديد</button>
       </div>
@@ -8828,19 +8828,21 @@ async function renderSurveysPage(){
     <div class="table-card">
       <div class="toolbar"><b style="font-size:14px;">الاستطلاعات المرسلة</b></div>
       <div class="table-wrap"><table>
-        <thead><tr><th>العنوان</th><th>تاريخ الإرسال</th><th>نسبة الردود</th><th>نسبة الرضا</th><th>الحالة</th><th></th></tr></thead>
+        <thead><tr><th>العنوان</th><th>المستهدفين</th><th>الأسئلة</th><th>تاريخ الإرسال</th><th>نسبة الردود</th><th>نسبة الرضا</th><th>الحالة</th><th></th></tr></thead>
         <tbody>
           ${surveys.map(s=>{
             const satColor = ratingColor(s.satisfaction_percentage);
             return `<tr style="cursor:pointer;" onclick="openSurveyResultsModal(${s.id})">
               <td class="td-name">${escapeHtml(s.title)}</td>
+              <td style="font-size:12px;color:var(--text-2);">${escapeHtml(s.target_label||"")}</td>
+              <td>${s.questions_count} سؤال</td>
               <td>${(s.created_at||"").slice(0,10)}</td>
               <td>${s.responses_count} / ${s.total_sent} (${s.response_rate}%)</td>
               <td style="font-weight:700;color:${satColor};">${s.satisfaction_percentage != null ? s.satisfaction_percentage + '%' : '—'}</td>
               <td><span class="badge ${s.is_active ? 'badge-green' : 'badge-gray'}">${s.is_active ? 'شغال' : 'مقفول'}</span></td>
               <td style="text-align:left;"><i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i></td>
             </tr>`;
-          }).join("") || `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:24px;">لسه معملتش أي استطلاع رأي</td></tr>`}
+          }).join("") || `<tr><td colspan="8" style="text-align:center;color:var(--text-3);padding:24px;">لسه معملتش أي استطلاع رأي</td></tr>`}
         </tbody>
       </table></div>
     </div>
@@ -8848,7 +8850,16 @@ async function renderSurveysPage(){
   icons();
 }
 
+// قايمة السؤال-بالسؤال بتتبني في الميموري وقت فتح مودال الإرسال، وكل سؤال ليه
+// آي دي مؤقت محلي (مش آي دي من قاعدة البيانات) عشان نقدر نضيف/نشيل أسطر بسهولة
+let SURVEY_BUILDER_QUESTIONS = [];
+let SURVEY_BUILDER_NEXT_ID = 1;
+let SURVEY_BUILDER_GROUPS = []; // كل المجموعات المتاحة، بتتحمل مرة واحدة وقت فتح المودال
+
 function openSendSurveyModal(){
+  SURVEY_BUILDER_QUESTIONS = [
+    {id: SURVEY_BUILDER_NEXT_ID++, text: "", type: "rating"},
+  ];
   openModal(
     `<i data-lucide="message-circle" style="width:17px;height:17px;"></i> إرسال استطلاع رأي جديد`,
     `
@@ -8857,35 +8868,137 @@ function openSendSurveyModal(){
       <input id="sv_title" class="form-input" placeholder="استطلاع رأي عن أداء المنصة" maxlength="200">
     </div>
     <div class="form-group">
-      <label class="form-label">السؤال اللي هيظهر للطالب (اختياري)</label>
-      <textarea id="sv_question" class="form-input" rows="3" maxlength="500" placeholder="إيه رأيك في أداء المنصة والمتابعة معاك؟"></textarea>
+      <label class="form-label">هيتبعت لمين؟ <span class="req">*</span></label>
+      <div style="display:flex;gap:8px;margin-bottom:8px;">
+        <button type="button" class="btn btn-sm" id="svTargetBtnAll" onclick="setSurveyTargetMode('all')" style="flex:1;">كل الطلاب</button>
+        <button type="button" class="btn btn-sm" id="svTargetBtnGroups" onclick="setSurveyTargetMode('groups')" style="flex:1;">مجموعات معينة</button>
+      </div>
+      <div id="svGroupsWrap" style="display:none;max-height:170px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-md);padding:4px 10px;">
+        <div style="font-size:12px;color:var(--text-3);padding:8px 0;">بيتحمّل...</div>
+      </div>
+      <div class="form-hint" id="svTargetHint">هيتبعت لكل الطلاب النشطين</div>
     </div>
-    <div style="font-size:12px;color:var(--text-3);line-height:1.7;">
-      هيتبعت إشعار فوري لكل الطلاب النشطين، وهيقيّموا رضاهم من 1 لـ 5 نجوم + يقدروا يكتبوا ملاحظة/اقتراح تطوير.
+    <div class="form-group">
+      <label class="form-label">الأسئلة <span class="req">*</span></label>
+      <div id="svQuestionsWrap"></div>
+      <button type="button" class="btn btn-sm" style="margin-top:6px;" onclick="addSurveyQuestionRow()"><i data-lucide="plus" style="width:13px;height:13px;"></i> إضافة سؤال</button>
+      <div class="form-hint">كل سؤال تقدر تختاره "تقييم بالنجوم" (الطالب يقيّم من 1 لـ 5) أو "سؤال مفتوح" (الطالب يكتب إجابة نصية)</div>
     </div>
     `,
     `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
-     <button class="btn btn-primary" onclick="submitSendSurvey()"><i data-lucide="send" style="width:14px;height:14px;"></i> إرسال دلوقتي</button>`
+     <button class="btn btn-primary" onclick="submitSendSurvey()"><i data-lucide="send" style="width:14px;height:14px;"></i> إرسال دلوقتي</button>`,
+    {width: "560px"}
   );
+  renderSurveyQuestionsBuilder();
+  setSurveyTargetMode("all");
+  loadSurveyBuilderGroups();
+  icons();
+}
+
+async function loadSurveyBuilderGroups(){
+  SURVEY_BUILDER_GROUPS = await loadGroups();
+  const wrap = document.getElementById("svGroupsWrap");
+  if (!wrap) return;
+  wrap.innerHTML = SURVEY_BUILDER_GROUPS.length ? SURVEY_BUILDER_GROUPS.map(g => `
+    <label style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--border);font-size:13px;cursor:pointer;">
+      <input type="checkbox" class="sv_group_cb" value="${g.id}">
+      ${escapeHtml(g.name)}
+    </label>`).join("") : `<div style="font-size:12px;color:var(--text-3);padding:8px 0;">مفيش مجموعات متاحة</div>`;
+}
+
+function setSurveyTargetMode(mode){
+  const btnAll = document.getElementById("svTargetBtnAll");
+  const btnGroups = document.getElementById("svTargetBtnGroups");
+  const wrap = document.getElementById("svGroupsWrap");
+  const hint = document.getElementById("svTargetHint");
+  if (!btnAll || !btnGroups) return;
+  SURVEY_TARGET_MODE = mode;
+  btnAll.className = "btn btn-sm" + (mode === "all" ? " btn-primary" : "");
+  btnGroups.className = "btn btn-sm" + (mode === "groups" ? " btn-primary" : "");
+  wrap.style.display = mode === "groups" ? "block" : "none";
+  hint.textContent = mode === "all"
+    ? "هيتبعت لكل الطلاب النشطين"
+    : "تقدر تختار أكتر من مجموعة - هيتبعت لطلاب المجموعات المحددة بس";
+}
+let SURVEY_TARGET_MODE = "all";
+
+function renderSurveyQuestionsBuilder(){
+  const wrap = document.getElementById("svQuestionsWrap");
+  if (!wrap) return;
+  wrap.innerHTML = SURVEY_BUILDER_QUESTIONS.map((q, i) => `
+    <div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:8px;">
+      <div style="flex:1;">
+        <input class="form-input sv_q_text" data-qid="${q.id}" placeholder="سؤال ${i+1}" maxlength="500" value="${escapeHtml(q.text)}" style="margin-bottom:5px;">
+        <select class="form-select sv_q_type" data-qid="${q.id}" onchange="updateSurveyQuestionType(${q.id}, this.value)">
+          <option value="rating" ${q.type==='rating'?'selected':''}>⭐ تقييم بالنجوم (1-5)</option>
+          <option value="text" ${q.type==='text'?'selected':''}>✏️ سؤال مفتوح (إجابة نصية)</option>
+        </select>
+      </div>
+      ${SURVEY_BUILDER_QUESTIONS.length > 1 ? `<button type="button" class="action-btn" title="حذف السؤال" onclick="removeSurveyQuestionRow(${q.id})" style="margin-top:2px;"><i data-lucide="trash-2" style="width:15px;height:15px;color:var(--danger);"></i></button>` : ""}
+    </div>
+  `).join("");
+  icons();
+}
+
+function addSurveyQuestionRow(){
+  syncSurveyQuestionTexts();
+  SURVEY_BUILDER_QUESTIONS.push({id: SURVEY_BUILDER_NEXT_ID++, text: "", type: "rating"});
+  renderSurveyQuestionsBuilder();
+}
+
+function removeSurveyQuestionRow(qid){
+  syncSurveyQuestionTexts();
+  SURVEY_BUILDER_QUESTIONS = SURVEY_BUILDER_QUESTIONS.filter(q => q.id !== qid);
+  renderSurveyQuestionsBuilder();
+}
+
+function updateSurveyQuestionType(qid, type){
+  syncSurveyQuestionTexts();
+  const q = SURVEY_BUILDER_QUESTIONS.find(q => q.id === qid);
+  if (q) q.type = type;
+}
+
+function syncSurveyQuestionTexts(){
+  document.querySelectorAll(".sv_q_text").forEach(input => {
+    const qid = parseInt(input.dataset.qid);
+    const q = SURVEY_BUILDER_QUESTIONS.find(q => q.id === qid);
+    if (q) q.text = input.value;
+  });
 }
 
 async function submitSendSurvey(){
+  syncSurveyQuestionTexts();
   const title = document.getElementById("sv_title").value.trim();
-  const question = document.getElementById("sv_question").value.trim();
+
+  const questions = SURVEY_BUILDER_QUESTIONS
+    .map(q => ({question_text: q.text.trim(), question_type: q.type}))
+    .filter(q => q.question_text);
+  if (!questions.length){
+    showToast("لازم تكتب سؤال واحد على الأقل", "error");
+    return;
+  }
+
+  let group_ids = null;
+  if (SURVEY_TARGET_MODE === "groups"){
+    group_ids = Array.from(document.querySelectorAll(".sv_group_cb:checked")).map(cb => parseInt(cb.value));
+    if (!group_ids.length){
+      showToast("اختار مجموعة واحدة على الأقل، أو دوس \"كل الطلاب\"", "error");
+      return;
+    }
+  }
+
   const res = await api("/api/surveys", {method:"POST", body: JSON.stringify({
-    title: title || null, question: question || null,
+    title: title || null, group_ids, questions,
   })});
   closeOverlay("genericModal");
   showToast(res.message || "تم إرسال الاستطلاع", "success");
   renderSurveysPage();
 }
 
-async function openSurveyResultsModal(surveyId){
-  const r = await api(`/api/surveys/${surveyId}/results`);
-  const satColor = ratingColor(r.satisfaction_percentage);
-  const total = r.responses_count || 1;
-  const dist = [5,4,3,2,1].map(star=>{
-    const cnt = r.rating_breakdown[String(star)] || 0;
+function surveyRatingDistHtml(q){
+  const total = q.answers_count || 1;
+  return [5,4,3,2,1].map(star=>{
+    const cnt = q.rating_breakdown[String(star)] || 0;
     const pct = Math.round(cnt / total * 100);
     return `
       <div style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:5px;">
@@ -8896,6 +9009,44 @@ async function openSurveyResultsModal(surveyId){
         <div style="width:34px;flex-shrink:0;color:var(--text-3);text-align:left;">${cnt}</div>
       </div>`;
   }).join("");
+}
+
+function surveyQuestionResultHtml(q, i){
+  if (q.question_type === "rating"){
+    const satColor = ratingColor(q.satisfaction_percentage);
+    return `
+      <div style="border:1px solid var(--border,#E6E3DC);border-radius:var(--radius-md,10px);padding:12px;margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:10px;">
+          <b style="font-size:13px;">${i+1}. ${escapeHtml(q.question_text)}</b>
+          <span style="font-weight:700;font-size:13px;color:${satColor};flex-shrink:0;">${q.satisfaction_percentage != null ? q.satisfaction_percentage + '%' : '—'}</span>
+        </div>
+        <div style="display:flex;gap:10px;margin-bottom:8px;font-size:11px;">
+          <span class="badge badge-green">راضيين: ${q.satisfied_count}</span>
+          <span class="badge badge-gray">محايدين: ${q.neutral_count}</span>
+          <span class="badge badge-red">مش راضيين: ${q.unsatisfied_count}</span>
+        </div>
+        ${surveyRatingDistHtml(q)}
+      </div>`;
+  }
+  return `
+    <div style="border:1px solid var(--border,#E6E3DC);border-radius:var(--radius-md,10px);padding:12px;margin-bottom:10px;">
+      <b style="font-size:13px;display:block;margin-bottom:8px;">${i+1}. ${escapeHtml(q.question_text)}</b>
+      <div style="max-height:220px;overflow-y:auto;">
+        ${q.text_answers.length ? q.text_answers.map(a=>`
+          <div style="padding:8px 10px;background:var(--neutral-soft,#F7F6F2);border-radius:8px;margin-bottom:6px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
+              <b style="font-size:12px;">${escapeHtml(a.student_name)}</b>
+              <span style="font-size:10.5px;color:var(--text-3);">${escapeHtml(a.group_name||"")} · ${(a.created_at||"").slice(0,10)}</span>
+            </div>
+            <div style="font-size:12px;color:var(--text-2);line-height:1.6;">${escapeHtml(a.answer_text)}</div>
+          </div>`).join("") : `<div style="text-align:center;color:var(--text-3);font-size:12px;padding:12px;">مفيش إجابات لسه</div>`}
+      </div>
+    </div>`;
+}
+
+async function openSurveyResultsModal(surveyId){
+  const r = await api(`/api/surveys/${surveyId}/results`);
+  const satColor = ratingColor(r.satisfaction_percentage);
 
   openModal(
     `<i data-lucide="bar-chart-3" style="width:17px;height:17px;"></i> ${escapeHtml(r.survey.title)}`,
@@ -8908,34 +9059,18 @@ async function openSurveyResultsModal(surveyId){
         </div>
       </div>
       <div style="flex:1;">
-        <div style="font-weight:700;font-size:13px;margin-bottom:2px;">نسبة الرضا العامة</div>
-        <div style="font-size:11.5px;color:var(--text-3);">من ${r.responses_count} رد من إجمالي ${r.total_sent} طالب (${r.response_rate}%)</div>
-        <div style="display:flex;gap:10px;margin-top:8px;font-size:11px;">
-          <span class="badge badge-green">راضيين: ${r.satisfied_count}</span>
-          <span class="badge badge-gray">محايدين: ${r.neutral_count}</span>
-          <span class="badge badge-red">مش راضيين: ${r.unsatisfied_count}</span>
-        </div>
+        <div style="font-weight:700;font-size:13px;margin-bottom:2px;">نسبة الرضا العامة (متوسط كل أسئلة التقييم)</div>
+        <div style="font-size:11.5px;color:var(--text-3);">${escapeHtml(r.target_label||"")} · ${r.responses_count} رد من إجمالي ${r.total_sent} طالب (${r.response_rate}%)</div>
       </div>
     </div>
-    <div class="form-label" style="margin-bottom:8px;">توزيع التقييمات</div>
-    ${dist}
-    <div class="form-label" style="margin-top:16px;margin-bottom:8px;">ملاحظات واقتراحات الطلاب (${r.notes.length})</div>
-    <div style="max-height:260px;overflow-y:auto;">
-      ${r.notes.length ? r.notes.map(n=>`
-        <div style="padding:10px 12px;border:1px solid var(--border,#E6E3DC);border-radius:var(--radius-md,10px);margin-bottom:8px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-            <b style="font-size:12.5px;">${escapeHtml(n.student_name)}</b>
-            <span style="font-size:11px;color:var(--text-3);">${"⭐".repeat(n.rating)}</span>
-          </div>
-          <div style="font-size:12px;color:var(--text-2);line-height:1.6;">${escapeHtml(n.notes)}</div>
-          <div style="font-size:10.5px;color:var(--text-3);margin-top:4px;">${escapeHtml(n.group_name||"")} · ${(n.created_at||"").slice(0,10)}</div>
-        </div>`).join("") : `<div style="text-align:center;color:var(--text-3);font-size:12px;padding:16px;">مفيش ملاحظات مكتوبة لسه</div>`}
-    </div>
+    <div class="form-label" style="margin-bottom:8px;">نتيجة كل سؤال</div>
+    ${r.questions.map((q, i) => surveyQuestionResultHtml(q, i)).join("")}
     `,
     `${r.survey.is_active ? `<button class="btn btn-ghost" onclick="closeSurveyAndRefresh(${r.survey.id})">إقفال الاستطلاع</button>` : ""}
      <button class="btn btn-primary" onclick="closeOverlay('genericModal')">تمام</button>`,
-    {width: "560px"}
+    {width: "580px"}
   );
+  icons();
 }
 
 async function closeSurveyAndRefresh(surveyId){
@@ -8948,7 +9083,7 @@ async function closeSurveyAndRefresh(surveyId){
 // ---------------------------------------------------------------------------
 // رد الطالب على استطلاع الرأي المعلّق (بيتفحص مرة واحدة بعد تسجيل الدخول)
 // ---------------------------------------------------------------------------
-let SURVEY_SELECTED_RATING = 0;
+let SURVEY_STUDENT_ANSWERS = {}; // {question_id: {rating} أو {answer_text}}
 
 async function checkPendingSurveyForStudent(){
   if (SESSION.role !== "student") return;
@@ -8959,46 +9094,72 @@ async function checkPendingSurveyForStudent(){
 }
 
 function openAnswerSurveyModal(survey){
-  SURVEY_SELECTED_RATING = 0;
+  SURVEY_STUDENT_ANSWERS = {};
+  survey.questions.forEach(q => { SURVEY_STUDENT_ANSWERS[q.id] = q.question_type === "rating" ? {rating: 0} : {answer_text: ""}; });
+
+  const questionsHtml = survey.questions.map((q, i) => {
+    if (q.question_type === "rating"){
+      return `
+        <div class="form-group">
+          <label class="form-label">${i+1}. ${escapeHtml(q.question_text)}</label>
+          <div id="sv_stars_${q.id}" style="display:flex;justify-content:center;gap:6px;font-size:30px;margin:6px 0;" dir="ltr"></div>
+        </div>`;
+    }
+    return `
+      <div class="form-group">
+        <label class="form-label">${i+1}. ${escapeHtml(q.question_text)}</label>
+        <textarea class="form-input sv_answer_text" data-qid="${q.id}" rows="3" maxlength="2000" placeholder="اكتب إجابتك هنا..." oninput="SURVEY_STUDENT_ANSWERS[${q.id}].answer_text = this.value;"></textarea>
+      </div>`;
+  }).join("");
+
   openModal(
     `<i data-lucide="message-circle" style="width:17px;height:17px;"></i> ${escapeHtml(survey.title)}`,
-    `
-    <div style="text-align:center;font-size:13.5px;color:var(--text-2);margin-bottom:16px;line-height:1.7;">${escapeHtml(survey.question)}</div>
-    <div id="sv_stars" style="display:flex;justify-content:center;gap:6px;font-size:32px;margin-bottom:18px;" dir="ltr"></div>
-    <div class="form-group">
-      <label class="form-label">حابب تضيف ملاحظة أو اقتراح تطوير؟ (اختياري)</label>
-      <textarea id="sv_answer_notes" class="form-input" rows="3" maxlength="2000" placeholder="اكتب رأيك أو اقتراحك هنا..."></textarea>
-    </div>
-    `,
+    `<div style="text-align:center;font-size:12.5px;color:var(--text-3);margin-bottom:14px;">ادّينا رأيك، بياخد ثواني بس وهيفيدنا في التطوير 🙏</div>
+     ${questionsHtml}`,
     `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">لاحقًا</button>
-     <button class="btn btn-primary" onclick="submitAnswerSurvey(${survey.id})"><i data-lucide="send" style="width:14px;height:14px;"></i> إرسال</button>`
+     <button class="btn btn-primary" onclick="submitAnswerSurvey(${survey.id})"><i data-lucide="send" style="width:14px;height:14px;"></i> إرسال</button>`,
+    {width: "480px"}
   );
-  renderSurveyStars();
+  survey.questions.forEach(q => { if (q.question_type === "rating") renderSurveyStars(q.id); });
 }
 
-function renderSurveyStars(){
-  const wrap = document.getElementById("sv_stars");
+function renderSurveyStars(qid){
+  const wrap = document.getElementById(`sv_stars_${qid}`);
+  if (!wrap) return;
+  const current = SURVEY_STUDENT_ANSWERS[qid].rating || 0;
   wrap.innerHTML = [1,2,3,4,5].map(i=>`
-    <span onclick="setSurveyRating(${i})" style="cursor:pointer;color:${i<=SURVEY_SELECTED_RATING?'#F59E0B':'#D8D5CC'};transition:color .15s;">★</span>
+    <span onclick="setSurveyRating(${qid}, ${i})" style="cursor:pointer;color:${i<=current?'#F59E0B':'#D8D5CC'};transition:color .15s;">★</span>
   `).join("");
 }
-function setSurveyRating(v){
-  SURVEY_SELECTED_RATING = v;
-  renderSurveyStars();
+function setSurveyRating(qid, v){
+  SURVEY_STUDENT_ANSWERS[qid].rating = v;
+  renderSurveyStars(qid);
 }
 
 async function submitAnswerSurvey(surveyId){
-  if (!SURVEY_SELECTED_RATING){
-    showToast("اختار تقييمك بالنجوم الأول", "error");
-    return;
+  const answers = [];
+  for (const qid in SURVEY_STUDENT_ANSWERS){
+    const a = SURVEY_STUDENT_ANSWERS[qid];
+    if ("rating" in a){
+      if (!a.rating){
+        showToast("لازم تختار تقييم لكل سؤال بالنجوم", "error");
+        return;
+      }
+      answers.push({question_id: parseInt(qid), rating: a.rating});
+    } else {
+      const text = (a.answer_text || "").trim();
+      if (!text){
+        showToast("لازم تجاوب على كل الأسئلة المفتوحة", "error");
+        return;
+      }
+      answers.push({question_id: parseInt(qid), answer_text: text});
+    }
   }
-  const notes = document.getElementById("sv_answer_notes").value.trim();
-  const res = await api(`/api/surveys/${surveyId}/respond`, {method:"POST", body: JSON.stringify({
-    rating: SURVEY_SELECTED_RATING, notes: notes || null,
-  })});
+  const res = await api(`/api/surveys/${surveyId}/respond`, {method:"POST", body: JSON.stringify({answers})});
   closeOverlay("genericModal");
   showToast(res.message || "شكرًا لرأيك!", "success");
 }
+
 
 async function renderActivityLogPage(){
   const c = document.getElementById("pageContainer");

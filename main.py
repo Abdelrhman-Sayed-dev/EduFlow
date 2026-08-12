@@ -317,16 +317,29 @@ class AttendanceCodeIn(BaseModel):
     session_number: int = 1
 
 
+class SurveyQuestionIn(BaseModel):
+    """سؤال واحد جوه الاستطلاع - إما تقييم بالنجوم من 1 لـ 5 أو سؤال مفتوح نصي"""
+    question_text: str = Field(..., max_length=500)
+    question_type: str = "rating"  # rating / text
+
+
 class SurveyIn(BaseModel):
-    """إنشاء وإرسال استطلاع رأي جديد لكل الطلاب النشطين"""
+    """إنشاء وإرسال استطلاع رأي جديد - أسئلة الأدمن نفسه، ولمجموعات معينة أو للكل"""
     title: Optional[str] = Field(None, max_length=200)
-    question: Optional[str] = Field(None, max_length=500)
+    group_ids: Optional[List[int]] = None  # فاضي أو None = كل الطلاب النشطين
+    questions: List[SurveyQuestionIn] = []
 
 
-class SurveyResponseIn(BaseModel):
-    """رد الطالب على استطلاع الرأي"""
-    rating: int = Field(..., ge=1, le=5)
-    notes: Optional[str] = Field(None, max_length=2000)
+class SurveyAnswerIn(BaseModel):
+    """رد الطالب على سؤال واحد جوه الاستطلاع"""
+    question_id: int
+    rating: Optional[int] = Field(None, ge=1, le=5)
+    answer_text: Optional[str] = Field(None, max_length=2000)
+
+
+class SurveyRespondIn(BaseModel):
+    """كل ردود الطالب على أسئلة استطلاع معين - بتتبعت مرة واحدة سوا"""
+    answers: List[SurveyAnswerIn] = []
 
 
 class ParticipationIn(BaseModel):
@@ -6200,112 +6213,217 @@ def save_homework_submission(hw_id: int, data: HomeworkSubmissionIn,
 
 # ---------------------------------------------------------------------------
 # استطلاعات رأي الطلاب - Surveys
-# الأدمن بيدوس "إرسال استطلاع رأي" فبيتبعت إشعار لكل الطلاب النشطين، وكل طالب
-# بيدخل يقيّم رضاه عن المنصة من 1 لـ 5 نجوم + يقدر يكتب ملاحظة/اقتراح تطوير.
+# الأدمن بيكتب استطلاع بأسئلته هو (كل سؤال إما تقييم بالنجوم من 1 لـ 5 أو
+# سؤال مفتوح بيجاوب عليه الطالب بالنص)، ويحدد يبعته لكل الطلاب النشطين أو
+# لمجموعة/مجموعات معينة بس. الطالب بيوصله إشعار وبيجاوب مرة واحدة على كل
+# الأسئلة سوا.
 # ---------------------------------------------------------------------------
+
+def _survey_target_student_ids(conn, survey_id):
+    """آي دي الطلاب النشطين المستهدفين باستطلاع معين (حسب المجموعات المحددة له، أو الكل)"""
+    target_all = conn.execute(
+        "SELECT target_all_groups FROM surveys WHERE id = ?", (survey_id,)
+    ).fetchone()["target_all_groups"]
+    if target_all:
+        rows = conn.execute("SELECT id FROM students WHERE is_active = 1").fetchall()
+    else:
+        rows = conn.execute("""
+            SELECT DISTINCT s.id FROM students s
+            JOIN survey_groups sg ON sg.group_id = s.group_id
+            WHERE s.is_active = 1 AND sg.survey_id = ?
+        """, (survey_id,)).fetchall()
+    return [r["id"] for r in rows]
+
 
 @app.post("/api/surveys")
 def create_survey(data: SurveyIn, session=Depends(require_roles("admin"))):
-    """إنشاء استطلاع رأي جديد وإرساله فورًا لكل الطلاب النشطين (إشعار داخل التطبيق)"""
-    title = (data.title or "استطلاع رأي عن أداء المنصة").strip()
-    question = (data.question or "إيه رأيك في أداء المنصة والمتابعة معاك؟ ").strip()
+    """إنشاء استطلاع رأي جديد بأسئلة الأدمن، وإرساله فورًا للمستهدفين (إشعار داخل التطبيق)"""
+    title = (data.title or "استطلاع رأي عن أداء المنصة").strip() or "استطلاع رأي عن أداء المنصة"
+
+    questions = []
+    for q in data.questions:
+        text = (q.question_text or "").strip()
+        if not text:
+            continue
+        if q.question_type not in ("rating", "text"):
+            raise HTTPException(status_code=400, detail="نوع السؤال لازم يكون تقييم بالنجوم أو سؤال مفتوح")
+        questions.append((text, q.question_type))
+    if not questions:
+        raise HTTPException(status_code=400, detail="لازم تكتب سؤال واحد على الأقل")
+    if len(questions) > 20:
+        raise HTTPException(status_code=400, detail="أقصى عدد أسئلة للاستطلاع الواحد 20 سؤال")
+
+    group_ids = sorted(set(data.group_ids)) if data.group_ids else []
+    target_all_groups = 0 if group_ids else 1
+
     with get_connection() as conn:
+        if group_ids:
+            found = conn.execute(
+                f"SELECT id FROM groups WHERE id IN ({','.join('?' * len(group_ids))})",
+                group_ids,
+            ).fetchall()
+            if len(found) != len(group_ids):
+                raise HTTPException(status_code=400, detail="فيه مجموعة محددة مش موجودة")
+
         cur = conn.execute(
-            "INSERT INTO surveys (title, question, created_by, is_active) VALUES (?, ?, ?, 1)",
-            (title, question, session["id"]),
+            "INSERT INTO surveys (title, created_by, is_active, target_all_groups) VALUES (?, ?, 1, ?)",
+            (title, session["id"], target_all_groups),
         )
         survey_id = cur.lastrowid
 
-        students = conn.execute("SELECT id FROM students WHERE is_active = 1").fetchall()
-        for st in students:
+        for gid in group_ids:
+            conn.execute(
+                "INSERT INTO survey_groups (survey_id, group_id) VALUES (?, ?)",
+                (survey_id, gid),
+            )
+
+        for i, (text, qtype) in enumerate(questions):
+            conn.execute(
+                "INSERT INTO survey_questions (survey_id, question_text, question_type, order_index) VALUES (?, ?, ?, ?)",
+                (survey_id, text, qtype, i),
+            )
+
+        target_ids = _survey_target_student_ids(conn, survey_id)
+        for sid in target_ids:
             create_notification(
-                conn, st["id"], f"📋 {title}",
-                f"{question} — ادخل قيّم رأيك، بياخد ثواني بس وهيفيدنا في التطوير."
+                conn, sid, f"📋 {title}",
+                "وصلك استطلاع رأي جديد - ادخل جاوب عليه، بياخد ثواني بس وهيفيدنا في التطوير."
             )
         return {
             "id": survey_id,
-            "message": f"تم إرسال الاستطلاع لـ {len(students)} طالب",
-            "sent_to": len(students),
+            "message": f"تم إرسال الاستطلاع لـ {len(target_ids)} طالب",
+            "sent_to": len(target_ids),
         }
 
 
 @app.get("/api/surveys")
 def list_surveys(session=Depends(require_roles("admin", "head_supervisor", "teacher"))):
-    """قائمة كل الاستطلاعات مع نسبة الرضا وعدد الردود لكل واحد"""
+    """قائمة كل الاستطلاعات مع نسبة الرضا وعدد الردود والمجموعات المستهدفة لكل واحد"""
     with get_connection() as conn:
         surveys = conn.execute("SELECT * FROM surveys ORDER BY created_at DESC").fetchall()
-        total_active_students = conn.execute(
-            "SELECT COUNT(*) as c FROM students WHERE is_active = 1"
-        ).fetchone()["c"]
         result = []
         for sv in surveys:
-            stats = conn.execute(
-                "SELECT COUNT(*) as cnt, AVG(rating) as avg_rating FROM survey_responses WHERE survey_id = ?",
+            sv = dict(sv)
+            target_ids = _survey_target_student_ids(conn, sv["id"])
+            total_sent = len(target_ids)
+
+            completed = conn.execute(
+                "SELECT COUNT(*) as c FROM survey_completions WHERE survey_id = ?", (sv["id"],)
+            ).fetchone()["c"]
+
+            avg_rating = conn.execute(
+                "SELECT AVG(rating) as avg_rating FROM survey_answers WHERE survey_id = ? AND rating IS NOT NULL",
                 (sv["id"],),
-            ).fetchone()
-            satisfaction_pct = round(stats["avg_rating"] / 5 * 100, 1) if stats["avg_rating"] else None
+            ).fetchone()["avg_rating"]
+            satisfaction_pct = round(avg_rating / 5 * 100, 1) if avg_rating else None
+
+            questions_count = conn.execute(
+                "SELECT COUNT(*) as c FROM survey_questions WHERE survey_id = ?", (sv["id"],)
+            ).fetchone()["c"]
+
+            if sv["target_all_groups"]:
+                target_label = "كل الطلاب"
+            else:
+                group_names = conn.execute("""
+                    SELECT g.name FROM survey_groups sg
+                    JOIN groups g ON g.id = sg.group_id
+                    WHERE sg.survey_id = ? ORDER BY g.name
+                """, (sv["id"],)).fetchall()
+                target_label = "، ".join(g["name"] for g in group_names) if group_names else "—"
+
             result.append({
-                **dict(sv),
-                "responses_count": stats["cnt"],
-                "total_sent": total_active_students,
-                "response_rate": round(stats["cnt"] / total_active_students * 100, 1) if total_active_students else 0,
+                **sv,
+                "responses_count": completed,
+                "total_sent": total_sent,
+                "response_rate": round(completed / total_sent * 100, 1) if total_sent else 0,
                 "satisfaction_percentage": satisfaction_pct,
+                "questions_count": questions_count,
+                "target_label": target_label,
             })
         return result
 
 
 @app.get("/api/surveys/{survey_id}/results")
 def get_survey_results(survey_id: int, session=Depends(require_roles("admin", "head_supervisor", "teacher"))):
-    """نتائج تفصيلية لاستطلاع معين: نسبة الرضا + توزيع التقييمات + كل الملاحظات المكتوبة"""
+    """نتائج تفصيلية لاستطلاع معين: نتيجة كل سؤال لوحده (تقييم بالنجوم أو الإجابات النصية)"""
     with get_connection() as conn:
         survey = conn.execute("SELECT * FROM surveys WHERE id = ?", (survey_id,)).fetchone()
         if not survey:
             raise HTTPException(status_code=404, detail="الاستطلاع غير موجود")
+        survey = dict(survey)
 
-        responses = conn.execute("""
-            SELECT sr.rating, sr.notes, sr.created_at, s.full_name as student_name, s.group_id,
-                   g.name as group_name
-            FROM survey_responses sr
-            JOIN students s ON s.id = sr.student_id
-            LEFT JOIN groups g ON g.id = s.group_id
-            WHERE sr.survey_id = ?
-            ORDER BY sr.created_at DESC
-        """, (survey_id,)).fetchall()
-        responses = [dict(r) for r in responses]
+        if survey["target_all_groups"]:
+            target_label = "كل الطلاب"
+        else:
+            group_names = conn.execute("""
+                SELECT g.name FROM survey_groups sg
+                JOIN groups g ON g.id = sg.group_id
+                WHERE sg.survey_id = ? ORDER BY g.name
+            """, (survey_id,)).fetchall()
+            target_label = "، ".join(g["name"] for g in group_names) if group_names else "—"
 
-        total_active_students = conn.execute(
-            "SELECT COUNT(*) as c FROM students WHERE is_active = 1"
+        target_ids = _survey_target_student_ids(conn, survey_id)
+        total_sent = len(target_ids)
+        completed = conn.execute(
+            "SELECT COUNT(*) as c FROM survey_completions WHERE survey_id = ?", (survey_id,)
         ).fetchone()["c"]
 
-        rating_breakdown = {str(i): 0 for i in range(1, 6)}
-        for r in responses:
-            rating_breakdown[str(r["rating"])] += 1
+        question_rows = conn.execute(
+            "SELECT * FROM survey_questions WHERE survey_id = ? ORDER BY order_index, id",
+            (survey_id,),
+        ).fetchall()
 
-        avg_rating = round(sum(r["rating"] for r in responses) / len(responses), 2) if responses else None
-        satisfaction_pct = round(avg_rating / 5 * 100, 1) if avg_rating is not None else None
-        # راضيين = اللي بعتوا 4 أو 5 نجوم، مش راضيين = 1 أو 2، محايدين = 3
-        satisfied_count = sum(1 for r in responses if r["rating"] >= 4)
-        unsatisfied_count = sum(1 for r in responses if r["rating"] <= 2)
-        neutral_count = len(responses) - satisfied_count - unsatisfied_count
+        questions = []
+        overall_ratings = []
+        for q in question_rows:
+            q = dict(q)
+            answers = conn.execute("""
+                SELECT a.rating, a.answer_text, a.created_at, s.full_name as student_name,
+                       s.group_id, g.name as group_name
+                FROM survey_answers a
+                JOIN students s ON s.id = a.student_id
+                LEFT JOIN groups g ON g.id = s.group_id
+                WHERE a.question_id = ?
+                ORDER BY a.created_at DESC
+            """, (q["id"],)).fetchall()
+            answers = [dict(a) for a in answers]
 
-        notes = [
-            {"student_name": r["student_name"], "group_name": r["group_name"],
-             "rating": r["rating"], "notes": r["notes"], "created_at": r["created_at"]}
-            for r in responses if r["notes"]
-        ]
+            if q["question_type"] == "rating":
+                ratings = [a["rating"] for a in answers if a["rating"] is not None]
+                overall_ratings.extend(ratings)
+                rating_breakdown = {str(i): 0 for i in range(1, 6)}
+                for r in ratings:
+                    rating_breakdown[str(r)] += 1
+                avg_rating = round(sum(ratings) / len(ratings), 2) if ratings else None
+                q["average_rating"] = avg_rating
+                q["satisfaction_percentage"] = round(avg_rating / 5 * 100, 1) if avg_rating is not None else None
+                q["rating_breakdown"] = rating_breakdown
+                q["answers_count"] = len(ratings)
+                q["satisfied_count"] = sum(1 for r in ratings if r >= 4)
+                q["neutral_count"] = sum(1 for r in ratings if r == 3)
+                q["unsatisfied_count"] = sum(1 for r in ratings if r <= 2)
+            else:
+                text_answers = [a for a in answers if a["answer_text"]]
+                q["answers_count"] = len(text_answers)
+                q["text_answers"] = [
+                    {"student_name": a["student_name"], "group_name": a["group_name"],
+                     "answer_text": a["answer_text"], "created_at": a["created_at"]}
+                    for a in text_answers
+                ]
+            questions.append(q)
+
+        avg_rating_overall = round(sum(overall_ratings) / len(overall_ratings), 2) if overall_ratings else None
+        satisfaction_pct_overall = round(avg_rating_overall / 5 * 100, 1) if avg_rating_overall is not None else None
 
         return {
-            "survey": dict(survey),
-            "total_sent": total_active_students,
-            "responses_count": len(responses),
-            "response_rate": round(len(responses) / total_active_students * 100, 1) if total_active_students else 0,
-            "average_rating": avg_rating,
-            "satisfaction_percentage": satisfaction_pct,
-            "rating_breakdown": rating_breakdown,
-            "satisfied_count": satisfied_count,
-            "neutral_count": neutral_count,
-            "unsatisfied_count": unsatisfied_count,
-            "notes": notes,
+            "survey": survey,
+            "target_label": target_label,
+            "total_sent": total_sent,
+            "responses_count": completed,
+            "response_rate": round(completed / total_sent * 100, 1) if total_sent else 0,
+            "average_rating": avg_rating_overall,
+            "satisfaction_percentage": satisfaction_pct_overall,
+            "questions": questions,
         }
 
 
@@ -6322,41 +6440,96 @@ def close_survey(survey_id: int, session=Depends(require_roles("admin"))):
 
 @app.get("/api/surveys/pending")
 def get_pending_survey(session=Depends(require_roles("student"))):
-    """بيرجع أحدث استطلاع نشط لسه الطالب معملوش عليه رد (أو null لو مفيش)"""
+    """بيرجع أحدث استطلاع نشط مستهدف مجموعة الطالب ولسه معملش عليه رد (أو null لو مفيش)، مع كل أسئلته"""
     with get_connection() as conn:
         row = conn.execute("""
             SELECT sv.* FROM surveys sv
             WHERE sv.is_active = 1
               AND NOT EXISTS (
-                  SELECT 1 FROM survey_responses sr
-                  WHERE sr.survey_id = sv.id AND sr.student_id = ?
+                  SELECT 1 FROM survey_completions sc
+                  WHERE sc.survey_id = sv.id AND sc.student_id = ?
+              )
+              AND (
+                  sv.target_all_groups = 1
+                  OR EXISTS (
+                      SELECT 1 FROM survey_groups sg
+                      WHERE sg.survey_id = sv.id AND sg.group_id = ?
+                  )
               )
             ORDER BY sv.created_at DESC
             LIMIT 1
-        """, (session["id"],)).fetchone()
-        return dict(row) if row else None
+        """, (session["id"], session.get("group_id"))).fetchone()
+        if not row:
+            return None
+        survey = dict(row)
+        questions = conn.execute(
+            "SELECT id, question_text, question_type, order_index FROM survey_questions WHERE survey_id = ? ORDER BY order_index, id",
+            (survey["id"],),
+        ).fetchall()
+        survey["questions"] = [dict(q) for q in questions]
+        return survey
 
 
 @app.post("/api/surveys/{survey_id}/respond")
-def respond_to_survey(survey_id: int, data: SurveyResponseIn, session=Depends(require_roles("student"))):
-    """رد الطالب على استطلاع الرأي - مرة واحدة بس لكل استطلاع"""
+def respond_to_survey(survey_id: int, data: SurveyRespondIn, session=Depends(require_roles("student"))):
+    """رد الطالب على كل أسئلة الاستطلاع سوا - مرة واحدة بس لكل استطلاع"""
     with get_connection() as conn:
-        survey = conn.execute("SELECT id, is_active FROM surveys WHERE id = ?", (survey_id,)).fetchone()
+        survey = conn.execute("SELECT id, is_active, target_all_groups FROM surveys WHERE id = ?", (survey_id,)).fetchone()
         if not survey:
             raise HTTPException(status_code=404, detail="الاستطلاع غير موجود")
         if not survey["is_active"]:
             raise HTTPException(status_code=400, detail="الاستطلاع ده مقفول")
+
+        if not survey["target_all_groups"]:
+            targeted = conn.execute(
+                "SELECT 1 FROM survey_groups WHERE survey_id = ? AND group_id = ?",
+                (survey_id, session.get("group_id")),
+            ).fetchone()
+            if not targeted:
+                raise HTTPException(status_code=403, detail="الاستطلاع ده مش موجّه لمجموعتك")
+
         existing = conn.execute(
-            "SELECT id FROM survey_responses WHERE survey_id=? AND student_id=?",
+            "SELECT 1 FROM survey_completions WHERE survey_id=? AND student_id=?",
             (survey_id, session["id"]),
         ).fetchone()
         if existing:
             raise HTTPException(status_code=400, detail="أنت جاوبت على الاستطلاع ده قبل كده")
+
+        questions = conn.execute(
+            "SELECT id, question_type FROM survey_questions WHERE survey_id = ?", (survey_id,)
+        ).fetchall()
+        questions_by_id = {q["id"]: q["question_type"] for q in questions}
+        if not questions_by_id:
+            raise HTTPException(status_code=400, detail="الاستطلاع ده مفيهوش أسئلة")
+
+        answers_by_question = {a.question_id: a for a in data.answers}
+        if set(answers_by_question.keys()) != set(questions_by_id.keys()):
+            raise HTTPException(status_code=400, detail="لازم تجاوب على كل أسئلة الاستطلاع")
+
+        for qid, qtype in questions_by_id.items():
+            ans = answers_by_question[qid]
+            if qtype == "rating":
+                if ans.rating is None:
+                    raise HTTPException(status_code=400, detail="لازم تختار تقييم لكل سؤال بالنجوم")
+                conn.execute(
+                    "INSERT INTO survey_answers (survey_id, question_id, student_id, rating) VALUES (?, ?, ?, ?)",
+                    (survey_id, qid, session["id"], ans.rating),
+                )
+            else:
+                text = (ans.answer_text or "").strip()
+                if not text:
+                    raise HTTPException(status_code=400, detail="لازم تكتب إجابة لكل سؤال مفتوح")
+                conn.execute(
+                    "INSERT INTO survey_answers (survey_id, question_id, student_id, answer_text) VALUES (?, ?, ?, ?)",
+                    (survey_id, qid, session["id"], text),
+                )
+
         conn.execute(
-            "INSERT INTO survey_responses (survey_id, student_id, rating, notes) VALUES (?, ?, ?, ?)",
-            (survey_id, session["id"], data.rating, data.notes),
+            "INSERT INTO survey_completions (survey_id, student_id) VALUES (?, ?)",
+            (survey_id, session["id"]),
         )
         return {"message": "شكرًا لرأيك! 🙏"}
+
 
 
 # ---------------------------------------------------------------------------

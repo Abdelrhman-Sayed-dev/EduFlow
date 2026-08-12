@@ -187,6 +187,44 @@ def _migrate_stages(cur):
             cur.execute("DELETE FROM stages WHERE id=?", (old_sec["id"],))
 
 
+def _migrate_legacy_surveys(cur):
+    """
+    ترحيل الاستطلاعات القديمة (من نسخة كانت بتخزن سؤال واحد بس في عمود
+    surveys.question وردود الطلاب في جدول survey_responses القديم) للشكل
+    الجديد اللي بيسمح بأكتر من سؤال. أي استطلاع قديم لسه معندوش صفوف في
+    survey_questions بنولّدله سؤال تقييم واحد بعنوان السؤال القديم، وبننقل
+    ردود الطلاب المسجلة عليه لجدولي survey_answers و survey_completions
+    الجديدين. الاستطلاعات اللي اترحّلت قبل كده (وليها أسئلة بالفعل) بيتم
+    تجاهلها عشان الترحيل يبقى آمن لو اتشغل أكتر من مرة.
+    """
+    old_surveys = cur.execute("""
+        SELECT s.id, s.question FROM surveys s
+        WHERE NOT EXISTS (SELECT 1 FROM survey_questions q WHERE q.survey_id = s.id)
+    """).fetchall()
+    for sv in old_surveys:
+        cur.execute(
+            "INSERT INTO survey_questions (survey_id, question_text, question_type, order_index) VALUES (?, ?, 'rating', 0)",
+            (sv["id"], sv["question"] or "إيه رأيك في أداء المنصة والمتابعة معاك؟"),
+        )
+        question_id = cur.lastrowid
+
+        old_responses = cur.execute(
+            "SELECT student_id, rating, notes, created_at FROM survey_responses WHERE survey_id = ?",
+            (sv["id"],),
+        ).fetchall()
+        for r in old_responses:
+            cur.execute(
+                """INSERT OR IGNORE INTO survey_answers
+                   (survey_id, question_id, student_id, rating, answer_text, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (sv["id"], question_id, r["student_id"], r["rating"], r["notes"], r["created_at"]),
+            )
+            cur.execute(
+                "INSERT OR IGNORE INTO survey_completions (survey_id, student_id, created_at) VALUES (?, ?, ?)",
+                (sv["id"], r["student_id"], r["created_at"]),
+            )
+
+
 def _migrate_users_role_check(cur):
     """
     لو جدول users موجود من نسخة قديمة (قيد CHECK بتاعه لسه مش شامل head_supervisor)،
@@ -794,8 +832,9 @@ def init_db():
 
         # ---------------------------------------------------------------
         # استطلاعات رأي الطلاب - Surveys
-        # الأدمن بيبعت استطلاع لكل الطلاب النشطين (بيوصلهم إشعار)، والطالب بيقيّم
-        # رضاه عن أداء المنصة من 1 لـ 5 + ملاحظة اختيارية بيكتب فيها اقتراح تطوير.
+        # الأدمن بيكتب استطلاع فيه أكتر من سؤال (كل سؤال إما تقييم بالنجوم 1-5
+        # أو سؤال مفتوح بيجاوب عليه الطالب بالنص)، وبيحدد يبعته لكل الطلاب
+        # النشطين أو لمجموعات معينة بس. الطالب بيوصله إشعار وبيجاوب مرة واحدة.
         # ---------------------------------------------------------------
         cur.execute("""
         CREATE TABLE IF NOT EXISTS surveys (
@@ -808,7 +847,71 @@ def init_db():
             FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
         )
         """)
+        # ملحوظة: عمود "question" فوق باقي في الجدول للتوافق مع نسخ قديمة، لكن
+        # النظام بقى مايستخدمهوش؛ أسئلة الاستطلاع بقت في جدول survey_questions
+        # تحت عشان يسمح بأكتر من سؤال لكل استطلاع.
+        _safe_alter(cur, "ALTER TABLE surveys ADD COLUMN target_all_groups INTEGER NOT NULL DEFAULT 1")
 
+        # لو الاستطلاع مش مستهدف كل المجموعات (target_all_groups = 0)، المجموعات
+        # المستهدفة بتتسجل هنا (ممكن أكتر من مجموعة لنفس الاستطلاع)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS survey_groups (
+            survey_id INTEGER NOT NULL,
+            group_id INTEGER NOT NULL,
+            PRIMARY KEY (survey_id, group_id),
+            FOREIGN KEY (survey_id) REFERENCES surveys(id) ON DELETE CASCADE,
+            FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_survey_groups_group ON survey_groups(group_id)")
+
+        # أسئلة كل استطلاع - بالترتيب اللي الأدمن كتبها بيه
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS survey_questions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            survey_id INTEGER NOT NULL,
+            question_text TEXT NOT NULL,
+            question_type TEXT NOT NULL DEFAULT 'rating' CHECK(question_type IN ('rating', 'text')),
+            order_index INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (survey_id) REFERENCES surveys(id) ON DELETE CASCADE
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_survey_questions_survey ON survey_questions(survey_id, order_index)")
+
+        # رد الطالب على سؤال معين - لو السؤال تقييم بيتسجل rating، لو مفتوح بيتسجل answer_text
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS survey_answers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            survey_id INTEGER NOT NULL,
+            question_id INTEGER NOT NULL,
+            student_id INTEGER NOT NULL,
+            rating INTEGER CHECK(rating IS NULL OR rating BETWEEN 1 AND 5),
+            answer_text TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (survey_id) REFERENCES surveys(id) ON DELETE CASCADE,
+            FOREIGN KEY (question_id) REFERENCES survey_questions(id) ON DELETE CASCADE,
+            FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+            UNIQUE(question_id, student_id)
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_survey_answers_survey ON survey_answers(survey_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_survey_answers_question ON survey_answers(question_id)")
+
+        # علامة إن الطالب خلّص كل أسئلة الاستطلاع (بيتسجل مرة واحدة بعد ما يبعت كل إجاباته)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS survey_completions (
+            survey_id INTEGER NOT NULL,
+            student_id INTEGER NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (survey_id, student_id),
+            FOREIGN KEY (survey_id) REFERENCES surveys(id) ON DELETE CASCADE,
+            FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_survey_completions_survey ON survey_completions(survey_id)")
+
+        # جدول قديم (نسخة سابقة كانت بتسجل رد واحد بس لكل استطلاع) - باقي للتوافق
+        # مع نسخ قديمة من قاعدة البيانات، لكن مش مستخدم في الكود الجديد
         cur.execute("""
         CREATE TABLE IF NOT EXISTS survey_responses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -823,6 +926,8 @@ def init_db():
         )
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_survey_responses_survey ON survey_responses(survey_id)")
+
+        _migrate_legacy_surveys(cur)
 
         # ---------------------------------------------------------------
         # بنك الأسئلة - Question Bank
