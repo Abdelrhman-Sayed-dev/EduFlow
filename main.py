@@ -4683,12 +4683,40 @@ def _with_recomputed_working_minutes(row: dict) -> dict:
     return row
 
 
+def _with_recomputed_late_status(row: dict, conn) -> dict:
+    """يعيد حساب الحالة (present/late) ودقائق التأخير من وقت الحضور الفعلي
+    مقابل إعدادات مواعيد العمل الحالية - بس لو السجل ماتعدلش يدويًا من
+    الإدارة (modified_by_admin فاضي) وحالته الحالية present/late (مش
+    absent/excused/incomplete اللي بتتحدد يدويًا دايمًا وميحصلهاش إعادة حساب).
+    ده بيصحح تلقائيًا أي سجل قديم اتحسب غلط بسبب مشكلة توقيت (زي التوقيت
+    الصيفي) من غير ما يمس أي تعديل يدوي اتحفظ فعلاً."""
+    if not row or not row.get("check_in"):
+        return row
+    if row.get("modified_by_admin"):
+        return row
+    if row.get("status") not in ("present", "late"):
+        return row
+    settings = _get_attendance_settings(conn)
+    if not settings or not settings.get("work_start_time"):
+        return row
+    try:
+        checkin_dt = datetime.fromisoformat(row["check_in"])
+        status, late_minutes = compute_attendance_status(
+            checkin_dt, settings["work_start_time"], settings["grace_period_minutes"]
+        )
+        row["status"] = status
+        row["late_minutes"] = late_minutes
+    except ValueError:
+        pass
+    return row
+
+
 def _get_today_supervisor_attendance(conn, supervisor_id: int):
     row = conn.execute(
         "SELECT * FROM supervisor_attendance WHERE supervisor_id=? AND attendance_date=?",
         (supervisor_id, _today_str())
     ).fetchone()
-    return _with_recomputed_working_minutes(dict(row)) if row else None
+    return _with_recomputed_working_minutes(_with_recomputed_late_status(dict(row), conn)) if row else None
 
 
 @app.get("/api/supervisor-attendance/settings")
@@ -4740,7 +4768,7 @@ def get_my_supervisor_attendance_history(limit: int = 30, session=Depends(requir
             "SELECT * FROM supervisor_attendance WHERE supervisor_id=? ORDER BY attendance_date DESC LIMIT ?",
             (session["id"], max(1, min(limit, 365)))
         ).fetchall()
-        return [_with_recomputed_working_minutes(dict(r)) for r in rows]
+        return [_with_recomputed_working_minutes(_with_recomputed_late_status(dict(r), conn)) for r in rows]
 
 
 def _validate_location_or_raise(settings: dict, data: SupervisorCheckInOut):
@@ -4894,7 +4922,55 @@ def list_supervisor_attendance(date: Optional[str] = None, supervisor_id: Option
             params.append(status)
         query += " ORDER BY sa.attendance_date DESC, u.full_name"
         rows = conn.execute(query, params).fetchall()
-        return [_with_recomputed_working_minutes(dict(r)) for r in rows]
+        return [_with_recomputed_working_minutes(_with_recomputed_late_status(dict(r), conn)) for r in rows]
+
+
+@app.get("/api/supervisor-attendance/monthly-report")
+def get_supervisor_attendance_monthly_report(supervisor_id: int, year: int, month: int,
+                                              session=Depends(require_roles("admin", "head_supervisor"))):
+    """تقرير شهري لمشرف واحد: عدد أيام العمل، عدد ساعات العمل، عدد ساعات
+    التأخير، أيام الغياب، وعدد مرات التأخير - محسوبين من سجلات الشهر المطلوب.
+
+    ملحوظة مهمة: لازم يتسجل هنا *قبل* /supervisor-attendance/{record_id} تحت،
+    لأن FastAPI بيدور على أول route بيتطابق بالترتيب اللي اتسجل بيه - ولو
+    {record_id} (اللي بياخد أي int) كان مسجل قبل السطر ده، كان هيتقفل الطلب
+    هنا (GET .../monthly-report) عليه بالغلط ويحاول يفهم "monthly-report"
+    كـ record_id (رقم صحيح)، فيرجع خطأ 422."""
+    if month < 1 or month > 12:
+        raise HTTPException(status_code=400, detail="الشهر غير صحيح")
+
+    with get_connection() as conn:
+        supervisor = conn.execute(
+            "SELECT id, full_name FROM users WHERE id=? AND role='supervisor'", (supervisor_id,)
+        ).fetchone()
+        if not supervisor:
+            raise HTTPException(status_code=404, detail="المشرف غير موجود")
+
+        month_prefix = f"{year:04d}-{month:02d}"
+        rows = conn.execute(
+            "SELECT * FROM supervisor_attendance WHERE supervisor_id=? AND attendance_date LIKE ? ORDER BY attendance_date",
+            (supervisor_id, f"{month_prefix}%")
+        ).fetchall()
+        rows = [_with_recomputed_working_minutes(_with_recomputed_late_status(dict(r), conn)) for r in rows]
+
+        work_days = sum(1 for r in rows if r["check_in"])
+        total_working_minutes = sum(r["working_minutes"] or 0 for r in rows if r["working_minutes"])
+        total_late_minutes = sum(r["late_minutes"] or 0 for r in rows if r["late_minutes"])
+        absent_days = sum(1 for r in rows if r["status"] == "absent")
+        late_count = sum(1 for r in rows if (r["late_minutes"] or 0) > 0)
+
+        return {
+            "supervisor_id": supervisor["id"],
+            "supervisor_name": supervisor["full_name"],
+            "year": year,
+            "month": month,
+            "work_days": work_days,
+            "work_hours": round(total_working_minutes / 60, 1),
+            "late_hours": round(total_late_minutes / 60, 1),
+            "absent_days": absent_days,
+            "late_count": late_count,
+            "records": rows,
+        }
 
 
 @app.get("/api/supervisor-attendance/{record_id}")
@@ -4910,7 +4986,7 @@ def get_supervisor_attendance_detail(record_id: int, session=Depends(require_rol
         """, (record_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="سجل الحضور غير موجود")
-        return _with_recomputed_working_minutes(dict(row))
+        return _with_recomputed_working_minutes(_with_recomputed_late_status(dict(row), conn))
 
 
 @app.put("/api/supervisor-attendance/{record_id}")
@@ -4994,48 +5070,6 @@ def delete_supervisor_attendance(record_id: int, session=Depends(require_roles("
             f"حذف سجل حضور مشرف #{record_id} - {row['attendance_date']}"
         )
         return {"message": "تم حذف السجل، يقدر المشرف يسجل حضوره تاني"}
-
-
-@app.get("/api/supervisor-attendance/monthly-report")
-def get_supervisor_attendance_monthly_report(supervisor_id: int, year: int, month: int,
-                                              session=Depends(require_roles("admin", "head_supervisor"))):
-    """تقرير شهري لمشرف واحد: عدد أيام العمل، عدد ساعات العمل، عدد ساعات
-    التأخير، أيام الغياب، وعدد مرات التأخير - محسوبين من سجلات الشهر المطلوب."""
-    if month < 1 or month > 12:
-        raise HTTPException(status_code=400, detail="الشهر غير صحيح")
-
-    with get_connection() as conn:
-        supervisor = conn.execute(
-            "SELECT id, full_name FROM users WHERE id=? AND role='supervisor'", (supervisor_id,)
-        ).fetchone()
-        if not supervisor:
-            raise HTTPException(status_code=404, detail="المشرف غير موجود")
-
-        month_prefix = f"{year:04d}-{month:02d}"
-        rows = conn.execute(
-            "SELECT * FROM supervisor_attendance WHERE supervisor_id=? AND attendance_date LIKE ? ORDER BY attendance_date",
-            (supervisor_id, f"{month_prefix}%")
-        ).fetchall()
-        rows = [_with_recomputed_working_minutes(dict(r)) for r in rows]
-
-        work_days = sum(1 for r in rows if r["check_in"])
-        total_working_minutes = sum(r["working_minutes"] or 0 for r in rows if r["working_minutes"])
-        total_late_minutes = sum(r["late_minutes"] or 0 for r in rows if r["late_minutes"])
-        absent_days = sum(1 for r in rows if r["status"] == "absent")
-        late_count = sum(1 for r in rows if (r["late_minutes"] or 0) > 0)
-
-        return {
-            "supervisor_id": supervisor["id"],
-            "supervisor_name": supervisor["full_name"],
-            "year": year,
-            "month": month,
-            "work_days": work_days,
-            "work_hours": round(total_working_minutes / 60, 1),
-            "late_hours": round(total_late_minutes / 60, 1),
-            "absent_days": absent_days,
-            "late_count": late_count,
-            "records": rows,
-        }
 
 
 @app.get("/api/students/{student_id}/attendance")
