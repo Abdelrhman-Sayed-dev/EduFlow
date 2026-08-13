@@ -4900,8 +4900,15 @@ def get_supervisor_attendance_detail(record_id: int, session=Depends(require_rol
 @app.put("/api/supervisor-attendance/{record_id}")
 def correct_supervisor_attendance(record_id: int, data: SupervisorAttendanceCorrectionIn,
                                    session=Depends(require_roles("admin", "head_supervisor"))):
-    """تعديل يدوي استثنائي من الإدارة (مثلاً المشرف نسي يسجل انصراف) - بيسجل
-    مين عدّل وإمتى وليه، وميحذفش أي بيانات أصلية من السجل"""
+    """تعديل يدوي استثنائي من الإدارة (مثلاً المشرف نسي يسجل انصراف، أو مواعيد
+    العمل اتغيرت بعد ما المشرف سجل حضوره) - بيسجل مين عدّل وإمتى وليه، وميحذفش
+    أي بيانات أصلية من السجل.
+
+    مهم: التأخير (late_minutes) بيتحسب من جديد دايمًا هنا من وقت الحضور
+    المسجل (القديم أو الجديد لو اتغيّر) مقابل إعدادات مواعيد العمل *الحالية* -
+    عشان لو الأدمن غيّر بداية الدوام أو فترة السماح بعد ما المشرف سجل حضوره،
+    يقدر يصحح السجل من غير ما يحسب يدويًا. الحالة (status) بتتحسب تلقائيًا
+    كمان إلا لو الأدمن اختار حالة معينة يدويًا من القائمة (زي معذور/غايب)."""
     with get_connection() as conn:
         row = conn.execute("SELECT * FROM supervisor_attendance WHERE id=?", (record_id,)).fetchone()
         if not row:
@@ -4920,14 +4927,31 @@ def correct_supervisor_attendance(record_id: int, data: SupervisorAttendanceCorr
             except ValueError:
                 raise HTTPException(status_code=400, detail="صيغة الوقت غير صحيحة")
 
+        # إعادة حساب الحالة ودقائق التأخير من وقت الحضور مقابل إعدادات مواعيد
+        # العمل الحالية (مش القديمة وقت ما المشرف سجل حضوره فعليًا)
+        computed_status, computed_late = None, None
+        if new_check_in:
+            settings = _get_attendance_settings(conn)
+            if settings and settings.get("work_start_time"):
+                try:
+                    checkin_dt = datetime.fromisoformat(new_check_in)
+                    computed_status, computed_late = compute_attendance_status(
+                        checkin_dt, settings["work_start_time"], settings["grace_period_minutes"]
+                    )
+                except ValueError:
+                    pass
+
+        final_status = data.status or computed_status or row["status"]
+        final_late = computed_late if computed_late is not None else row["late_minutes"]
+
         conn.execute("""
             UPDATE supervisor_attendance SET
-                check_in=?, check_out=?, status=COALESCE(?, status), working_minutes=?,
+                check_in=?, check_out=?, status=?, late_minutes=?, working_minutes=?,
                 notes=COALESCE(?, notes),
                 modified_by_admin=?, modified_at=CURRENT_TIMESTAMP, modification_reason=?,
                 updated_at=CURRENT_TIMESTAMP
             WHERE id=?
-        """, (new_check_in, new_check_out, data.status, working_minutes, data.notes,
+        """, (new_check_in, new_check_out, final_status, final_late, working_minutes, data.notes,
               session["id"], data.reason, record_id))
 
         log_session_activity(
