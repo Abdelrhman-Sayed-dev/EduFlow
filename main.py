@@ -4667,12 +4667,28 @@ def _get_attendance_settings(conn):
     return dict(row) if row else None
 
 
+def _with_recomputed_working_minutes(row: dict) -> dict:
+    """بيعيد حساب مدة العمل دايمًا من الفرق الفعلي بين وقت الحضور ووقت الانصراف
+    المخزنين في السجل، بدل ما نعتمد على عمود working_minutes المخزّن اللي ممكن
+    يفضل قديم/غير متزامن (مثلاً لو السجل اتصحح يدويًا قبل ما نضيف إعادة الحساب
+    هنا، أو حصل أي تعديل مباشر على القاعدة). التاريخين المخزنين UTC فعلي، فالفرق
+    بينهم صحيح دايمًا بغض النظر عن التوقيت المحلي المعروض للمستخدم."""
+    if row and row.get("check_in") and row.get("check_out"):
+        try:
+            check_in_dt = datetime.fromisoformat(row["check_in"])
+            check_out_dt = datetime.fromisoformat(row["check_out"])
+            row["working_minutes"] = max(0, int((check_out_dt - check_in_dt).total_seconds() // 60))
+        except ValueError:
+            pass
+    return row
+
+
 def _get_today_supervisor_attendance(conn, supervisor_id: int):
     row = conn.execute(
         "SELECT * FROM supervisor_attendance WHERE supervisor_id=? AND attendance_date=?",
         (supervisor_id, _today_str())
     ).fetchone()
-    return dict(row) if row else None
+    return _with_recomputed_working_minutes(dict(row)) if row else None
 
 
 @app.get("/api/supervisor-attendance/settings")
@@ -4724,7 +4740,7 @@ def get_my_supervisor_attendance_history(limit: int = 30, session=Depends(requir
             "SELECT * FROM supervisor_attendance WHERE supervisor_id=? ORDER BY attendance_date DESC LIMIT ?",
             (session["id"], max(1, min(limit, 365)))
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [_with_recomputed_working_minutes(dict(r)) for r in rows]
 
 
 def _validate_location_or_raise(settings: dict, data: SupervisorCheckInOut):
@@ -4878,7 +4894,7 @@ def list_supervisor_attendance(date: Optional[str] = None, supervisor_id: Option
             params.append(status)
         query += " ORDER BY sa.attendance_date DESC, u.full_name"
         rows = conn.execute(query, params).fetchall()
-        return [dict(r) for r in rows]
+        return [_with_recomputed_working_minutes(dict(r)) for r in rows]
 
 
 @app.get("/api/supervisor-attendance/{record_id}")
@@ -4894,7 +4910,7 @@ def get_supervisor_attendance_detail(record_id: int, session=Depends(require_rol
         """, (record_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="سجل الحضور غير موجود")
-        return dict(row)
+        return _with_recomputed_working_minutes(dict(row))
 
 
 @app.put("/api/supervisor-attendance/{record_id}")
@@ -4959,7 +4975,67 @@ def correct_supervisor_attendance(record_id: int, data: SupervisorAttendanceCorr
             f"تعديل يدوي لسجل حضور مشرف #{record_id} - السبب: {data.reason}"
         )
         updated = conn.execute("SELECT * FROM supervisor_attendance WHERE id=?", (record_id,)).fetchone()
-        return dict(updated)
+        return _with_recomputed_working_minutes(dict(updated))
+
+
+@app.delete("/api/supervisor-attendance/{record_id}")
+def delete_supervisor_attendance(record_id: int, session=Depends(require_roles("admin", "head_supervisor"))):
+    """حذف سجل حضور مشرف نهائيًا - مفيد لو حصلت مشكلة (مثلاً تسجيل حضور غلط
+    أو مشكلة GPS) وعايزين نمسح السجل عشان المشرف يقدر يسجل حضوره تاني في نفس
+    اليوم (فيه قيد UNIQUE على المشرف واليوم، فمينفعش يسجل حضور جديد للنهاردة
+    غير لو السجل القديم اتمسح)."""
+    with get_connection() as conn:
+        row = conn.execute("SELECT * FROM supervisor_attendance WHERE id=?", (record_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="سجل الحضور غير موجود")
+        conn.execute("DELETE FROM supervisor_attendance WHERE id=?", (record_id,))
+        log_session_activity(
+            conn, session, "supervisor_attendance_delete",
+            f"حذف سجل حضور مشرف #{record_id} - {row['attendance_date']}"
+        )
+        return {"message": "تم حذف السجل، يقدر المشرف يسجل حضوره تاني"}
+
+
+@app.get("/api/supervisor-attendance/monthly-report")
+def get_supervisor_attendance_monthly_report(supervisor_id: int, year: int, month: int,
+                                              session=Depends(require_roles("admin", "head_supervisor"))):
+    """تقرير شهري لمشرف واحد: عدد أيام العمل، عدد ساعات العمل، عدد ساعات
+    التأخير، أيام الغياب، وعدد مرات التأخير - محسوبين من سجلات الشهر المطلوب."""
+    if month < 1 or month > 12:
+        raise HTTPException(status_code=400, detail="الشهر غير صحيح")
+
+    with get_connection() as conn:
+        supervisor = conn.execute(
+            "SELECT id, full_name FROM users WHERE id=? AND role='supervisor'", (supervisor_id,)
+        ).fetchone()
+        if not supervisor:
+            raise HTTPException(status_code=404, detail="المشرف غير موجود")
+
+        month_prefix = f"{year:04d}-{month:02d}"
+        rows = conn.execute(
+            "SELECT * FROM supervisor_attendance WHERE supervisor_id=? AND attendance_date LIKE ? ORDER BY attendance_date",
+            (supervisor_id, f"{month_prefix}%")
+        ).fetchall()
+        rows = [_with_recomputed_working_minutes(dict(r)) for r in rows]
+
+        work_days = sum(1 for r in rows if r["check_in"])
+        total_working_minutes = sum(r["working_minutes"] or 0 for r in rows if r["working_minutes"])
+        total_late_minutes = sum(r["late_minutes"] or 0 for r in rows if r["late_minutes"])
+        absent_days = sum(1 for r in rows if r["status"] == "absent")
+        late_count = sum(1 for r in rows if (r["late_minutes"] or 0) > 0)
+
+        return {
+            "supervisor_id": supervisor["id"],
+            "supervisor_name": supervisor["full_name"],
+            "year": year,
+            "month": month,
+            "work_days": work_days,
+            "work_hours": round(total_working_minutes / 60, 1),
+            "late_hours": round(total_late_minutes / 60, 1),
+            "absent_days": absent_days,
+            "late_count": late_count,
+            "records": rows,
+        }
 
 
 @app.get("/api/students/{student_id}/attendance")
