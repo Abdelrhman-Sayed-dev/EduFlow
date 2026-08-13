@@ -4,6 +4,7 @@ import hashlib
 import secrets
 import bcrypt
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from contextlib import contextmanager
 
 # لازم قاعدة البيانات تتخزن في نفس الـ DATA_DIR اللي بيتحدد من متغير البيئة
@@ -129,20 +130,24 @@ def haversine_distance_meters(lat1: float, lon1: float, lat2: float, lon2: float
     return R * c
 
 
-# فرق التوقيت المحلي المستخدم في النظام (توقيت القاهرة - مصر مفيهاش توقيت صيفي
-# من 2016) - بيتحدد مرة واحدة هنا عشان مواعيد العمل (9 صباحًا مثلاً) تتفهم صح،
-# مع إن التخزين الفعلي لكل الأوقات في قاعدة البيانات لسه بتوقيت UTC زي باقي النظام
-APP_TIMEZONE_OFFSET_HOURS = int(os.environ.get("APP_TIMEZONE_OFFSET_HOURS", "2"))
+# فرق التوقيت المحلي المستخدم في النظام (توقيت القاهرة) - بيتحدد بمنطقة زمنية
+# حقيقية (مش رقم ثابت) عشان يتعامل صح مع التوقيت الصيفي: مصر رجّعت التوقيت
+# الصيفي من 2023 (UTC+3 في الصيف، UTC+2 في الشتاء). رقم ثابت زي "+2" كان بيدي
+# نتيجة غلط في الصيف (مواعيد الحضور بتتحسب متأخرة بساعة عن الحقيقة، فمشرف يدخل
+# متأخر فعليًا كان بيتحسب حاضر لأن وقته المحسوب بيطلع قبل بداية الدوام).
+# التخزين الفعلي لكل الأوقات في قاعدة البيانات لسه بتوقيت UTC زي باقي النظام.
+APP_TIMEZONE = ZoneInfo(os.environ.get("APP_TIMEZONE_NAME", "Africa/Cairo"))
 
 
 def to_app_local_time(utc_time: datetime) -> datetime:
-    return utc_time + timedelta(hours=APP_TIMEZONE_OFFSET_HOURS)
+    return utc_time.replace(tzinfo=ZoneInfo("UTC")).astimezone(APP_TIMEZONE).replace(tzinfo=None)
 
 
 def compute_attendance_status(check_in_time_utc: datetime, work_start_time: str, grace_period_minutes: int):
     """
     بيحدد حالة الحضور (present/late) ودقائق التأخير بناءً على وقت الدخول
-    الفعلي (server time UTC، بيتحول لتوقيت النظام المحلي هنا) ومواعيد العمل.
+    الفعلي (server time UTC، بيتحول لتوقيت القاهرة المحلي هنا مع مراعاة
+    التوقيت الصيفي) ومواعيد العمل.
     work_start_time بصيغة 'HH:MM' بتوقيت النظام المحلي (مش UTC).
     """
     local_time = to_app_local_time(check_in_time_utc)
