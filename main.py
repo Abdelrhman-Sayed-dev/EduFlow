@@ -4462,6 +4462,47 @@ def get_student_scores(student_id: int, session=Depends(get_current_session)):
 # الحضور والغياب - Attendance
 # ---------------------------------------------------------------------------
 
+@app.get("/api/attendance-sessions")
+def list_attendance_sessions(group_id: Optional[int] = None,
+                              session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
+    """
+    كل الحصص اللي اتاخد فيها غياب فعلاً قبل كده (تاريخ + رقم حصة + مجموعة)،
+    مع ملخص للحالات في كل حصة - بيستخدم في عرض سجل الحصص في صفحة الحضور
+    وبيدعم الفلترة بمجموعة معينة.
+    """
+    with get_connection() as conn:
+        if session["role"] == "supervisor" and group_id:
+            assert_supervisor_owns_group(conn, session, group_id)
+
+        query = """
+            SELECT s.group_id, g.name as group_name, a.session_date, a.session_number,
+                   COUNT(*) as marked_count,
+                   SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END) as present_count,
+                   SUM(CASE WHEN a.status='absent' THEN 1 ELSE 0 END) as absent_count,
+                   SUM(CASE WHEN a.status='late' THEN 1 ELSE 0 END) as late_count,
+                   SUM(CASE WHEN a.status='excused' THEN 1 ELSE 0 END) as excused_count,
+                   (SELECT COUNT(*) FROM students s2 WHERE s2.group_id = s.group_id) as total_students
+            FROM attendance a
+            JOIN students s ON s.id = a.student_id
+            JOIN groups g ON g.id = s.group_id
+            WHERE 1=1
+        """
+        params = []
+        if group_id:
+            query += " AND s.group_id = ?"
+            params.append(group_id)
+        if session["role"] == "supervisor":
+            query += " AND s.group_id IN (SELECT group_id FROM group_supervisors WHERE supervisor_id=?)"
+            params.append(session["id"])
+
+        query += """
+            GROUP BY s.group_id, a.session_date, a.session_number
+            ORDER BY a.session_date DESC, a.session_number DESC, g.name
+        """
+        rows = conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+
 @app.get("/api/attendance/{session_date}")
 def get_attendance_by_date(session_date: str, group_id: Optional[int] = None,
                             session_number: int = 1,
