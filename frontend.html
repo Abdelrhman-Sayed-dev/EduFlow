@@ -5711,10 +5711,23 @@ async function renderAttendancePage(){
           <option value="unmarked">غير محدد</option>
           ${Object.keys(ATT_LABELS).map(k=>`<option value="${k}">${ATT_LABELS[k]}</option>`).join("")}
         </select>
+        ${canEdit && groups.length>1 ? `<select class="filter-select" id="att_history_group_filter" onchange="loadAttendanceHistoryList()"><option value="">كل المجموعات</option>${groupOptionsAll()}</select>` : ""}
       </div>
     </div>
 
     <div id="attSessionsWrap">${canEdit ? ATT_EMPTY_STATE_HTML : `<div class="empty-state"><div class="empty-icon"><i data-lucide="lock" style="width:26px;height:26px;"></i></div><div class="empty-title">مفيش صلاحية</div><div class="empty-desc">أخذ الغياب متاح للمشرف بس.</div></div>`}</div>
+
+    ${canEdit ? `
+    <div class="table-card" style="margin-top:18px;padding:0;overflow:hidden;">
+      <div style="padding:14px 16px 10px;display:flex;align-items:center;gap:8px;">
+        <i data-lucide="history" style="width:15px;height:15px;color:var(--primary);"></i>
+        <h3 style="font-size:14px;font-weight:700;margin:0;">الحصص اللي اتاخد فيها غياب قبل كده</h3>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>المجموعة</th><th>التاريخ</th><th>الحصة</th><th>حاضر</th><th>غايب</th><th>متأخر</th><th>بإذن</th><th>عدد الطلاب</th><th></th></tr></thead>
+        <tbody id="attHistoryTableBody"><tr><td colspan="9" class="loading-row"><span class="spinner"></span> بتحمّل...</td></tr></tbody>
+      </table></div>
+    </div>` : ""}
   `;
   icons();
 
@@ -5724,6 +5737,44 @@ async function renderAttendancePage(){
       await openAttendancePanel(s.group_id, s.group_name, s.session_number, s.date || todayStr());
     }
   }
+
+  if (canEdit){
+    await loadAttendanceHistoryList();
+  }
+}
+
+async function loadAttendanceHistoryList(){
+  const tbody = document.getElementById("attHistoryTableBody");
+  if (!tbody) return;
+  const groupSel = document.getElementById("att_history_group_filter");
+  const groupId = groupSel ? groupSel.value : "";
+  tbody.innerHTML = `<tr><td colspan="9" class="loading-row"><span class="spinner"></span> بتحمّل...</td></tr>`;
+  let rows = [];
+  try{
+    rows = await api(`/api/attendance-sessions${groupId ? `?group_id=${groupId}` : ""}`);
+  }catch(e){
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--danger);padding:24px;">تعذر تحميل سجل الحصص</td></tr>`;
+    return;
+  }
+  if (!rows.length){
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:24px;">لسه معملتش أي حصة غياب</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows.map(r=>{
+    const label = ATT_SESSION_NAMES[r.session_number] || r.session_number;
+    return `<tr>
+      <td class="td-name">${escapeHtml(r.group_name)}</td>
+      <td>${r.session_date}</td>
+      <td>${label}</td>
+      <td><span class="badge badge-green">${r.present_count}</span></td>
+      <td><span class="badge badge-red">${r.absent_count}</span></td>
+      <td><span class="badge badge-amber">${r.late_count}</span></td>
+      <td><span class="badge badge-blue">${r.excused_count}</span></td>
+      <td style="color:var(--text-3);">${r.marked_count}/${r.total_students}</td>
+      <td><button class="btn btn-ghost" style="height:28px;font-size:12px;" onclick="openAttendancePanel(${r.group_id}, '${escapeHtml(r.group_name).replace(/'/g, "\\'")}', ${r.session_number}, '${r.session_date}')"><i data-lucide="edit-3" style="width:12px;height:12px;"></i> فتح / تعديل</button></td>
+    </tr>`;
+  }).join("");
+  icons();
 }
 
 async function renderAttendanceStatsOnlyPage(){
