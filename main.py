@@ -11,6 +11,7 @@ backend.py
 
 import os
 import io
+import re
 import csv
 import random
 import json
@@ -20,6 +21,7 @@ import asyncio
 import calendar
 import secrets
 import hashlib
+import requests
 from urllib.parse import quote
 from datetime import datetime, timedelta
 from openpyxl import load_workbook, Workbook
@@ -331,8 +333,7 @@ class SupervisorAttendanceSettingsIn(BaseModel):
     work_longitude: float
     allowed_radius_meters: int = Field(..., gt=0)
     max_gps_accuracy_meters: int = Field(..., gt=0)
-    work_start_time: str  # 'HH:MM'
-    work_end_time: str    # 'HH:MM'
+    work_start_time: str  # 'HH:MM' - بداية الدوام (المرجع الوحيد لحساب التأخير)
     grace_period_minutes: int = Field(..., ge=0)
 
 
@@ -342,6 +343,10 @@ class SupervisorAttendanceCorrectionIn(BaseModel):
     status: Optional[str] = None
     notes: Optional[str] = Field(None, max_length=2000)
     reason: str = Field(..., min_length=3, max_length=2000)
+
+
+class LocationLinkIn(BaseModel):
+    url: str = Field(..., max_length=2000)
 
 
 class SurveyQuestionIn(BaseModel):
@@ -4600,6 +4605,63 @@ def _today_str() -> str:
     return datetime.utcnow().strftime("%Y-%m-%d")
 
 
+# دومينات جوجل مابس المسموح نطلب منها بس - عشان مانستخدمش الـendpoint ده كـ proxy عام لأي رابط
+_ALLOWED_MAP_LINK_HOSTS = ("google.com", "goo.gl", "g.co", "maps.app.goo.gl")
+
+_COORD_PATTERNS = [
+    re.compile(r"^\s*(-?\d{1,3}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)\s*$"),  # "lat,lng" مباشرة
+    re.compile(r"@(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)"),               # .../@lat,lng,zoom
+    re.compile(r"[?&]q=(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)"),          # ?q=lat,lng
+    re.compile(r"[?&]ll=(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)"),         # ?ll=lat,lng
+    re.compile(r"!3d(-?\d{1,3}\.\d+)!4d(-?\d{1,3}\.\d+)"),           # صيغة !3dlat!4dlng
+]
+
+
+def _extract_coords_from_text(text: str):
+    for pattern in _COORD_PATTERNS:
+        m = pattern.search(text)
+        if m:
+            try:
+                lat, lng = float(m.group(1)), float(m.group(2))
+                if -90 <= lat <= 90 and -180 <= lng <= 180:
+                    return lat, lng
+            except ValueError:
+                continue
+    return None
+
+
+@app.post("/api/supervisor-attendance/resolve-location-link")
+def resolve_supervisor_location_link(data: LocationLinkIn, session=Depends(require_roles("admin"))):
+    """بيستقبل رابط من خرائط جوجل (طويل أو مختصر) ويرجّع lat/lng - بيتبع أي
+    تحويل (redirect) للروابط المختصرة زي maps.app.goo.gl عشان يوصل للرابط
+    النهائي اللي فيه الإحداثيات"""
+    url = data.url.strip()
+
+    # جرب نستخرج الإحداثيات من النص نفسه الأول من غير أي طلب شبكة
+    direct = _extract_coords_from_text(url)
+    if direct:
+        return {"latitude": direct[0], "longitude": direct[1]}
+
+    if not re.match(r"^https?://", url, re.IGNORECASE):
+        raise HTTPException(status_code=400, detail="الرابط غير صحيح")
+
+    host = url.split("//", 1)[-1].split("/", 1)[0].lower()
+    if not any(host == d or host.endswith("." + d) for d in _ALLOWED_MAP_LINK_HOSTS):
+        raise HTTPException(status_code=400, detail="مسموح بس بروابط خرائط جوجل (Google Maps)")
+
+    try:
+        resp = requests.get(url, allow_redirects=True, timeout=8,
+                             headers={"User-Agent": "Mozilla/5.0"})
+        final_url = resp.url
+        found = _extract_coords_from_text(final_url) or _extract_coords_from_text(resp.text[:20000])
+    except requests.RequestException:
+        raise HTTPException(status_code=400, detail="تعذر الوصول للرابط، جرب تاني")
+
+    if not found:
+        raise HTTPException(status_code=400, detail="تعذر استخراج الإحداثيات من الرابط ده")
+    return {"latitude": found[0], "longitude": found[1]}
+
+
 def _get_attendance_settings(conn):
     row = conn.execute("SELECT * FROM supervisor_attendance_settings WHERE id=1").fetchone()
     return dict(row) if row else None
@@ -4625,21 +4687,23 @@ def get_supervisor_attendance_settings(session=Depends(require_roles("admin", "h
 @app.put("/api/supervisor-attendance/settings")
 def update_supervisor_attendance_settings(data: SupervisorAttendanceSettingsIn,
                                            session=Depends(require_roles("admin"))):
-    for label, value in (("وقت بداية العمل", data.work_start_time), ("وقت نهاية العمل", data.work_end_time)):
-        parts = value.split(":")
-        if len(parts) != 2 or not all(p.isdigit() for p in parts):
-            raise HTTPException(status_code=400, detail=f"صيغة {label} غير صحيحة، لازم تكون HH:MM")
+    parts = data.work_start_time.split(":")
+    if len(parts) != 2 or not all(p.isdigit() for p in parts):
+        raise HTTPException(status_code=400, detail="صيغة وقت بداية العمل غير صحيحة، لازم تكون HH:MM")
 
     with get_connection() as conn:
+        # work_end_time متسيبة زي ما هي في القاعدة (مش بتتحدث ولا بتتحقق منها) -
+        # النظام بقى بيعتمد على بداية الدوام بس لحساب التأخير، وساعات العمل بتتحسب
+        # تلقائيًا من الفرق بين الحضور والانصراف مهما كان وقت الانصراف
         conn.execute("""
             UPDATE supervisor_attendance_settings SET
                 work_latitude=?, work_longitude=?, allowed_radius_meters=?,
-                max_gps_accuracy_meters=?, work_start_time=?, work_end_time=?,
+                max_gps_accuracy_meters=?, work_start_time=?,
                 grace_period_minutes=?, updated_by=?, updated_at=CURRENT_TIMESTAMP
             WHERE id=1
         """, (
             data.work_latitude, data.work_longitude, data.allowed_radius_meters,
-            data.max_gps_accuracy_meters, data.work_start_time, data.work_end_time,
+            data.max_gps_accuracy_meters, data.work_start_time,
             data.grace_period_minutes, session["id"]
         ))
         log_session_activity(conn, session, "supervisor_attendance_settings_update",

@@ -3,3 +3,4 @@ uvicorn[standard]
 bcrypt
 python-multipart
 openpyxl
+requests

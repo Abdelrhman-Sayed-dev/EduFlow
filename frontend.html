@@ -11780,20 +11780,107 @@ async function submitSupervisorAttendanceCorrection(recordId){
   await loadSupervisorAttendanceList();
 }
 
+let SAS_LAT = null;
+let SAS_LNG = null;
+
+function parseGoogleMapsCoords(text){
+  if (!text) return null;
+  text = text.trim();
+  const patterns = [
+    /^(-?\d{1,3}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)$/,   // "lat,lng" مباشرة
+    /@(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)/,           // .../@lat,lng,zoom
+    /[?&]q=(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)/,      // ?q=lat,lng
+    /[?&]ll=(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)/,     // ?ll=lat,lng
+    /!3d(-?\d{1,3}\.\d+)!4d(-?\d{1,3}\.\d+)/,       // !3dlat!4dlng
+  ];
+  for (const re of patterns){
+    const m = text.match(re);
+    if (m){
+      const lat = parseFloat(m[1]), lng = parseFloat(m[2]);
+      if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) return {lat, lng};
+    }
+  }
+  return null;
+}
+
+function updateSasLocationStatus(lat, lng, errorMsg){
+  const box = document.getElementById("sas_location_status");
+  if (!box) return;
+  if (errorMsg){
+    box.innerHTML = `<div style="background:var(--danger-bg);color:var(--danger);border-radius:var(--radius-md);padding:10px 12px;font-size:12.5px;">${escapeHtml(errorMsg)}</div>`;
+    return;
+  }
+  box.innerHTML = `<div style="background:var(--success-bg);color:var(--success);border-radius:var(--radius-md);padding:10px 12px;font-size:12.5px;">
+    ✅ الموقع المحدد: ${lat.toFixed(6)}, ${lng.toFixed(6)}
+    &nbsp;<a href="https://www.google.com/maps?q=${lat},${lng}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">(عرض على الخريطة)</a>
+  </div>`;
+}
+
+async function resolveSupervisorLocationLink(){
+  const input = document.getElementById("sas_link");
+  const val = (input.value || "").trim();
+  if (!val){ showToast("الصق رابط الموقع أو اكتب الإحداثيات الأول", "error"); return; }
+
+  const local = parseGoogleMapsCoords(val);
+  if (local){
+    SAS_LAT = local.lat; SAS_LNG = local.lng;
+    updateSasLocationStatus(SAS_LAT, SAS_LNG);
+    return;
+  }
+
+  if (!/^https?:\/\//i.test(val)){
+    updateSasLocationStatus(null, null, "الرابط غير صحيح، أو اكتب الإحداثيات مباشرة بصيغة lat,lng");
+    return;
+  }
+
+  const box = document.getElementById("sas_location_status");
+  box.innerHTML = `<div class="loading-row"><span class="spinner"></span> بيتحقق من الرابط...</div>`;
+  try{
+    const res = await api("/api/supervisor-attendance/resolve-location-link", {method:"POST", body: JSON.stringify({url: val})});
+    SAS_LAT = res.latitude; SAS_LNG = res.longitude;
+    updateSasLocationStatus(SAS_LAT, SAS_LNG);
+  }catch(e){
+    updateSasLocationStatus(null, null, e.message || "تعذر استخراج الإحداثيات من الرابط ده. جرب تفتح الموقع في المتصفح وتنسخ الرابط من شريط العنوان.");
+  }
+}
+
+async function useMyCurrentLocationForSettings(){
+  const box = document.getElementById("sas_location_status");
+  box.innerHTML = `<div class="loading-row"><span class="spinner"></span> بيحدد موقعك...</div>`;
+  let pos;
+  try{ pos = await getGeolocationPosition(); }
+  catch(err){ updateSasLocationStatus(null, null, geolocationErrorMessage(err)); return; }
+  SAS_LAT = pos.coords.latitude; SAS_LNG = pos.coords.longitude;
+  document.getElementById("sas_link").value = `${SAS_LAT},${SAS_LNG}`;
+  updateSasLocationStatus(SAS_LAT, SAS_LNG);
+}
+
 async function openSupervisorAttendanceSettingsModal(){
   let settings;
   try{ settings = await api("/api/supervisor-attendance/settings"); }
   catch(e){ return; }
 
+  SAS_LAT = settings.work_latitude ?? null;
+  SAS_LNG = settings.work_longitude ?? null;
+
   openModal(
     "إعدادات مكان العمل ومواعيد الحضور",
     `
-    <div style="font-size:12.5px;color:var(--text-2);margin-bottom:12px;">
-      حدد إحداثيات مقر العمل (تقدر تجيبها من خرائط جوجل بالضغط المطول على المكان)، والنطاق المسموح بالمتر.
+    <div class="form-group">
+      <label class="form-label">رابط أو إحداثيات مقر العمل</label>
+      <div style="display:flex;gap:8px;">
+        <input type="text" class="form-input" id="sas_link" placeholder="الصق رابط الموقع من خرائط جوجل هنا" style="flex:1;">
+        <button type="button" class="btn btn-ghost" onclick="resolveSupervisorLocationLink()" style="white-space:nowrap;"><i data-lucide="link" style="width:14px;height:14px;"></i> تحقق</button>
+      </div>
+      <div style="font-size:11.5px;color:var(--text-3);margin-top:6px;">
+        افتح خرائط جوجل، دوس مطولًا على مكان العمل، وانسخ الرابط من زرار المشاركة أو من شريط العنوان.
+      </div>
     </div>
-    <div class="form-row-2">
-      <div class="form-group"><label class="form-label">Latitude</label><input type="number" step="0.000001" class="form-input" id="sas_lat" value="${settings.work_latitude ?? ''}"></div>
-      <div class="form-group"><label class="form-label">Longitude</label><input type="number" step="0.000001" class="form-input" id="sas_lng" value="${settings.work_longitude ?? ''}"></div>
+    <div style="text-align:center;margin-bottom:12px;">
+      <button type="button" class="btn btn-ghost" onclick="useMyCurrentLocationForSettings()"><i data-lucide="crosshair" style="width:14px;height:14px;"></i> استخدام موقعي الحالي (GPS)</button>
+    </div>
+    <div id="sas_location_status" style="margin-bottom:14px;">
+      ${settings.work_latitude != null ? `<div style="background:var(--success-bg);color:var(--success);border-radius:var(--radius-md);padding:10px 12px;font-size:12.5px;">✅ الموقع المحفوظ حاليًا: ${settings.work_latitude.toFixed(6)}, ${settings.work_longitude.toFixed(6)}</div>` : `<div style="background:var(--warning-bg);color:var(--warning);border-radius:var(--radius-md);padding:10px 12px;font-size:12.5px;">⚠️ لسه محددتش موقع مقر العمل</div>`}
     </div>
     <div class="form-row-2">
       <div class="form-group"><label class="form-label">النطاق المسموح (متر)</label><input type="number" min="1" class="form-input" id="sas_radius" value="${settings.allowed_radius_meters}"></div>
@@ -11801,39 +11888,39 @@ async function openSupervisorAttendanceSettingsModal(){
     </div>
     <div class="form-row-2">
       <div class="form-group"><label class="form-label">بداية الدوام</label><input type="time" class="form-input" id="sas_start" value="${settings.work_start_time}"></div>
-      <div class="form-group"><label class="form-label">نهاية الدوام</label><input type="time" class="form-input" id="sas_end" value="${settings.work_end_time}"></div>
+      <div class="form-group"><label class="form-label">فترة السماح (دقيقة) قبل اعتبار المشرف متأخر</label><input type="number" min="0" class="form-input" id="sas_grace" value="${settings.grace_period_minutes}"></div>
     </div>
-    <div class="form-group"><label class="form-label">فترة السماح (دقيقة) قبل اعتبار المشرف متأخر</label><input type="number" min="0" class="form-input" id="sas_grace" value="${settings.grace_period_minutes}"></div>
+    <div style="font-size:12px;color:var(--text-3);background:var(--surface-2);border-radius:var(--radius-md);padding:10px 12px;">
+      مفيش وقت نهاية دوام ثابت - المشرف يسجل انصراف في أي وقت، ومدة العمل بتتحسب تلقائيًا من الفرق بين وقت الحضور والانصراف.
+    </div>
     `,
     `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
      <button class="btn btn-primary" onclick="submitSupervisorAttendanceSettings()"><i data-lucide="save" style="width:14px;height:14px;"></i> حفظ الإعدادات</button>`,
     {width: "480px"}
   );
+  icons();
 }
 
 async function submitSupervisorAttendanceSettings(){
-  const lat = parseFloat(document.getElementById("sas_lat").value);
-  const lng = parseFloat(document.getElementById("sas_lng").value);
   const radius = parseInt(document.getElementById("sas_radius").value, 10);
   const accuracy = parseInt(document.getElementById("sas_accuracy").value, 10);
   const start = document.getElementById("sas_start").value;
-  const end = document.getElementById("sas_end").value;
   const grace = parseInt(document.getElementById("sas_grace").value, 10);
 
-  if (isNaN(lat) || isNaN(lng)){
-    showToast("لازم تدخل إحداثيات مقر العمل (Latitude/Longitude)", "error");
+  if (SAS_LAT === null || SAS_LNG === null || isNaN(SAS_LAT) || isNaN(SAS_LNG)){
+    showToast("لازم تحدد موقع مقر العمل الأول (بالرابط أو بموقعك الحالي)", "error");
     return;
   }
-  if (!start || !end){
-    showToast("لازم تحدد مواعيد بداية ونهاية الدوام", "error");
+  if (!start){
+    showToast("لازم تحدد ميعاد بداية الدوام", "error");
     return;
   }
 
   try{
     await api("/api/supervisor-attendance/settings", {method:"PUT", body: JSON.stringify({
-      work_latitude: lat, work_longitude: lng,
+      work_latitude: SAS_LAT, work_longitude: SAS_LNG,
       allowed_radius_meters: radius, max_gps_accuracy_meters: accuracy,
-      work_start_time: start, work_end_time: end, grace_period_minutes: grace
+      work_start_time: start, grace_period_minutes: grace
     })});
   }catch(e){ return; }
   showToast("تم حفظ الإعدادات", "success");
