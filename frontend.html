@@ -11821,15 +11821,19 @@ async function openSupervisorAttendanceMonthlyReportModal(){
     <div id="samr_result"></div>
     `,
     `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>
+     <button class="btn btn-ghost" id="samr_print_btn" style="display:none;" onclick="printSupervisorAttendanceMonthlyReport()"><i data-lucide="printer" style="width:14px;height:14px;"></i> طباعة / تصدير</button>
      <button class="btn btn-primary" onclick="loadSupervisorAttendanceMonthlyReport()"><i data-lucide="bar-chart-2" style="width:14px;height:14px;"></i> عرض التقرير</button>`,
-    {width: "520px"}
+    {width: "680px"}
   );
 }
+
+let LAST_SUPERVISOR_ATTENDANCE_REPORT = null;
 
 async function loadSupervisorAttendanceMonthlyReport(){
   const supervisorId = document.getElementById("samr_supervisor").value;
   const monthVal = document.getElementById("samr_month").value; // "YYYY-MM"
   const resultBox = document.getElementById("samr_result");
+  const printBtn = document.getElementById("samr_print_btn");
 
   if (!supervisorId){
     showToast("اختار المشرف الأول", "error");
@@ -11842,11 +11846,37 @@ async function loadSupervisorAttendanceMonthlyReport(){
 
   const [year, month] = monthVal.split("-").map(Number);
   resultBox.innerHTML = `<div class="loading-row" style="margin-top:10px;"><span class="spinner"></span> بيتحمّل...</div>`;
+  if (printBtn) printBtn.style.display = "none";
 
   let report;
   try{
     report = await api(`/api/supervisor-attendance/monthly-report?supervisor_id=${supervisorId}&year=${year}&month=${month}`);
   }catch(e){ resultBox.innerHTML = ""; return; }
+
+  LAST_SUPERVISOR_ATTENDANCE_REPORT = report;
+  if (printBtn) printBtn.style.display = "";
+
+  const daysHtml = report.records.length ? `
+    <div class="table-wrap" style="margin-top:6px;"><table>
+      <thead><tr>
+        <th>التاريخ</th><th>الحضور</th><th>الانصراف</th><th>مدة العمل</th><th>التأخير</th><th>الحالة</th>
+      </tr></thead>
+      <tbody>
+        ${report.records.map(r=>{
+          const badge = supervisorAttendanceStatusBadge(r.status);
+          return `
+          <tr>
+            <td>${r.attendance_date}</td>
+            <td>${formatDateTimeLocal(r.check_in)}</td>
+            <td>${formatDateTimeLocal(r.check_out)}</td>
+            <td>${formatWorkingMinutes(r.working_minutes)}</td>
+            <td>${r.late_minutes ? r.late_minutes + ' د' : '—'}</td>
+            <td><span class="badge ${badge.cls}">${badge.label}</span></td>
+          </tr>`;
+        }).join("")}
+      </tbody>
+    </table></div>
+  ` : `<div class="empty-state" style="margin-top:10px;"><div class="empty-title">مفيش سجلات حضور في الشهر ده</div></div>`;
 
   resultBox.innerHTML = `
     <div style="font-size:13px;color:var(--text-2);margin:14px 0 8px;">
@@ -11858,12 +11888,12 @@ async function loadSupervisorAttendanceMonthlyReport(){
         <div style="font-size:11.5px;color:var(--text-3);margin-top:2px;">عدد أيام العمل</div>
       </div>
       <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:12px;text-align:center;">
-        <div style="font-weight:700;font-size:18px;color:var(--primary);">${report.work_hours}</div>
-        <div style="font-size:11.5px;color:var(--text-3);margin-top:2px;">عدد ساعات العمل</div>
+        <div style="font-weight:700;font-size:18px;color:var(--primary);">${formatWorkingMinutes(report.work_minutes_total)}</div>
+        <div style="font-size:11.5px;color:var(--text-3);margin-top:2px;">إجمالي ساعات العمل</div>
       </div>
       <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:12px;text-align:center;">
-        <div style="font-weight:700;font-size:18px;color:var(--warning);">${report.late_hours}</div>
-        <div style="font-size:11.5px;color:var(--text-3);margin-top:2px;">عدد ساعات التأخير</div>
+        <div style="font-weight:700;font-size:18px;color:var(--warning);">${formatWorkingMinutes(report.late_minutes_total)}</div>
+        <div style="font-size:11.5px;color:var(--text-3);margin-top:2px;">إجمالي ساعات التأخير</div>
       </div>
       <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:12px;text-align:center;">
         <div style="font-weight:700;font-size:18px;color:var(--warning);">${report.late_count}</div>
@@ -11874,7 +11904,113 @@ async function loadSupervisorAttendanceMonthlyReport(){
         <div style="font-size:11.5px;color:var(--text-3);margin-top:2px;">أيام الغياب</div>
       </div>
     </div>
+    <div style="font-size:12.5px;font-weight:700;color:var(--text-2);margin:16px 0 4px;">تفاصيل الأيام</div>
+    ${daysHtml}
   `;
+  icons();
+}
+
+function printSupervisorAttendanceMonthlyReport(){
+  const report = LAST_SUPERVISOR_ATTENDANCE_REPORT;
+  if (!report){ showToast("لسه البيانات مبتحمّلتش", "error"); return; }
+
+  const todayLabel = new Date().toLocaleDateString("ar-EG", {year:"numeric", month:"long", day:"numeric"});
+  const monthLabel = `${ARABIC_MONTH_NAMES[report.month-1]} ${report.year}`;
+
+  const rowsHtml = report.records.length ? report.records.map(r=>{
+    const badge = supervisorAttendanceStatusBadge(r.status);
+    return `
+      <tr>
+        <td>${r.attendance_date}</td>
+        <td>${formatDateTimeLocal(r.check_in)}</td>
+        <td>${formatDateTimeLocal(r.check_out)}</td>
+        <td>${formatWorkingMinutes(r.working_minutes)}</td>
+        <td>${r.late_minutes ? r.late_minutes + ' دقيقة' : '—'}</td>
+        <td>${badge.label}</td>
+      </tr>`;
+  }).join("") : `<tr><td colspan="6" style="padding:20px;color:var(--muted);">مفيش سجلات حضور في الشهر ده</td></tr>`;
+
+  const doc = `
+    <!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
+    <title>تقرير حضور - ${escapeHtml(report.supervisor_name)} - ${monthLabel}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+      @page { size: A4; margin: 14mm 12mm; }
+      *{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;color-adjust:exact;}
+      :root{
+        --ink:#2E2D29; --muted:#8A8778; --line:#E6E3DC;
+        --primary:#3E7CB1; --primary-soft:#EFF5FA;
+        --neutral-soft:#F2F1ED;
+        --page-bg:#FAF9F6;
+      }
+      body{font-family:'Cairo','Segoe UI',sans-serif;color:var(--ink);margin:0;padding:0;background:var(--page-bg);}
+      .report-page{max-width:820px;margin:0 auto;padding:22px 26px 30px;}
+      .card{background:#fff;border-radius:14px;border:1px solid var(--line);}
+      .rpt-header{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:18px 22px;margin-bottom:16px;}
+      .rpt-header-left{display:flex;align-items:center;gap:12px;}
+      .rpt-logo{width:46px;height:46px;border-radius:50%;background:var(--primary-soft);color:var(--primary);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+      .rpt-logo svg{width:24px;height:24px;}
+      .rpt-title{font-size:17px;font-weight:800;color:var(--ink);}
+      .rpt-subtitle{font-size:12px;color:var(--muted);margin-top:2px;}
+      .rpt-header-right{text-align:left;font-size:11.5px;color:var(--muted);}
+      .rpt-header-right .instructor{font-weight:700;color:var(--ink);font-size:12.5px;margin-bottom:2px;}
+      .info-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;padding:16px;margin-bottom:16px;}
+      .info-item{text-align:center;padding:6px 4px;}
+      .info-item .lbl{font-size:10.5px;color:var(--muted);margin-bottom:2px;}
+      .info-item .val{font-size:15px;font-weight:800;color:var(--ink);}
+      .section-title{font-size:13.5px;font-weight:800;color:var(--ink);margin:20px 4px 10px;display:flex;align-items:center;gap:6px;}
+      .section-title .bar{width:4px;height:14px;background:var(--primary);border-radius:99px;}
+      table{width:100%;border-collapse:collapse;font-size:12.5px;}
+      th,td{padding:9px 10px;text-align:center;border-bottom:1px solid var(--line);}
+      th{background:#FAFAF8;font-weight:700;color:var(--muted);font-size:11px;}
+      tr:last-child td{border-bottom:none;}
+      .table-card{padding:4px 14px 8px;overflow:hidden;}
+      .rpt-footer{text-align:center;margin-top:20px;padding:12px;font-size:11px;color:var(--muted);}
+      .rpt-footer .tagline{font-weight:700;color:var(--primary);font-size:12px;margin-bottom:3px;}
+      .print-btn-bar{max-width:820px;margin:14px auto;display:flex;justify-content:flex-end;}
+      .print-btn{background:var(--primary);color:#fff;border:none;border-radius:8px;padding:10px 20px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;}
+      @media print{ .no-print{display:none !important;} body{background:#fff;} .report-page{padding:0;} .card{box-shadow:none;} }
+    </style></head><body>
+    <div class="print-btn-bar no-print"><button class="print-btn" onclick="window.print()">🖨️ طباعة / حفظ PDF</button></div>
+    <div class="report-page">
+      <div class="card rpt-header">
+        <div class="rpt-header-left">
+          <div class="rpt-logo">${RPT_ICONS.shield}</div>
+          <div>
+            <div class="rpt-title">تقرير حضور مشرف</div>
+            <div class="rpt-subtitle">${monthLabel}</div>
+          </div>
+        </div>
+        <div class="rpt-header-right">
+          <div class="instructor">${escapeHtml(report.supervisor_name)}</div>
+          <div>تاريخ الإصدار: ${todayLabel}</div>
+        </div>
+      </div>
+      <div class="card info-grid">
+        <div class="info-item"><div class="lbl">أيام العمل</div><div class="val">${report.work_days}</div></div>
+        <div class="info-item"><div class="lbl">إجمالي ساعات العمل</div><div class="val">${formatWorkingMinutes(report.work_minutes_total)}</div></div>
+        <div class="info-item"><div class="lbl">إجمالي ساعات التأخير</div><div class="val">${formatWorkingMinutes(report.late_minutes_total)}</div></div>
+        <div class="info-item"><div class="lbl">مرات التأخير</div><div class="val">${report.late_count}</div></div>
+        <div class="info-item"><div class="lbl">أيام الغياب</div><div class="val">${report.absent_days}</div></div>
+      </div>
+      <div class="section-title"><span class="bar"></span>تفاصيل الأيام</div>
+      <div class="card table-card">
+        <table>
+          <thead><tr><th>التاريخ</th><th>الحضور</th><th>الانصراف</th><th>مدة العمل</th><th>التأخير</th><th>الحالة</th></tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </div>
+      <div class="rpt-footer">
+        <div class="tagline">EduFlow</div>
+        <div>تقرير مُولّد تلقائيًا من نظام إدارة حضور المشرفين</div>
+      </div>
+    </div>
+    </body></html>
+  `;
+
+  const win = window.open("", "_blank");
+  win.document.write(doc);
+  win.document.close();
 }
 
 let SAS_LAT = null;
