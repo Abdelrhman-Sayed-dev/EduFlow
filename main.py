@@ -35,7 +35,8 @@ from database import (
     gen_access_code, gen_numeric_code, gen_temp_password, session_expiry, cleanup_expired_sessions,
     is_login_blocked, record_failed_login, clear_failed_logins, cleanup_old_login_attempts,
     get_first_subscription_date, get_paid_months, LOGIN_ATTEMPT_MAX,
-    participation_level, PARTICIPATION_LEVELS
+    participation_level, PARTICIPATION_LEVELS,
+    haversine_distance_meters, compute_attendance_status
 )
 
 app = FastAPI(title="منصة المدرس - نظام إدارة الطلاب والمجموعات")
@@ -315,6 +316,32 @@ class AttendanceCodeIn(BaseModel):
     session_date: str
     status: str
     session_number: int = 1
+
+
+class SupervisorCheckInOut(BaseModel):
+    """بيانات الموقع اللي بيبعتها المتصفح - القرار النهائي كله في الباك إند،
+    مفيش هنا أي status/distance/time جاي من الفرونت"""
+    latitude: float
+    longitude: float
+    accuracy: float = Field(..., ge=0)
+
+
+class SupervisorAttendanceSettingsIn(BaseModel):
+    work_latitude: float
+    work_longitude: float
+    allowed_radius_meters: int = Field(..., gt=0)
+    max_gps_accuracy_meters: int = Field(..., gt=0)
+    work_start_time: str  # 'HH:MM'
+    work_end_time: str    # 'HH:MM'
+    grace_period_minutes: int = Field(..., ge=0)
+
+
+class SupervisorAttendanceCorrectionIn(BaseModel):
+    check_in: Optional[str] = None
+    check_out: Optional[str] = None
+    status: Optional[str] = None
+    notes: Optional[str] = Field(None, max_length=2000)
+    reason: str = Field(..., min_length=3, max_length=2000)
 
 
 class SurveyQuestionIn(BaseModel):
@@ -768,6 +795,10 @@ ACTION_LABELS = {
     "group_add": "إضافة مجموعة",
     "group_update": "تعديل مجموعة",
     "group_delete": "حذف مجموعة",
+    "supervisor_check_in": "تسجيل حضور مشرف",
+    "supervisor_check_out": "تسجيل انصراف مشرف",
+    "supervisor_attendance_correction": "تعديل يدوي لحضور مشرف",
+    "supervisor_attendance_settings_update": "تعديل إعدادات حضور المشرفين",
 }
 
 
@@ -4556,6 +4587,291 @@ def set_attendance_by_code(data: AttendanceCodeIn, session=Depends(require_roles
             "message": "تم تسجيل الحضور", "student_name": student["full_name"], "student_id": student["id"],
             "subscription_paid": subscription_paid
         }
+
+
+# =============================================================================
+# حضور وانصراف المشرفين (Supervisor GPS Attendance) - نظام مستقل تمامًا عن
+# حضور الطلاب فوق. القاعدة الأساسية في كل الـ endpoints دي: الباك إند هو
+# اللي بيتخذ القرار النهائي (الوقت - المسافة - الحالة) ومبيثقش في أي قيمة
+# جاية من الفرونت غير lat/lng/accuracy الخام بس.
+# =============================================================================
+
+def _today_str() -> str:
+    return datetime.utcnow().strftime("%Y-%m-%d")
+
+
+def _get_attendance_settings(conn):
+    row = conn.execute("SELECT * FROM supervisor_attendance_settings WHERE id=1").fetchone()
+    return dict(row) if row else None
+
+
+def _get_today_supervisor_attendance(conn, supervisor_id: int):
+    row = conn.execute(
+        "SELECT * FROM supervisor_attendance WHERE supervisor_id=? AND attendance_date=?",
+        (supervisor_id, _today_str())
+    ).fetchone()
+    return dict(row) if row else None
+
+
+@app.get("/api/supervisor-attendance/settings")
+def get_supervisor_attendance_settings(session=Depends(require_roles("admin", "head_supervisor"))):
+    with get_connection() as conn:
+        settings = _get_attendance_settings(conn)
+        if not settings:
+            raise HTTPException(status_code=500, detail="إعدادات نظام حضور المشرفين غير موجودة")
+        return settings
+
+
+@app.put("/api/supervisor-attendance/settings")
+def update_supervisor_attendance_settings(data: SupervisorAttendanceSettingsIn,
+                                           session=Depends(require_roles("admin"))):
+    for label, value in (("وقت بداية العمل", data.work_start_time), ("وقت نهاية العمل", data.work_end_time)):
+        parts = value.split(":")
+        if len(parts) != 2 or not all(p.isdigit() for p in parts):
+            raise HTTPException(status_code=400, detail=f"صيغة {label} غير صحيحة، لازم تكون HH:MM")
+
+    with get_connection() as conn:
+        conn.execute("""
+            UPDATE supervisor_attendance_settings SET
+                work_latitude=?, work_longitude=?, allowed_radius_meters=?,
+                max_gps_accuracy_meters=?, work_start_time=?, work_end_time=?,
+                grace_period_minutes=?, updated_by=?, updated_at=CURRENT_TIMESTAMP
+            WHERE id=1
+        """, (
+            data.work_latitude, data.work_longitude, data.allowed_radius_meters,
+            data.max_gps_accuracy_meters, data.work_start_time, data.work_end_time,
+            data.grace_period_minutes, session["id"]
+        ))
+        log_session_activity(conn, session, "supervisor_attendance_settings_update",
+                              "تعديل إعدادات مكان العمل ومواعيد حضور المشرفين")
+        return {"message": "تم حفظ الإعدادات"}
+
+
+@app.get("/api/supervisor-attendance/today")
+def get_my_supervisor_attendance_today(session=Depends(require_roles("supervisor"))):
+    with get_connection() as conn:
+        return _get_today_supervisor_attendance(conn, session["id"]) or {"status": "not_checked_in"}
+
+
+@app.get("/api/supervisor-attendance/my-history")
+def get_my_supervisor_attendance_history(limit: int = 30, session=Depends(require_roles("supervisor"))):
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM supervisor_attendance WHERE supervisor_id=? ORDER BY attendance_date DESC LIMIT ?",
+            (session["id"], max(1, min(limit, 365)))
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def _validate_location_or_raise(settings: dict, data: SupervisorCheckInOut):
+    """تحقق مشترك بين Check In و Check Out - دقة الـGPS ثم المسافة من مقر العمل"""
+    if settings.get("work_latitude") is None or settings.get("work_longitude") is None:
+        raise HTTPException(status_code=400, detail="مكان العمل لسه متحددش من الإدارة، تواصل مع الأدمن")
+
+    if data.accuracy > settings["max_gps_accuracy_meters"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"دقة تحديد الموقع ضعيفة ({round(data.accuracy)}م). حاول تاني في مكان مفتوح لتحسين إشارة الـGPS"
+        )
+
+    distance = haversine_distance_meters(
+        data.latitude, data.longitude, settings["work_latitude"], settings["work_longitude"]
+    )
+    if distance > settings["allowed_radius_meters"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"أنت خارج نطاق مقر العمل. المسافة الحالية: {round(distance)}م، المسموح: {settings['allowed_radius_meters']}م"
+        )
+    return distance
+
+
+@app.post("/api/supervisor-attendance/check-in")
+def supervisor_check_in(data: SupervisorCheckInOut, session=Depends(require_roles("supervisor"))):
+    with get_connection() as conn:
+        settings = _get_attendance_settings(conn)
+        if not settings:
+            raise HTTPException(status_code=500, detail="إعدادات نظام حضور المشرفين غير موجودة")
+
+        existing = _get_today_supervisor_attendance(conn, session["id"])
+        if existing and existing.get("check_in") and not existing.get("check_out"):
+            raise HTTPException(status_code=400, detail="أنت مسجل حضور بالفعل، سجل انصراف بدل كده")
+        if existing and existing.get("check_in") and existing.get("check_out"):
+            raise HTTPException(status_code=400, detail="أنت سجلت حضور وانصراف بالفعل النهاردة")
+
+        distance = _validate_location_or_raise(settings, data)
+
+        now = datetime.utcnow()
+        status, late_minutes = compute_attendance_status(now, settings["work_start_time"], settings["grace_period_minutes"])
+        now_iso = now.isoformat(timespec="seconds")
+        today = _today_str()
+
+        conn.execute("""
+            INSERT INTO supervisor_attendance
+                (supervisor_id, attendance_date, check_in, check_in_latitude, check_in_longitude,
+                 check_in_accuracy, check_in_distance, status, late_minutes, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(supervisor_id, attendance_date) DO UPDATE SET
+                check_in=excluded.check_in, check_in_latitude=excluded.check_in_latitude,
+                check_in_longitude=excluded.check_in_longitude, check_in_accuracy=excluded.check_in_accuracy,
+                check_in_distance=excluded.check_in_distance, status=excluded.status,
+                late_minutes=excluded.late_minutes, updated_at=CURRENT_TIMESTAMP
+        """, (session["id"], today, now_iso, data.latitude, data.longitude, data.accuracy,
+              distance, status, late_minutes))
+
+        log_session_activity(conn, session, "supervisor_check_in",
+                              f"تسجيل حضور - المسافة {round(distance)}م - الحالة: {status}")
+        return _get_today_supervisor_attendance(conn, session["id"])
+
+
+@app.post("/api/supervisor-attendance/check-out")
+def supervisor_check_out(data: SupervisorCheckInOut, session=Depends(require_roles("supervisor"))):
+    with get_connection() as conn:
+        settings = _get_attendance_settings(conn)
+        if not settings:
+            raise HTTPException(status_code=500, detail="إعدادات نظام حضور المشرفين غير موجودة")
+
+        existing = _get_today_supervisor_attendance(conn, session["id"])
+        if not existing or not existing.get("check_in"):
+            raise HTTPException(status_code=400, detail="لازم تسجل حضور الأول قبل الانصراف")
+        if existing.get("check_out"):
+            raise HTTPException(status_code=400, detail="أنت سجلت انصراف بالفعل النهاردة")
+
+        distance = _validate_location_or_raise(settings, data)
+
+        now = datetime.utcnow()
+        check_in_time = datetime.fromisoformat(existing["check_in"])
+        working_minutes = max(0, int((now - check_in_time).total_seconds() // 60))
+        now_iso = now.isoformat(timespec="seconds")
+
+        conn.execute("""
+            UPDATE supervisor_attendance SET
+                check_out=?, check_out_latitude=?, check_out_longitude=?, check_out_accuracy=?,
+                check_out_distance=?, working_minutes=?, updated_at=CURRENT_TIMESTAMP
+            WHERE id=?
+        """, (now_iso, data.latitude, data.longitude, data.accuracy, distance, working_minutes, existing["id"]))
+
+        log_session_activity(conn, session, "supervisor_check_out",
+                              f"تسجيل انصراف - المسافة {round(distance)}م - مدة العمل {working_minutes} دقيقة")
+        return _get_today_supervisor_attendance(conn, session["id"])
+
+
+@app.get("/api/supervisor-attendance/summary")
+def get_supervisor_attendance_summary(session=Depends(require_roles("admin", "head_supervisor"))):
+    with get_connection() as conn:
+        today = _today_str()
+        total_supervisors = conn.execute(
+            "SELECT COUNT(*) as c FROM users WHERE role='supervisor' AND is_active=1"
+        ).fetchone()["c"]
+        present_today = conn.execute(
+            "SELECT COUNT(*) as c FROM supervisor_attendance WHERE attendance_date=? AND status='present'",
+            (today,)
+        ).fetchone()["c"]
+        late_today = conn.execute(
+            "SELECT COUNT(*) as c FROM supervisor_attendance WHERE attendance_date=? AND status='late'",
+            (today,)
+        ).fetchone()["c"]
+        currently_working = conn.execute(
+            "SELECT COUNT(*) as c FROM supervisor_attendance WHERE attendance_date=? AND check_in IS NOT NULL AND check_out IS NULL",
+            (today,)
+        ).fetchone()["c"]
+        checked_in_today = conn.execute(
+            "SELECT COUNT(*) as c FROM supervisor_attendance WHERE attendance_date=? AND check_in IS NOT NULL",
+            (today,)
+        ).fetchone()["c"]
+        # "غايب النهاردة" هنا معناها لسه مسجلش حضور خالص لغاية دلوقتي (تقدير مبسط،
+        # مش قرار نهائي، عشان مفيش وقت "قفل اليوم" رسمي في النظام)
+        absent_today = max(0, total_supervisors - checked_in_today)
+
+        return {
+            "total_supervisors": total_supervisors,
+            "present_today": present_today,
+            "late_today": late_today,
+            "absent_today": absent_today,
+            "currently_working": currently_working,
+        }
+
+
+@app.get("/api/supervisor-attendance")
+def list_supervisor_attendance(date: Optional[str] = None, supervisor_id: Optional[int] = None,
+                                status: Optional[str] = None,
+                                session=Depends(require_roles("admin", "head_supervisor"))):
+    with get_connection() as conn:
+        query = """
+            SELECT sa.*, u.full_name as supervisor_name
+            FROM supervisor_attendance sa
+            JOIN users u ON u.id = sa.supervisor_id
+            WHERE 1=1
+        """
+        params = []
+        if date:
+            query += " AND sa.attendance_date = ?"
+            params.append(date)
+        if supervisor_id:
+            query += " AND sa.supervisor_id = ?"
+            params.append(supervisor_id)
+        if status:
+            query += " AND sa.status = ?"
+            params.append(status)
+        query += " ORDER BY sa.attendance_date DESC, u.full_name"
+        rows = conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+
+@app.get("/api/supervisor-attendance/{record_id}")
+def get_supervisor_attendance_detail(record_id: int, session=Depends(require_roles("admin", "head_supervisor"))):
+    with get_connection() as conn:
+        row = conn.execute("""
+            SELECT sa.*, u.full_name as supervisor_name,
+                   m.full_name as modified_by_admin_name
+            FROM supervisor_attendance sa
+            JOIN users u ON u.id = sa.supervisor_id
+            LEFT JOIN users m ON m.id = sa.modified_by_admin
+            WHERE sa.id = ?
+        """, (record_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="سجل الحضور غير موجود")
+        return dict(row)
+
+
+@app.put("/api/supervisor-attendance/{record_id}")
+def correct_supervisor_attendance(record_id: int, data: SupervisorAttendanceCorrectionIn,
+                                   session=Depends(require_roles("admin", "head_supervisor"))):
+    """تعديل يدوي استثنائي من الإدارة (مثلاً المشرف نسي يسجل انصراف) - بيسجل
+    مين عدّل وإمتى وليه، وميحذفش أي بيانات أصلية من السجل"""
+    with get_connection() as conn:
+        row = conn.execute("SELECT * FROM supervisor_attendance WHERE id=?", (record_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="سجل الحضور غير موجود")
+        if data.status and data.status not in ("present", "late", "absent", "excused", "incomplete"):
+            raise HTTPException(status_code=400, detail="حالة غير صحيحة")
+
+        new_check_in = data.check_in if data.check_in is not None else row["check_in"]
+        new_check_out = data.check_out if data.check_out is not None else row["check_out"]
+        working_minutes = row["working_minutes"]
+        if new_check_in and new_check_out:
+            try:
+                working_minutes = max(0, int(
+                    (datetime.fromisoformat(new_check_out) - datetime.fromisoformat(new_check_in)).total_seconds() // 60
+                ))
+            except ValueError:
+                raise HTTPException(status_code=400, detail="صيغة الوقت غير صحيحة")
+
+        conn.execute("""
+            UPDATE supervisor_attendance SET
+                check_in=?, check_out=?, status=COALESCE(?, status), working_minutes=?,
+                notes=COALESCE(?, notes),
+                modified_by_admin=?, modified_at=CURRENT_TIMESTAMP, modification_reason=?,
+                updated_at=CURRENT_TIMESTAMP
+            WHERE id=?
+        """, (new_check_in, new_check_out, data.status, working_minutes, data.notes,
+              session["id"], data.reason, record_id))
+
+        log_session_activity(
+            conn, session, "supervisor_attendance_correction",
+            f"تعديل يدوي لسجل حضور مشرف #{record_id} - السبب: {data.reason}"
+        )
+        updated = conn.execute("SELECT * FROM supervisor_attendance WHERE id=?", (record_id,)).fetchone()
+        return dict(updated)
 
 
 @app.get("/api/students/{student_id}/attendance")

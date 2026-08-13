@@ -111,6 +111,49 @@ def participation_level(total_points: int):
     return "unique", PARTICIPATION_LEVELS["unique"]
 
 
+# ---------------------------------------------------------------------------
+# حضور المشرفين - دوال حسابية مشتركة (المسافة الجغرافية وحالة الحضور)
+# ---------------------------------------------------------------------------
+import math as _math
+
+
+def haversine_distance_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """يحسب المسافة بالمتر بين نقطتين جغرافيتين بمعادلة Haversine"""
+    R = 6371000  # نصف قطر الأرض بالمتر
+    phi1, phi2 = _math.radians(lat1), _math.radians(lat2)
+    d_phi = _math.radians(lat2 - lat1)
+    d_lambda = _math.radians(lon2 - lon1)
+    a = (_math.sin(d_phi / 2) ** 2
+         + _math.cos(phi1) * _math.cos(phi2) * _math.sin(d_lambda / 2) ** 2)
+    c = 2 * _math.atan2(_math.sqrt(a), _math.sqrt(1 - a))
+    return R * c
+
+
+# فرق التوقيت المحلي المستخدم في النظام (توقيت القاهرة - مصر مفيهاش توقيت صيفي
+# من 2016) - بيتحدد مرة واحدة هنا عشان مواعيد العمل (9 صباحًا مثلاً) تتفهم صح،
+# مع إن التخزين الفعلي لكل الأوقات في قاعدة البيانات لسه بتوقيت UTC زي باقي النظام
+APP_TIMEZONE_OFFSET_HOURS = int(os.environ.get("APP_TIMEZONE_OFFSET_HOURS", "2"))
+
+
+def to_app_local_time(utc_time: datetime) -> datetime:
+    return utc_time + timedelta(hours=APP_TIMEZONE_OFFSET_HOURS)
+
+
+def compute_attendance_status(check_in_time_utc: datetime, work_start_time: str, grace_period_minutes: int):
+    """
+    بيحدد حالة الحضور (present/late) ودقائق التأخير بناءً على وقت الدخول
+    الفعلي (server time UTC، بيتحول لتوقيت النظام المحلي هنا) ومواعيد العمل.
+    work_start_time بصيغة 'HH:MM' بتوقيت النظام المحلي (مش UTC).
+    """
+    local_time = to_app_local_time(check_in_time_utc)
+    h, m = [int(x) for x in work_start_time.split(":")]
+    scheduled_start = local_time.replace(hour=h, minute=m, second=0, microsecond=0)
+    diff_minutes = int((local_time - scheduled_start).total_seconds() // 60)
+    if diff_minutes <= grace_period_minutes:
+        return "present", 0
+    return "late", diff_minutes
+
+
 def gen_token() -> str:
     return secrets.token_hex(24)
 
@@ -1124,6 +1167,70 @@ def init_db():
         )
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_online_exam_violations_attempt ON online_exam_violations(attempt_id)")
+
+        # ---------------------------------------------------------------
+        # حضور وانصراف المشرفين (Supervisor Attendance) - نظام مستقل تمامًا
+        # عن حضور الطلاب (جدول attendance فوق). كل عمليات القرار (المسافة،
+        # الوقت، الحالة) بتتحسب في الباك إند فقط (main.py) والجدول ده بيخزن
+        # النتيجة النهائية بس.
+        # ---------------------------------------------------------------
+
+        # إعدادات مكان العمل والمواعيد - صف واحد ثابت (id=1)، قابل للتعديل من الأدمن
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS supervisor_attendance_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            work_latitude REAL,
+            work_longitude REAL,
+            allowed_radius_meters INTEGER NOT NULL DEFAULT 100,
+            max_gps_accuracy_meters INTEGER NOT NULL DEFAULT 50,
+            work_start_time TEXT NOT NULL DEFAULT '09:00',
+            work_end_time TEXT NOT NULL DEFAULT '17:00',
+            grace_period_minutes INTEGER NOT NULL DEFAULT 15,
+            updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+        # صف الإعدادات الافتراضي لازم يكون موجود دايمًا عشان نقدر نعمل عليه UPDATE بسيطة
+        cur.execute("INSERT OR IGNORE INTO supervisor_attendance_settings (id) VALUES (1)")
+
+        # سجل حضور/انصراف المشرفين - صف واحد لكل مشرف لكل يوم
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS supervisor_attendance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            supervisor_id INTEGER NOT NULL,
+            attendance_date TEXT NOT NULL,
+
+            check_in TEXT,
+            check_in_latitude REAL,
+            check_in_longitude REAL,
+            check_in_accuracy REAL,
+            check_in_distance REAL,
+
+            check_out TEXT,
+            check_out_latitude REAL,
+            check_out_longitude REAL,
+            check_out_accuracy REAL,
+            check_out_distance REAL,
+
+            status TEXT NOT NULL DEFAULT 'incomplete' CHECK(status IN ('present','late','absent','excused','incomplete')),
+            late_minutes INTEGER NOT NULL DEFAULT 0,
+            working_minutes INTEGER,
+
+            notes TEXT,
+
+            modified_by_admin INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            modified_at TEXT,
+            modification_reason TEXT,
+
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+            FOREIGN KEY (supervisor_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE(supervisor_id, attendance_date)
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_supervisor_attendance_supervisor ON supervisor_attendance(supervisor_id, attendance_date)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_supervisor_attendance_date ON supervisor_attendance(attendance_date)")
 
         # ---------------------------------------------------------------
         # التقويم - أحداث (حصص/امتحانات/مراجعات) تظهر لمجموعة بعينها أو لمرحلة

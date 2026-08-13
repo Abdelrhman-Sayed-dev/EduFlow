@@ -1248,6 +1248,7 @@ const NAV_BY_ROLE = {
     {id:"online_exams_admin", label:"الامتحانات الإلكترونية", icon:"shield-check"},
     {id:"event_calendar", label:"التقويم", icon:"calendar-days"},
     {id:"attendance", label:"الحضور والغياب", icon:"calendar-check"},
+    {id:"supervisors_attendance_admin", label:"حضور المشرفين", icon:"map-pin"},
     {id:"student_search", label:"بحث عن طالب", icon:"search"},
     {id:"activity_log", label:"سجل الأنشطة", icon:"history"},
     {id:"fraud_alerts", label:"كشف التلاعب", icon:"shield-alert"},
@@ -1274,10 +1275,12 @@ const NAV_BY_ROLE = {
     {id:"teacher_compare", label:"مقارنة المجموعات", icon:"git-compare"},
     {id:"teacher_ranking", label:"الترتيب المتقدم", icon:"trophy"},
     {id:"supervisors", label:"المشرفين", icon:"shield-check"},
+    {id:"supervisors_attendance_admin", label:"حضور المشرفين", icon:"map-pin"},
     {id:"activity_log", label:"سجل الأنشطة", icon:"history"},
     {id:"fraud_alerts", label:"كشف التلاعب", icon:"shield-alert"},
   ],
   supervisor: [
+    {id:"sup_checkin", label:"حضوري وانصرافي", icon:"map-pin"},
     {id:"mygroup", label:"مجموعتي", icon:"users"},
     {id:"boards", label:"سبورة الحصة", icon:"presentation"},
     {id:"quizzes", label:"الكويزات والامتحانات", icon:"file-check-2"},
@@ -1313,6 +1316,7 @@ const STUDENT_BOTTOM_NAV = [
 
 // عناصر الناف بار السفلي الخاص بواجهة المشرف (موبايل)
 const SUPERVISOR_BOTTOM_NAV = [
+  {id:"sup_checkin", label:"حضوري", icon:"map-pin"},
   {id:"mygroup", label:"مجموعتي", icon:"users"},
   {id:"boards", label:"سبورة الحصة", icon:"presentation"},
   {id:"attendance", label:"الحضور", icon:"calendar-check"},
@@ -1445,6 +1449,8 @@ const PAGE_TITLES = {
   event_calendar:"التقويم",
   surveys:"استطلاعات رأي الطلاب",
   student_commitment:"التزام الطلاب",
+  sup_checkin:"حضوري وانصرافي",
+  supervisors_attendance_admin:"حضور المشرفين",
 };
 
 async function renderPage(page){
@@ -1506,6 +1512,8 @@ async function renderPage(page){
       event_calendar: renderEventCalendarPage,
       surveys: renderSurveysPage,
       student_commitment: renderStudentCommitmentPage,
+      sup_checkin: renderSupervisorCheckinPage,
+      supervisors_attendance_admin: renderSupervisorsAttendanceAdminPage,
     };
     const fn = renderers[page];
     if (fn) await fn();
@@ -7573,6 +7581,11 @@ async function renderHeadSupervisorMorePage(){
         <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">المشرفين</div><div style="font-size:11.5px;color:var(--text-3);">متابعة كل المشرفين ومجموعاتهم</div></div>
         <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
       </div>
+      <div class="student-more-item" onclick="navigateTo('supervisors_attendance_admin')">
+        <div class="student-more-ic"><i data-lucide="map-pin" style="width:18px;height:18px;"></i></div>
+        <div style="flex:1;"><div style="font-weight:700;font-size:13.5px;">حضور المشرفين</div><div style="font-size:11.5px;color:var(--text-3);">متابعة حضور وانصراف المشرفين بالـGPS</div></div>
+        <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);"></i>
+      </div>
     </div>
     <div class="table-card" style="padding:6px 12px;">
       <div class="student-more-item" onclick="openAccountModal()">
@@ -11357,13 +11370,475 @@ async function saveCalendarEventForm(eventId){
   await loadCalendarMonth();
 }
 
-async function deleteCalendarEvent(eventId){
-  confirmAction("حذف الحدث", "متأكد إنك عايز تحذف الحدث ده؟", async ()=>{
-    try{ await api(`/api/calendar-events/${eventId}`, {method:"DELETE"}); }catch(e){ return; }
-    closeOverlay("genericModal");
-    showToast("تم حذف الحدث", "success");
-    await loadCalendarMonth();
+/* =====================================================================
+   حضور وانصراف المشرفين (GPS) - صفحة المشرف: تسجيل حضور/انصراف
+===================================================================== */
+function supervisorAttendanceStatusBadge(status){
+  const map = {
+    present: {cls:"badge-green", label:"حاضر"},
+    late: {cls:"badge-amber", label:"متأخر"},
+    absent: {cls:"badge-red", label:"غايب"},
+    excused: {cls:"badge-blue", label:"معذور"},
+    incomplete: {cls:"badge-gray", label:"غير مكتمل"},
+  };
+  return map[status] || {cls:"badge-gray", label: status || "—"};
+}
+
+// الأوقات مخزّنة في قاعدة البيانات بتوقيت السيرفر (UTC) بصيغة ISO من غير Z -
+// بنضيفها هنا يدويًا عشان الجافاسكريبت يفهم إنه UTC ويحولها لتوقيت جهاز المستخدم تلقائيًا
+function formatDateTimeLocal(dateStr, opts){
+  if (!dateStr) return "—";
+  try{
+    let iso = dateStr.includes("T") ? dateStr : dateStr.replace(" ", "T");
+    if (!iso.endsWith("Z")) iso += "Z";
+    const d = new Date(iso);
+    return d.toLocaleString("ar-EG", Object.assign({hour:"2-digit", minute:"2-digit", hour12:true}, opts || {}));
+  }catch(e){ return dateStr; }
+}
+function formatDateTimeFull(dateStr){
+  return formatDateTimeLocal(dateStr, {day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit"});
+}
+function formatWorkingMinutes(mins){
+  if (mins === null || mins === undefined) return "—";
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return `${h} س ${m} د`;
+}
+
+function getGeolocationPosition(){
+  return new Promise((resolve, reject)=>{
+    if (!navigator.geolocation){
+      reject({code:0, message:"المتصفح ده مش بيدعم تحديد الموقع الجغرافي"});
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(resolve, reject, {
+      enableHighAccuracy: true, timeout: 15000, maximumAge: 0
+    });
   });
+}
+function geolocationErrorMessage(err){
+  if (err.code === 1) return "لازم تسمح بالوصول لموقعك الجغرافي عشان تقدر تسجل الحضور.";
+  if (err.code === 2) return "تعذر تحديد موقعك. تأكد إن خدمة الموقع (GPS) مفعّلة وجرب تاني.";
+  if (err.code === 3) return "استغرق تحديد الموقع وقت طويل. جرب تاني في مكان مفتوح.";
+  return err.message || "حصل خطأ أثناء تحديد موقعك.";
+}
+
+async function renderSupervisorCheckinPage(){
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `<div class="empty-state"><div class="empty-title">بتحمّل...</div></div>`;
+  let today;
+  try{ today = await api("/api/supervisor-attendance/today"); }
+  catch(e){ return; }
+  renderSupervisorCheckinUI(today);
+}
+
+function renderSupervisorCheckinUI(today){
+  const c = document.getElementById("pageContainer");
+  const notCheckedIn = !today || !today.check_in;
+  const isWorking = today && today.check_in && !today.check_out;
+  const isDone = today && today.check_in && today.check_out;
+
+  let bodyHtml = "";
+  if (notCheckedIn){
+    bodyHtml = `
+      <div class="table-card" style="padding:32px 20px;text-align:center;">
+        <div style="width:56px;height:56px;border-radius:50%;background:var(--primary-10);display:flex;align-items:center;justify-content:center;margin:0 auto 14px;">
+          <i data-lucide="map-pin" style="width:26px;height:26px;color:var(--primary);"></i>
+        </div>
+        <div style="font-weight:700;font-size:15px;margin-bottom:4px;">حضور النهاردة</div>
+        <div style="font-size:13px;color:var(--text-2);margin-bottom:22px;">لسه ماسجلتش حضور النهاردة</div>
+        <button class="btn btn-primary" style="width:100%;max-width:280px;" onclick="doSupervisorCheckInOut('check-in')">
+          <i data-lucide="log-in" style="width:16px;height:16px;"></i> تسجيل حضور
+        </button>
+      </div>`;
+  } else if (isWorking){
+    bodyHtml = `
+      <div class="table-card" style="padding:32px 20px;text-align:center;">
+        <div style="width:56px;height:56px;border-radius:50%;background:var(--success-bg);display:flex;align-items:center;justify-content:center;margin:0 auto 14px;">
+          <i data-lucide="check-circle-2" style="width:26px;height:26px;color:var(--success);"></i>
+        </div>
+        <div style="font-weight:700;font-size:15px;margin-bottom:4px;">تم تسجيل الحضور</div>
+        <div style="font-size:22px;font-weight:700;color:var(--primary);margin-bottom:6px;">${formatDateTimeLocal(today.check_in)}</div>
+        <div style="font-size:13px;color:var(--text-2);margin-bottom:22px;">شغال دلوقتي...</div>
+        <button class="btn btn-danger" style="width:100%;max-width:280px;" onclick="doSupervisorCheckInOut('check-out')">
+          <i data-lucide="log-out" style="width:16px;height:16px;"></i> تسجيل انصراف
+        </button>
+      </div>`;
+  } else if (isDone){
+    const badge = supervisorAttendanceStatusBadge(today.status);
+    bodyHtml = `
+      <div class="table-card" style="padding:20px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+          <div style="font-weight:700;font-size:14.5px;">حضور النهاردة</div>
+          <span class="badge ${badge.cls}">${badge.label}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+          <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:12px;text-align:center;">
+            <div style="font-size:11px;color:var(--text-3);margin-bottom:4px;">وقت الحضور</div>
+            <div style="font-weight:700;font-size:15px;">${formatDateTimeLocal(today.check_in)}</div>
+          </div>
+          <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:12px;text-align:center;">
+            <div style="font-size:11px;color:var(--text-3);margin-bottom:4px;">وقت الانصراف</div>
+            <div style="font-weight:700;font-size:15px;">${formatDateTimeLocal(today.check_out)}</div>
+          </div>
+        </div>
+        <div style="background:var(--primary-10);border-radius:var(--radius-md);padding:12px;text-align:center;">
+          <div style="font-size:11px;color:var(--text-3);margin-bottom:4px;">مدة العمل</div>
+          <div style="font-weight:700;font-size:16px;color:var(--primary);">${formatWorkingMinutes(today.working_minutes)}</div>
+        </div>
+        ${today.status==='late' ? `<div style="font-size:12.5px;color:var(--warning);text-align:center;margin-top:10px;">تأخير ${today.late_minutes} دقيقة عن ميعاد البداية</div>` : ""}
+      </div>`;
+  }
+
+  c.innerHTML = `
+    <div class="page-header"><div><h1>حضوري وانصرافي</h1><p>تسجيل حضور وانصراف بالموقع الجغرافي - المكان والوقت بيتحققوا من السيرفر</p></div></div>
+    ${bodyHtml}
+    <div id="checkinStatusBox" style="display:none;"></div>
+  `;
+  icons();
+}
+
+async function doSupervisorCheckInOut(action){
+  const box = document.getElementById("checkinStatusBox");
+  const btns = document.querySelectorAll("#pageContainer .btn-primary, #pageContainer .btn-danger");
+  btns.forEach(b => b.disabled = true);
+  box.style.display = "block";
+  box.className = "table-card";
+  box.style.padding = "14px 16px";
+  box.style.marginTop = "14px";
+  box.innerHTML = `<div class="loading-row"><span class="spinner"></span> بيحدد موقعك...</div>`;
+  icons();
+
+  let pos;
+  try{
+    pos = await getGeolocationPosition();
+  }catch(err){
+    box.innerHTML = `<div style="color:var(--danger);font-size:13px;">${escapeHtml(geolocationErrorMessage(err))}</div>`;
+    btns.forEach(b => b.disabled = false);
+    return;
+  }
+
+  const { latitude, longitude, accuracy } = pos.coords;
+  box.innerHTML = `<div class="loading-row"><span class="spinner"></span> بيتحقق من موقعك وبيسجل ${action==='check-in' ? 'الحضور' : 'الانصراف'}...</div>`;
+  icons();
+
+  try{
+    await api(`/api/supervisor-attendance/${action}`, {method:"POST", body: JSON.stringify({latitude, longitude, accuracy})});
+    showToast(action === 'check-in' ? "تم تسجيل الحضور بنجاح" : "تم تسجيل الانصراف بنجاح", "success");
+    await renderSupervisorCheckinPage();
+  }catch(e){
+    box.innerHTML = `<div style="color:var(--danger);font-size:13px;">${escapeHtml(e.message || "تعذر إتمام العملية، تأكد من اتصالك بالإنترنت وجرب تاني")}</div>`;
+    btns.forEach(b => b.disabled = false);
+  }
+}
+
+/* =====================================================================
+   حضور وانصراف المشرفين (GPS) - لوحة الأدمن / مشرف المشرفين
+===================================================================== */
+let SUPERVISOR_ATTENDANCE_STATE = { date: "", supervisor_id: "", status: "" };
+
+async function renderSupervisorsAttendanceAdminPage(){
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `<div class="empty-state"><div class="empty-title">بتحمّل...</div></div>`;
+
+  if (!SUPERVISOR_ATTENDANCE_STATE.date) SUPERVISOR_ATTENDANCE_STATE.date = todayStr();
+
+  let summary, supervisorsList;
+  try{
+    [summary, supervisorsList] = await Promise.all([
+      api("/api/supervisor-attendance/summary"),
+      loadSupervisorsList()
+    ]);
+  }catch(e){ return; }
+
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>حضور المشرفين</h1><p>متابعة حضور وانصراف المشرفين بالموقع الجغرافي (GPS) - القرار كله من السيرفر</p></div>
+      <div class="header-actions">
+        ${SESSION.role === "admin" ? `<button class="btn btn-ghost" onclick="openSupervisorAttendanceSettingsModal()"><i data-lucide="settings-2" style="width:14px;height:14px;"></i> إعدادات مكان العمل</button>` : ""}
+      </div>
+    </div>
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon teal"><i data-lucide="users" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${summary.total_supervisors}</div><div class="stat-label">إجمالي المشرفين</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon green"><i data-lucide="check-circle-2" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${summary.present_today}</div><div class="stat-label">حاضر النهاردة</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon amber"><i data-lucide="clock" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${summary.late_today}</div><div class="stat-label">متأخر النهاردة</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon red"><i data-lucide="user-x" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${summary.absent_today}</div><div class="stat-label">غايب النهاردة</div></div>
+      <div class="stat-card"><div class="stat-top"><div class="stat-icon blue"><i data-lucide="activity" style="width:18px;height:18px;"></i></div></div>
+        <div class="stat-value">${summary.currently_working}</div><div class="stat-label">شغال دلوقتي</div></div>
+    </div>
+    <div class="table-card" style="padding:16px;margin-bottom:14px;">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+        <div style="min-width:150px;">
+          <label class="form-label">التاريخ</label>
+          <input type="date" id="sa_date" class="form-input" value="${SUPERVISOR_ATTENDANCE_STATE.date}" onchange="onSupervisorAttendanceFilterChange()">
+        </div>
+        <div style="min-width:180px;">
+          <label class="form-label">المشرف</label>
+          <select id="sa_supervisor" class="form-input" onchange="onSupervisorAttendanceFilterChange()">
+            <option value="">كل المشرفين</option>
+            ${supervisorsList.map(s=>`<option value="${s.id}" ${String(s.id)===String(SUPERVISOR_ATTENDANCE_STATE.supervisor_id)?"selected":""}>${escapeHtml(s.full_name)}</option>`).join("")}
+          </select>
+        </div>
+        <div style="min-width:150px;">
+          <label class="form-label">الحالة</label>
+          <select id="sa_status" class="form-input" onchange="onSupervisorAttendanceFilterChange()">
+            <option value="">كل الحالات</option>
+            <option value="present" ${SUPERVISOR_ATTENDANCE_STATE.status==='present'?'selected':''}>حاضر</option>
+            <option value="late" ${SUPERVISOR_ATTENDANCE_STATE.status==='late'?'selected':''}>متأخر</option>
+            <option value="absent" ${SUPERVISOR_ATTENDANCE_STATE.status==='absent'?'selected':''}>غايب</option>
+            <option value="excused" ${SUPERVISOR_ATTENDANCE_STATE.status==='excused'?'selected':''}>معذور</option>
+            <option value="incomplete" ${SUPERVISOR_ATTENDANCE_STATE.status==='incomplete'?'selected':''}>غير مكتمل</option>
+          </select>
+        </div>
+        <button class="btn btn-ghost" onclick="resetSupervisorAttendanceFilters()"><i data-lucide="rotate-ccw" style="width:14px;height:14px;"></i> إعادة تعيين</button>
+      </div>
+    </div>
+    <div class="table-card">
+      <div id="sa_results" style="padding:20px 16px;"><div class="loading-row"><span class="spinner"></span> بيتحمّل...</div></div>
+    </div>
+  `;
+  icons();
+  await loadSupervisorAttendanceList();
+}
+
+function onSupervisorAttendanceFilterChange(){
+  SUPERVISOR_ATTENDANCE_STATE.date = document.getElementById("sa_date").value;
+  SUPERVISOR_ATTENDANCE_STATE.supervisor_id = document.getElementById("sa_supervisor").value;
+  SUPERVISOR_ATTENDANCE_STATE.status = document.getElementById("sa_status").value;
+  loadSupervisorAttendanceList();
+}
+
+function resetSupervisorAttendanceFilters(){
+  SUPERVISOR_ATTENDANCE_STATE = { date: todayStr(), supervisor_id: "", status: "" };
+  renderSupervisorsAttendanceAdminPage();
+}
+
+let SUPERVISOR_ATTENDANCE_ROWS_CACHE = [];
+
+async function loadSupervisorAttendanceList(){
+  const box = document.getElementById("sa_results");
+  const params = {};
+  if (SUPERVISOR_ATTENDANCE_STATE.date) params.date = SUPERVISOR_ATTENDANCE_STATE.date;
+  if (SUPERVISOR_ATTENDANCE_STATE.supervisor_id) params.supervisor_id = SUPERVISOR_ATTENDANCE_STATE.supervisor_id;
+  if (SUPERVISOR_ATTENDANCE_STATE.status) params.status = SUPERVISOR_ATTENDANCE_STATE.status;
+  const qs = new URLSearchParams(params).toString();
+
+  let rows;
+  try{ rows = await api("/api/supervisor-attendance" + (qs ? `?${qs}` : "")); }
+  catch(e){ return; }
+  SUPERVISOR_ATTENDANCE_ROWS_CACHE = rows;
+
+  if (!rows.length){
+    box.innerHTML = `<div class="empty-state"><div class="empty-title">مفيش سجلات حضور بالفلتر ده</div></div>`;
+    return;
+  }
+
+  box.innerHTML = `
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th>المشرف</th><th>التاريخ</th><th>الحضور</th><th>الانصراف</th><th>مدة العمل</th><th>التأخير</th><th>الحالة</th>
+      </tr></thead>
+      <tbody>
+        ${rows.map(r=>{
+          const badge = supervisorAttendanceStatusBadge(r.status);
+          return `
+          <tr style="cursor:pointer;" onclick="openSupervisorAttendanceDetail(${r.id})">
+            <td class="td-name">${escapeHtml(r.supervisor_name)}</td>
+            <td>${r.attendance_date}</td>
+            <td>${formatDateTimeLocal(r.check_in)}</td>
+            <td>${formatDateTimeLocal(r.check_out)}</td>
+            <td>${formatWorkingMinutes(r.working_minutes)}</td>
+            <td>${r.late_minutes ? r.late_minutes + ' د' : '—'}</td>
+            <td><span class="badge ${badge.cls}">${badge.label}</span></td>
+          </tr>`;
+        }).join("")}
+      </tbody>
+    </table></div>
+  `;
+  icons();
+}
+
+async function openSupervisorAttendanceDetail(recordId){
+  let r;
+  try{ r = await api(`/api/supervisor-attendance/${recordId}`); }
+  catch(e){ return; }
+  const badge = supervisorAttendanceStatusBadge(r.status);
+  const canEdit = SESSION.role === "admin" || SESSION.role === "head_supervisor";
+
+  openModal(
+    `تفاصيل حضور: ${escapeHtml(r.supervisor_name)}`,
+    `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <div style="font-size:13px;color:var(--text-2);">${r.attendance_date}</div>
+      <span class="badge ${badge.cls}">${badge.label}</span>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+      <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:12px;">
+        <div style="font-size:11px;color:var(--text-3);margin-bottom:4px;">وقت الحضور</div>
+        <div style="font-weight:700;font-size:14.5px;">${formatDateTimeLocal(r.check_in)}</div>
+        ${r.check_in_distance !== null && r.check_in_distance !== undefined ? `<div style="font-size:11.5px;color:var(--text-3);margin-top:4px;">المسافة: ${Math.round(r.check_in_distance)}م • الدقة: ${r.check_in_accuracy ? Math.round(r.check_in_accuracy) : '—'}م</div>` : ""}
+      </div>
+      <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:12px;">
+        <div style="font-size:11px;color:var(--text-3);margin-bottom:4px;">وقت الانصراف</div>
+        <div style="font-weight:700;font-size:14.5px;">${formatDateTimeLocal(r.check_out)}</div>
+        ${r.check_out_distance !== null && r.check_out_distance !== undefined ? `<div style="font-size:11.5px;color:var(--text-3);margin-top:4px;">المسافة: ${Math.round(r.check_out_distance)}م • الدقة: ${r.check_out_accuracy ? Math.round(r.check_out_accuracy) : '—'}م</div>` : ""}
+      </div>
+    </div>
+    <div style="display:flex;gap:12px;margin-bottom:14px;">
+      <div style="flex:1;background:var(--primary-10);border-radius:var(--radius-md);padding:12px;text-align:center;">
+        <div style="font-size:11px;color:var(--text-3);margin-bottom:4px;">مدة العمل</div>
+        <div style="font-weight:700;font-size:15px;color:var(--primary);">${formatWorkingMinutes(r.working_minutes)}</div>
+      </div>
+      <div style="flex:1;background:var(--surface-2);border-radius:var(--radius-md);padding:12px;text-align:center;">
+        <div style="font-size:11px;color:var(--text-3);margin-bottom:4px;">دقائق التأخير</div>
+        <div style="font-weight:700;font-size:15px;">${r.late_minutes || 0}</div>
+      </div>
+    </div>
+    ${r.notes ? `<div style="font-size:13px;margin-bottom:10px;"><b>ملاحظات:</b> ${escapeHtml(r.notes)}</div>` : ""}
+    ${r.modified_by_admin_name ? `
+      <div style="font-size:12px;color:var(--text-3);background:var(--warning-bg);border-radius:var(--radius-md);padding:10px 12px;">
+        <div>تم تعديل هذا السجل بواسطة: <b>${escapeHtml(r.modified_by_admin_name)}</b></div>
+        <div>وقت التعديل: ${formatDateTimeFull(r.modified_at)}</div>
+        ${r.modification_reason ? `<div>السبب: ${escapeHtml(r.modification_reason)}</div>` : ""}
+      </div>` : ""}
+    `,
+    canEdit ? `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>
+      <button class="btn btn-primary" onclick="openSupervisorAttendanceCorrectionModal(${r.id})"><i data-lucide="pencil" style="width:14px;height:14px;"></i> تعديل يدوي</button>`
+      : `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`,
+    {width: "480px"}
+  );
+}
+
+function _toDatetimeLocalInputValue(isoStr){
+  // بيحول التاريخ المخزّن (UTC) لصيغة <input type="datetime-local"> بتوقيت المتصفح المحلي
+  if (!isoStr) return "";
+  try{
+    let iso = isoStr.includes("T") ? isoStr : isoStr.replace(" ", "T");
+    if (!iso.endsWith("Z")) iso += "Z";
+    const d = new Date(iso);
+    const pad = n => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }catch(e){ return ""; }
+}
+
+function openSupervisorAttendanceCorrectionModal(recordId){
+  const r = SUPERVISOR_ATTENDANCE_ROWS_CACHE.find(x => x.id === recordId) || {};
+  openModal(
+    `تعديل يدوي - سجل #${recordId}`,
+    `
+    <div style="font-size:12.5px;color:var(--text-2);margin-bottom:12px;">التعديل اليدوي بيتسجل باسمك ووقته، ومش بيمسح البيانات الأصلية.</div>
+    <div class="form-row-2">
+      <div class="form-group"><label class="form-label">وقت الحضور</label><input type="datetime-local" class="form-input" id="sac_checkin" value="${_toDatetimeLocalInputValue(r.check_in)}"></div>
+      <div class="form-group"><label class="form-label">وقت الانصراف</label><input type="datetime-local" class="form-input" id="sac_checkout" value="${_toDatetimeLocalInputValue(r.check_out)}"></div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">الحالة</label>
+      <select class="form-input" id="sac_status">
+        <option value="">بدون تغيير</option>
+        <option value="present">حاضر</option>
+        <option value="late">متأخر</option>
+        <option value="absent">غايب</option>
+        <option value="excused">معذور</option>
+        <option value="incomplete">غير مكتمل</option>
+      </select>
+    </div>
+    <div class="form-group"><label class="form-label">ملاحظات</label><textarea class="form-input" id="sac_notes" rows="2"></textarea></div>
+    <div class="form-group"><label class="form-label">سبب التعديل (إجباري)</label><textarea class="form-input" id="sac_reason" rows="2" placeholder="مثال: المشرف نسي يسجل انصراف"></textarea></div>
+    `,
+    `<button class="btn btn-ghost" onclick="openSupervisorAttendanceDetail(${recordId})">رجوع</button>
+     <button class="btn btn-primary" onclick="submitSupervisorAttendanceCorrection(${recordId})"><i data-lucide="save" style="width:14px;height:14px;"></i> حفظ التعديل</button>`,
+    {width: "480px"}
+  );
+}
+
+async function submitSupervisorAttendanceCorrection(recordId){
+  const checkInVal = document.getElementById("sac_checkin").value;
+  const checkOutVal = document.getElementById("sac_checkout").value;
+  const status = document.getElementById("sac_status").value;
+  const notes = document.getElementById("sac_notes").value.trim();
+  const reason = document.getElementById("sac_reason").value.trim();
+
+  if (!reason || reason.length < 3){
+    showToast("لازم تكتب سبب التعديل", "error");
+    return;
+  }
+
+  const payload = { reason };
+  if (checkInVal) payload.check_in = new Date(checkInVal).toISOString().slice(0, 19);
+  if (checkOutVal) payload.check_out = new Date(checkOutVal).toISOString().slice(0, 19);
+  if (status) payload.status = status;
+  if (notes) payload.notes = notes;
+
+  try{
+    await api(`/api/supervisor-attendance/${recordId}`, {method:"PUT", body: JSON.stringify(payload)});
+  }catch(e){ return; }
+  showToast("تم حفظ التعديل", "success");
+  closeOverlay("genericModal");
+  await loadSupervisorAttendanceList();
+}
+
+async function openSupervisorAttendanceSettingsModal(){
+  let settings;
+  try{ settings = await api("/api/supervisor-attendance/settings"); }
+  catch(e){ return; }
+
+  openModal(
+    "إعدادات مكان العمل ومواعيد الحضور",
+    `
+    <div style="font-size:12.5px;color:var(--text-2);margin-bottom:12px;">
+      حدد إحداثيات مقر العمل (تقدر تجيبها من خرائط جوجل بالضغط المطول على المكان)، والنطاق المسموح بالمتر.
+    </div>
+    <div class="form-row-2">
+      <div class="form-group"><label class="form-label">Latitude</label><input type="number" step="0.000001" class="form-input" id="sas_lat" value="${settings.work_latitude ?? ''}"></div>
+      <div class="form-group"><label class="form-label">Longitude</label><input type="number" step="0.000001" class="form-input" id="sas_lng" value="${settings.work_longitude ?? ''}"></div>
+    </div>
+    <div class="form-row-2">
+      <div class="form-group"><label class="form-label">النطاق المسموح (متر)</label><input type="number" min="1" class="form-input" id="sas_radius" value="${settings.allowed_radius_meters}"></div>
+      <div class="form-group"><label class="form-label">أقصى خطأ GPS مقبول (متر)</label><input type="number" min="1" class="form-input" id="sas_accuracy" value="${settings.max_gps_accuracy_meters}"></div>
+    </div>
+    <div class="form-row-2">
+      <div class="form-group"><label class="form-label">بداية الدوام</label><input type="time" class="form-input" id="sas_start" value="${settings.work_start_time}"></div>
+      <div class="form-group"><label class="form-label">نهاية الدوام</label><input type="time" class="form-input" id="sas_end" value="${settings.work_end_time}"></div>
+    </div>
+    <div class="form-group"><label class="form-label">فترة السماح (دقيقة) قبل اعتبار المشرف متأخر</label><input type="number" min="0" class="form-input" id="sas_grace" value="${settings.grace_period_minutes}"></div>
+    `,
+    `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+     <button class="btn btn-primary" onclick="submitSupervisorAttendanceSettings()"><i data-lucide="save" style="width:14px;height:14px;"></i> حفظ الإعدادات</button>`,
+    {width: "480px"}
+  );
+}
+
+async function submitSupervisorAttendanceSettings(){
+  const lat = parseFloat(document.getElementById("sas_lat").value);
+  const lng = parseFloat(document.getElementById("sas_lng").value);
+  const radius = parseInt(document.getElementById("sas_radius").value, 10);
+  const accuracy = parseInt(document.getElementById("sas_accuracy").value, 10);
+  const start = document.getElementById("sas_start").value;
+  const end = document.getElementById("sas_end").value;
+  const grace = parseInt(document.getElementById("sas_grace").value, 10);
+
+  if (isNaN(lat) || isNaN(lng)){
+    showToast("لازم تدخل إحداثيات مقر العمل (Latitude/Longitude)", "error");
+    return;
+  }
+  if (!start || !end){
+    showToast("لازم تحدد مواعيد بداية ونهاية الدوام", "error");
+    return;
+  }
+
+  try{
+    await api("/api/supervisor-attendance/settings", {method:"PUT", body: JSON.stringify({
+      work_latitude: lat, work_longitude: lng,
+      allowed_radius_meters: radius, max_gps_accuracy_meters: accuracy,
+      work_start_time: start, work_end_time: end, grace_period_minutes: grace
+    })});
+  }catch(e){ return; }
+  showToast("تم حفظ الإعدادات", "success");
+  closeOverlay("genericModal");
+  await renderSupervisorsAttendanceAdminPage();
 }
 </script>
 
