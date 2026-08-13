@@ -11737,16 +11737,19 @@ function openSupervisorAttendanceCorrectionModal(recordId){
     <div class="form-group">
       <label class="form-label">الحالة</label>
       <select class="form-input" id="sac_status">
-        <option value="">بدون تغيير</option>
-        <option value="present">حاضر</option>
-        <option value="late">متأخر</option>
-        <option value="absent">غايب</option>
-        <option value="excused">معذور</option>
-        <option value="incomplete">غير مكتمل</option>
+        <option value="">تلقائي - احسبها من وقت الحضور ومواعيد العمل الحالية</option>
+        <option value="present">حاضر (يدوي)</option>
+        <option value="late">متأخر (يدوي)</option>
+        <option value="absent">غايب (يدوي)</option>
+        <option value="excused">معذور (يدوي)</option>
+        <option value="incomplete">غير مكتمل (يدوي)</option>
       </select>
+      <div style="font-size:11.5px;color:var(--text-3);margin-top:5px;">
+        سايبها "تلقائي" هيعيد حساب دقائق التأخير والحالة من وقت الحضور فوق مقابل بداية الدوام وفترة السماح المحفوظين دلوقتي في الإعدادات - مفيد لو كنت غيّرت الإعدادات بعد ما المشرف سجل حضوره.
+      </div>
     </div>
     <div class="form-group"><label class="form-label">ملاحظات</label><textarea class="form-input" id="sac_notes" rows="2"></textarea></div>
-    <div class="form-group"><label class="form-label">سبب التعديل (إجباري)</label><textarea class="form-input" id="sac_reason" rows="2" placeholder="مثال: المشرف نسي يسجل انصراف"></textarea></div>
+    <div class="form-group"><label class="form-label">سبب التعديل (إجباري)</label><textarea class="form-input" id="sac_reason" rows="2" placeholder="مثال: تصحيح الحالة بعد تعديل مواعيد العمل"></textarea></div>
     `,
     `<button class="btn btn-ghost" onclick="openSupervisorAttendanceDetail(${recordId})">رجوع</button>
      <button class="btn btn-primary" onclick="submitSupervisorAttendanceCorrection(${recordId})"><i data-lucide="save" style="width:14px;height:14px;"></i> حفظ التعديل</button>`,
