@@ -11554,6 +11554,7 @@ async function renderSupervisorsAttendanceAdminPage(){
     <div class="page-header">
       <div><h1>حضور المشرفين</h1><p>متابعة حضور وانصراف المشرفين بالموقع الجغرافي (GPS) - القرار كله من السيرفر</p></div>
       <div class="header-actions">
+        <button class="btn btn-ghost" onclick="openSupervisorAttendanceMonthlyReportModal()"><i data-lucide="bar-chart-3" style="width:14px;height:14px;"></i> تقرير شهري</button>
         ${SESSION.role === "admin" ? `<button class="btn btn-ghost" onclick="openSupervisorAttendanceSettingsModal()"><i data-lucide="settings-2" style="width:14px;height:14px;"></i> إعدادات مكان العمل</button>` : ""}
       </div>
     </div>
@@ -11706,6 +11707,7 @@ async function openSupervisorAttendanceDetail(recordId){
       </div>` : ""}
     `,
     canEdit ? `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>
+      <button class="btn btn-danger" onclick="deleteSupervisorAttendanceRecord(${r.id})"><i data-lucide="trash-2" style="width:14px;height:14px;"></i> حذف السجل</button>
       <button class="btn btn-primary" onclick="openSupervisorAttendanceCorrectionModal(${r.id})"><i data-lucide="pencil" style="width:14px;height:14px;"></i> تعديل يدوي</button>`
       : `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`,
     {width: "480px"}
@@ -11781,6 +11783,98 @@ async function submitSupervisorAttendanceCorrection(recordId){
   showToast("تم حفظ التعديل", "success");
   closeOverlay("genericModal");
   await loadSupervisorAttendanceList();
+}
+
+async function deleteSupervisorAttendanceRecord(recordId){
+  if (!confirm("متأكد إنك عايز تحذف سجل الحضور ده نهائيًا؟ المشرف هيقدر يسجل حضوره تاني في نفس اليوم.")) return;
+  try{
+    await api(`/api/supervisor-attendance/${recordId}`, {method:"DELETE"});
+  }catch(e){ return; }
+  showToast("تم حذف السجل", "success");
+  closeOverlay("genericModal");
+  await loadSupervisorAttendanceList();
+}
+
+const ARABIC_MONTH_NAMES = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
+
+async function openSupervisorAttendanceMonthlyReportModal(){
+  let supervisorsList;
+  try{ supervisorsList = await loadSupervisorsList(); }catch(e){ return; }
+
+  const now = new Date();
+  openModal(
+    "تقرير شهري لحضور المشرفين",
+    `
+    <div class="form-row-2">
+      <div class="form-group">
+        <label class="form-label">المشرف</label>
+        <select class="form-input" id="samr_supervisor">
+          <option value="">اختار المشرف</option>
+          ${supervisorsList.map(s=>`<option value="${s.id}">${escapeHtml(s.full_name)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">الشهر</label>
+        <input type="month" class="form-input" id="samr_month" value="${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}">
+      </div>
+    </div>
+    <div id="samr_result"></div>
+    `,
+    `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>
+     <button class="btn btn-primary" onclick="loadSupervisorAttendanceMonthlyReport()"><i data-lucide="bar-chart-2" style="width:14px;height:14px;"></i> عرض التقرير</button>`,
+    {width: "520px"}
+  );
+}
+
+async function loadSupervisorAttendanceMonthlyReport(){
+  const supervisorId = document.getElementById("samr_supervisor").value;
+  const monthVal = document.getElementById("samr_month").value; // "YYYY-MM"
+  const resultBox = document.getElementById("samr_result");
+
+  if (!supervisorId){
+    showToast("اختار المشرف الأول", "error");
+    return;
+  }
+  if (!monthVal){
+    showToast("اختار الشهر", "error");
+    return;
+  }
+
+  const [year, month] = monthVal.split("-").map(Number);
+  resultBox.innerHTML = `<div class="loading-row" style="margin-top:10px;"><span class="spinner"></span> بيتحمّل...</div>`;
+
+  let report;
+  try{
+    report = await api(`/api/supervisor-attendance/monthly-report?supervisor_id=${supervisorId}&year=${year}&month=${month}`);
+  }catch(e){ resultBox.innerHTML = ""; return; }
+
+  resultBox.innerHTML = `
+    <div style="font-size:13px;color:var(--text-2);margin:14px 0 8px;">
+      تقرير <b>${escapeHtml(report.supervisor_name)}</b> - ${ARABIC_MONTH_NAMES[report.month-1]} ${report.year}
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+      <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:12px;text-align:center;">
+        <div style="font-weight:700;font-size:18px;color:var(--primary);">${report.work_days}</div>
+        <div style="font-size:11.5px;color:var(--text-3);margin-top:2px;">عدد أيام العمل</div>
+      </div>
+      <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:12px;text-align:center;">
+        <div style="font-weight:700;font-size:18px;color:var(--primary);">${report.work_hours}</div>
+        <div style="font-size:11.5px;color:var(--text-3);margin-top:2px;">عدد ساعات العمل</div>
+      </div>
+      <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:12px;text-align:center;">
+        <div style="font-weight:700;font-size:18px;color:var(--warning);">${report.late_hours}</div>
+        <div style="font-size:11.5px;color:var(--text-3);margin-top:2px;">عدد ساعات التأخير</div>
+      </div>
+      <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:12px;text-align:center;">
+        <div style="font-weight:700;font-size:18px;color:var(--warning);">${report.late_count}</div>
+        <div style="font-size:11.5px;color:var(--text-3);margin-top:2px;">عدد مرات التأخير</div>
+      </div>
+      <div style="grid-column:1 / -1;background:var(--surface-2);border-radius:var(--radius-md);padding:12px;text-align:center;">
+        <div style="font-weight:700;font-size:18px;color:var(--danger);">${report.absent_days}</div>
+        <div style="font-size:11.5px;color:var(--text-3);margin-top:2px;">أيام الغياب</div>
+      </div>
+    </div>
+  `;
 }
 
 let SAS_LAT = null;
