@@ -38,7 +38,7 @@ from database import (
     is_login_blocked, record_failed_login, clear_failed_logins, cleanup_old_login_attempts,
     get_first_subscription_date, get_paid_months, LOGIN_ATTEMPT_MAX,
     participation_level, PARTICIPATION_LEVELS,
-    haversine_distance_meters, compute_attendance_status
+    haversine_distance_meters, compute_attendance_status, to_app_local_time
 )
 
 app = FastAPI(title="منصة المدرس - نظام إدارة الطلاب والمجموعات")
@@ -333,8 +333,18 @@ class SupervisorAttendanceSettingsIn(BaseModel):
     work_longitude: float
     allowed_radius_meters: int = Field(..., gt=0)
     max_gps_accuracy_meters: int = Field(..., gt=0)
-    work_start_time: str  # 'HH:MM' - بداية الدوام (المرجع الوحيد لحساب التأخير)
+    work_start_time: str  # 'HH:MM' - بداية دوام افتراضية (fallback لو يوم معين مالوش سطر في جدول المواعيد الأسبوعي)
     grace_period_minutes: int = Field(..., ge=0)
+
+
+class SupervisorDayScheduleIn(BaseModel):
+    day_of_week: int = Field(..., ge=0, le=6)  # الإثنين=0 ... الأحد=6
+    is_working_day: bool = True
+    work_start_time: str  # 'HH:MM'
+
+
+class SupervisorWeeklyScheduleIn(BaseModel):
+    days: List[SupervisorDayScheduleIn]
 
 
 class SupervisorAttendanceCorrectionIn(BaseModel):
@@ -4503,6 +4513,36 @@ def list_attendance_sessions(group_id: Optional[int] = None,
         return [dict(r) for r in rows]
 
 
+@app.delete("/api/attendance-sessions")
+def delete_attendance_session(group_id: int, session_date: str, session_number: int,
+                               session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
+    """حذف حصة غياب بالكامل (كل سجلات الطلاب المسجلة في مجموعة + تاريخ + رقم
+    حصة معينين) - مفيد لو الحصة اتسجلت غلط أو المشرف عايز يمسحها ويسجلها
+    تاني من الأول."""
+    with get_connection() as conn:
+        if session["role"] == "supervisor":
+            assert_supervisor_owns_group(conn, session, group_id)
+
+        group = conn.execute("SELECT name FROM groups WHERE id=?", (group_id,)).fetchone()
+        if not group:
+            raise HTTPException(status_code=404, detail="المجموعة غير موجودة")
+
+        deleted = conn.execute("""
+            DELETE FROM attendance
+            WHERE session_date=? AND session_number=?
+              AND student_id IN (SELECT id FROM students WHERE group_id=?)
+        """, (session_date, session_number, group_id))
+        if deleted.rowcount == 0:
+            raise HTTPException(status_code=404, detail="مفيش سجلات حضور بالتاريخ والحصة دول للمجموعة دي")
+
+        log_session_activity(
+            conn, session, "attendance",
+            f"حذف حصة غياب كاملة - مجموعة \"{group['name']}\" - حصة {session_number} - تاريخ {session_date}",
+            group_id=group_id
+        )
+        return {"message": f"تم حذف {deleted.rowcount} سجل حضور"}
+
+
 @app.get("/api/attendance/{session_date}")
 def get_attendance_by_date(session_date: str, group_id: Optional[int] = None,
                             session_number: int = 1,
@@ -4708,6 +4748,32 @@ def _get_attendance_settings(conn):
     return dict(row) if row else None
 
 
+DAY_NAMES_AR = ["الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت", "الأحد"]
+
+
+def _get_weekly_schedule(conn):
+    """بيرجع مواعيد الأسبوع السبعة (يوم بيوم) مرتبة من الإثنين للأحد."""
+    rows = conn.execute(
+        "SELECT * FROM supervisor_attendance_weekly_schedule ORDER BY day_of_week"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _get_day_schedule(conn, local_date, settings=None):
+    """بيرجع جدول اليوم المحدد (is_working_day, work_start_time) بتوقيت النظام
+    المحلي. لو مفيش سطر مسجل لليوم ده (حالة نادرة)، بيرجع الإعداد العام
+    كـ fallback عشان النظام يفضل شغال."""
+    dow = local_date.weekday()  # الإثنين=0 ... الأحد=6
+    row = conn.execute(
+        "SELECT * FROM supervisor_attendance_weekly_schedule WHERE day_of_week=?", (dow,)
+    ).fetchone()
+    if row:
+        return {"is_working_day": bool(row["is_working_day"]), "work_start_time": row["work_start_time"]}
+    if settings is None:
+        settings = _get_attendance_settings(conn)
+    return {"is_working_day": True, "work_start_time": (settings or {}).get("work_start_time", "09:00")}
+
+
 def _with_recomputed_working_minutes(row: dict) -> dict:
     """بيعيد حساب مدة العمل دايمًا من الفرق الفعلي بين وقت الحضور ووقت الانصراف
     المخزنين في السجل، بدل ما نعتمد على عمود working_minutes المخزّن اللي ممكن
@@ -4742,8 +4808,13 @@ def _with_recomputed_late_status(row: dict, conn) -> dict:
         return row
     try:
         checkin_dt = datetime.fromisoformat(row["check_in"])
+        day_schedule = _get_day_schedule(conn, to_app_local_time(checkin_dt).date(), settings)
+        if not day_schedule["is_working_day"]:
+            row["status"] = "present"
+            row["late_minutes"] = 0
+            return row
         status, late_minutes = compute_attendance_status(
-            checkin_dt, settings["work_start_time"], settings["grace_period_minutes"]
+            checkin_dt, day_schedule["work_start_time"], settings["grace_period_minutes"]
         )
         row["status"] = status
         row["late_minutes"] = late_minutes
@@ -4794,6 +4865,40 @@ def update_supervisor_attendance_settings(data: SupervisorAttendanceSettingsIn,
         log_session_activity(conn, session, "supervisor_attendance_settings_update",
                               "تعديل إعدادات مكان العمل ومواعيد حضور المشرفين")
         return {"message": "تم حفظ الإعدادات"}
+
+
+@app.get("/api/supervisor-attendance/weekly-schedule")
+def get_supervisor_attendance_weekly_schedule(session=Depends(require_roles("admin", "head_supervisor"))):
+    """مواعيد الأسبوع بيوم بيومه - كل يوم ممكن يكون له معاد بداية مختلف أو
+    يكون إجازة أصلًا (is_working_day=0)."""
+    with get_connection() as conn:
+        return _get_weekly_schedule(conn)
+
+
+@app.put("/api/supervisor-attendance/weekly-schedule")
+def update_supervisor_attendance_weekly_schedule(data: SupervisorWeeklyScheduleIn,
+                                                   session=Depends(require_roles("admin"))):
+    days_by_dow = {}
+    for d in data.days:
+        if d.day_of_week in days_by_dow:
+            raise HTTPException(status_code=400, detail=f"يوم مكرر في القائمة: {d.day_of_week}")
+        parts = d.work_start_time.split(":")
+        if len(parts) != 2 or not all(p.isdigit() for p in parts):
+            raise HTTPException(status_code=400, detail="صيغة وقت بداية العمل غير صحيحة، لازم تكون HH:MM")
+        days_by_dow[d.day_of_week] = d
+    if set(days_by_dow.keys()) != set(range(7)):
+        raise HTTPException(status_code=400, detail="لازم تبعت مواعيد الأيام السبعة كلها")
+
+    with get_connection() as conn:
+        for dow, d in days_by_dow.items():
+            conn.execute("""
+                UPDATE supervisor_attendance_weekly_schedule SET
+                    is_working_day=?, work_start_time=?, updated_by=?, updated_at=CURRENT_TIMESTAMP
+                WHERE day_of_week=?
+            """, (1 if d.is_working_day else 0, d.work_start_time, session["id"], dow))
+        log_session_activity(conn, session, "supervisor_attendance_settings_update",
+                              "تعديل مواعيد الأسبوع لحضور المشرفين")
+        return {"message": "تم حفظ مواعيد الأسبوع"}
 
 
 @app.get("/api/supervisor-attendance/today")
@@ -4850,7 +4955,11 @@ def supervisor_check_in(data: SupervisorCheckInOut, session=Depends(require_role
         distance = _validate_location_or_raise(settings, data)
 
         now = datetime.utcnow()
-        status, late_minutes = compute_attendance_status(now, settings["work_start_time"], settings["grace_period_minutes"])
+        day_schedule = _get_day_schedule(conn, to_app_local_time(now).date(), settings)
+        if day_schedule["is_working_day"]:
+            status, late_minutes = compute_attendance_status(now, day_schedule["work_start_time"], settings["grace_period_minutes"])
+        else:
+            status, late_minutes = "present", 0
         now_iso = now.isoformat(timespec="seconds")
         today = _today_str()
 
@@ -5070,9 +5179,13 @@ def correct_supervisor_attendance(record_id: int, data: SupervisorAttendanceCorr
             if settings and settings.get("work_start_time"):
                 try:
                     checkin_dt = datetime.fromisoformat(new_check_in)
-                    computed_status, computed_late = compute_attendance_status(
-                        checkin_dt, settings["work_start_time"], settings["grace_period_minutes"]
-                    )
+                    day_schedule = _get_day_schedule(conn, to_app_local_time(checkin_dt).date(), settings)
+                    if day_schedule["is_working_day"]:
+                        computed_status, computed_late = compute_attendance_status(
+                            checkin_dt, day_schedule["work_start_time"], settings["grace_period_minutes"]
+                        )
+                    else:
+                        computed_status, computed_late = "present", 0
                 except ValueError:
                     pass
 

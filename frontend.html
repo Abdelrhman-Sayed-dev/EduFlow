@@ -5724,8 +5724,8 @@ async function renderAttendancePage(){
         <h3 style="font-size:14px;font-weight:700;margin:0;">الحصص اللي اتاخد فيها غياب قبل كده</h3>
       </div>
       <div class="table-wrap"><table>
-        <thead><tr><th>المجموعة</th><th>التاريخ</th><th>الحصة</th><th>حاضر</th><th>غايب</th><th>متأخر</th><th>بإذن</th><th>عدد الطلاب</th><th></th></tr></thead>
-        <tbody id="attHistoryTableBody"><tr><td colspan="9" class="loading-row"><span class="spinner"></span> بتحمّل...</td></tr></tbody>
+        <thead><tr><th>المجموعة</th><th>التاريخ</th><th>الحصة</th><th>حاضر</th><th>غايب</th><th>متأخر</th><th>بإذن</th><th>عدد الطلاب</th><th></th><th></th></tr></thead>
+        <tbody id="attHistoryTableBody"><tr><td colspan="10" class="loading-row"><span class="spinner"></span> بتحمّل...</td></tr></tbody>
       </table></div>
     </div>` : ""}
   `;
@@ -5748,20 +5748,21 @@ async function loadAttendanceHistoryList(){
   if (!tbody) return;
   const groupSel = document.getElementById("att_history_group_filter");
   const groupId = groupSel ? groupSel.value : "";
-  tbody.innerHTML = `<tr><td colspan="9" class="loading-row"><span class="spinner"></span> بتحمّل...</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="10" class="loading-row"><span class="spinner"></span> بتحمّل...</td></tr>`;
   let rows = [];
   try{
     rows = await api(`/api/attendance-sessions${groupId ? `?group_id=${groupId}` : ""}`);
   }catch(e){
-    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--danger);padding:24px;">تعذر تحميل سجل الحصص</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--danger);padding:24px;">تعذر تحميل سجل الحصص</td></tr>`;
     return;
   }
   if (!rows.length){
-    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:24px;">لسه معملتش أي حصة غياب</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--text-3);padding:24px;">لسه معملتش أي حصة غياب</td></tr>`;
     return;
   }
   tbody.innerHTML = rows.map(r=>{
     const label = ATT_SESSION_NAMES[r.session_number] || r.session_number;
+    const groupNameEsc = escapeHtml(r.group_name).replace(/'/g, "\\'");
     return `<tr>
       <td class="td-name">${escapeHtml(r.group_name)}</td>
       <td>${r.session_date}</td>
@@ -5771,10 +5772,21 @@ async function loadAttendanceHistoryList(){
       <td><span class="badge badge-amber">${r.late_count}</span></td>
       <td><span class="badge badge-blue">${r.excused_count}</span></td>
       <td style="color:var(--text-3);">${r.marked_count}/${r.total_students}</td>
-      <td><button class="btn btn-ghost" style="height:28px;font-size:12px;" onclick="openAttendancePanel(${r.group_id}, '${escapeHtml(r.group_name).replace(/'/g, "\\'")}', ${r.session_number}, '${r.session_date}')"><i data-lucide="edit-3" style="width:12px;height:12px;"></i> فتح / تعديل</button></td>
+      <td><button class="btn btn-ghost" style="height:28px;font-size:12px;" onclick="openAttendancePanel(${r.group_id}, '${groupNameEsc}', ${r.session_number}, '${r.session_date}')"><i data-lucide="edit-3" style="width:12px;height:12px;"></i> فتح / تعديل</button></td>
+      <td><button class="btn btn-ghost" style="height:28px;font-size:12px;color:var(--danger);" onclick="deleteAttendanceSession(${r.group_id}, '${groupNameEsc}', ${r.session_number}, '${r.session_date}')"><i data-lucide="trash-2" style="width:12px;height:12px;"></i> حذف</button></td>
     </tr>`;
   }).join("");
   icons();
+}
+
+async function deleteAttendanceSession(groupId, groupName, sessionNumber, sessionDate){
+  const label = ATT_SESSION_NAMES[sessionNumber] || sessionNumber;
+  if (!confirm(`متأكد إنك عايز تحذف حصة "${label}" بتاريخ ${sessionDate} لمجموعة "${groupName}"؟\nهيتمسح غياب كل الطلاب المسجل للحصة دي نهائيًا ومينفعش ترجعه.`)) return;
+  try{
+    await api(`/api/attendance-sessions?group_id=${groupId}&session_date=${encodeURIComponent(sessionDate)}&session_number=${sessionNumber}`, {method:"DELETE"});
+  }catch(e){ return; }
+  showToast("تم حذف الحصة", "success");
+  await loadAttendanceHistoryList();
 }
 
 async function renderAttendanceStatsOnlyPage(){
@@ -12066,6 +12078,8 @@ function printSupervisorAttendanceMonthlyReport(){
 
 let SAS_LAT = null;
 let SAS_LNG = null;
+const SAS_DAY_NAMES = ["الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت", "الأحد"];
+let SAS_WEEKLY_SCHEDULE = [];
 
 function parseGoogleMapsCoords(text){
   if (!text) return null;
@@ -12140,12 +12154,22 @@ async function useMyCurrentLocationForSettings(){
 }
 
 async function openSupervisorAttendanceSettingsModal(){
-  let settings;
-  try{ settings = await api("/api/supervisor-attendance/settings"); }
+  let settings, weeklySchedule;
+  try{
+    [settings, weeklySchedule] = await Promise.all([
+      api("/api/supervisor-attendance/settings"),
+      api("/api/supervisor-attendance/weekly-schedule")
+    ]);
+  }
   catch(e){ return; }
 
   SAS_LAT = settings.work_latitude ?? null;
   SAS_LNG = settings.work_longitude ?? null;
+  // نتأكد إن عندنا الأيام السبعة كلها حتى لو الجدول رجع ناقص لأي سبب
+  SAS_WEEKLY_SCHEDULE = SAS_DAY_NAMES.map((_, dow) => {
+    const found = weeklySchedule.find(d => d.day_of_week === dow);
+    return found || {day_of_week: dow, is_working_day: 1, work_start_time: settings.work_start_time};
+  });
 
   openModal(
     "إعدادات مكان العمل ومواعيد الحضور",
@@ -12170,9 +12194,27 @@ async function openSupervisorAttendanceSettingsModal(){
       <div class="form-group"><label class="form-label">النطاق المسموح (متر)</label><input type="number" min="1" class="form-input" id="sas_radius" value="${settings.allowed_radius_meters}"></div>
       <div class="form-group"><label class="form-label">أقصى خطأ GPS مقبول (متر)</label><input type="number" min="1" class="form-input" id="sas_accuracy" value="${settings.max_gps_accuracy_meters}"></div>
     </div>
-    <div class="form-row-2">
-      <div class="form-group"><label class="form-label">بداية الدوام</label><input type="time" class="form-input" id="sas_start" value="${settings.work_start_time}"></div>
-      <div class="form-group"><label class="form-label">فترة السماح (دقيقة) قبل اعتبار المشرف متأخر</label><input type="number" min="0" class="form-input" id="sas_grace" value="${settings.grace_period_minutes}"></div>
+    <div class="form-group">
+      <label class="form-label">فترة السماح (دقيقة) قبل اعتبار المشرف متأخر</label>
+      <input type="number" min="0" class="form-input" id="sas_grace" value="${settings.grace_period_minutes}" style="max-width:160px;">
+    </div>
+    <div class="form-group">
+      <label class="form-label">مواعيد بداية الدوام لكل يوم</label>
+      <div style="font-size:11.5px;color:var(--text-3);margin-bottom:8px;">
+        المعاد مش لازم يكون ثابت - كل يوم ممكن يكون له معاد بداية مختلف، أو تعمله إجازة (بدون حساب تأخير خالص).
+      </div>
+      <div id="sas_days_list" style="display:flex;flex-direction:column;gap:6px;">
+        ${SAS_WEEKLY_SCHEDULE.map(d => `
+          <div style="display:flex;align-items:center;gap:10px;background:var(--surface-2);border-radius:var(--radius-md);padding:8px 12px;">
+            <div style="flex:1;font-size:13px;font-weight:600;">${SAS_DAY_NAMES[d.day_of_week]}</div>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-2);white-space:nowrap;">
+              <input type="checkbox" id="sas_day_work_${d.day_of_week}" ${d.is_working_day ? "checked" : ""} onchange="onSasDayWorkingToggle(${d.day_of_week})" style="width:15px;height:15px;">
+              يوم عمل
+            </label>
+            <input type="time" class="form-input" id="sas_day_start_${d.day_of_week}" value="${d.work_start_time}" ${d.is_working_day ? "" : "disabled"} style="max-width:130px;">
+          </div>
+        `).join("")}
+      </div>
     </div>
     <div style="font-size:12px;color:var(--text-3);background:var(--surface-2);border-radius:var(--radius-md);padding:10px 12px;">
       مفيش وقت نهاية دوام ثابت - المشرف يسجل انصراف في أي وقت، ومدة العمل بتتحسب تلقائيًا من الفرق بين وقت الحضور والانصراف.
@@ -12180,32 +12222,47 @@ async function openSupervisorAttendanceSettingsModal(){
     `,
     `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
      <button class="btn btn-primary" onclick="submitSupervisorAttendanceSettings()"><i data-lucide="save" style="width:14px;height:14px;"></i> حفظ الإعدادات</button>`,
-    {width: "480px"}
+    {width: "540px"}
   );
   icons();
+}
+
+function onSasDayWorkingToggle(dow){
+  const checkbox = document.getElementById(`sas_day_work_${dow}`);
+  const timeInput = document.getElementById(`sas_day_start_${dow}`);
+  timeInput.disabled = !checkbox.checked;
 }
 
 async function submitSupervisorAttendanceSettings(){
   const radius = parseInt(document.getElementById("sas_radius").value, 10);
   const accuracy = parseInt(document.getElementById("sas_accuracy").value, 10);
-  const start = document.getElementById("sas_start").value;
   const grace = parseInt(document.getElementById("sas_grace").value, 10);
 
   if (SAS_LAT === null || SAS_LNG === null || isNaN(SAS_LAT) || isNaN(SAS_LNG)){
     showToast("لازم تحدد موقع مقر العمل الأول (بالرابط أو بموقعك الحالي)", "error");
     return;
   }
-  if (!start){
-    showToast("لازم تحدد ميعاد بداية الدوام", "error");
-    return;
+
+  const days = [];
+  let firstWorkingStart = null;
+  for (let dow = 0; dow < 7; dow++){
+    const isWorking = document.getElementById(`sas_day_work_${dow}`).checked;
+    const start = document.getElementById(`sas_day_start_${dow}`).value;
+    if (isWorking && !start){
+      showToast(`لازم تحدد ميعاد بداية الدوام ليوم ${SAS_DAY_NAMES[dow]}`, "error");
+      return;
+    }
+    if (isWorking && firstWorkingStart === null) firstWorkingStart = start;
+    days.push({day_of_week: dow, is_working_day: isWorking, work_start_time: start || "09:00"});
   }
 
   try{
     await api("/api/supervisor-attendance/settings", {method:"PUT", body: JSON.stringify({
       work_latitude: SAS_LAT, work_longitude: SAS_LNG,
       allowed_radius_meters: radius, max_gps_accuracy_meters: accuracy,
-      work_start_time: start, grace_period_minutes: grace
+      work_start_time: firstWorkingStart || "09:00", grace_period_minutes: grace
     })});
+    await api("/api/supervisor-attendance/weekly-schedule", {method:"PUT", body: JSON.stringify({days})});
   }catch(e){ return; }
   showToast("تم حفظ الإعدادات", "success");
   closeOverlay("genericModal");

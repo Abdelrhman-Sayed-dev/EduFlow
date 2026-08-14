@@ -1198,6 +1198,31 @@ def init_db():
         # صف الإعدادات الافتراضي لازم يكون موجود دايمًا عشان نقدر نعمل عليه UPDATE بسيطة
         cur.execute("INSERT OR IGNORE INTO supervisor_attendance_settings (id) VALUES (1)")
 
+        # جدول مواعيد كل يوم في الأسبوع - المعاد مش لازم يكون ثابت لكل الأيام
+        # (مثلاً يوم ممكن يبدأ الساعة 9 ويوم تاني يبدأ الساعة 2، ويوم ممكن يكون
+        # إجازة أصلًا). day_of_week بيتبع Python's date.weekday(): الإثنين=0 ...
+        # الأحد=6. لو يوم مسجل is_working_day=0 مفيش تأخير بيتحسب فيه خالص.
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS supervisor_attendance_weekly_schedule (
+            day_of_week INTEGER PRIMARY KEY CHECK (day_of_week BETWEEN 0 AND 6),
+            is_working_day INTEGER NOT NULL DEFAULT 1,
+            work_start_time TEXT NOT NULL DEFAULT '09:00',
+            updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+        # تعبئة الأيام السبعة بالإعداد العام الحالي كقيمة افتراضية لو الجدول فاضي
+        # (أول مرة الجدول ده بيتعمل - مايكررش فوق البيانات الموجودة بعد كده)
+        default_start_row = cur.execute(
+            "SELECT work_start_time FROM supervisor_attendance_settings WHERE id=1"
+        ).fetchone()
+        default_start = default_start_row["work_start_time"] if default_start_row else "09:00"
+        for dow in range(7):
+            cur.execute(
+                "INSERT OR IGNORE INTO supervisor_attendance_weekly_schedule (day_of_week, is_working_day, work_start_time) VALUES (?, 1, ?)",
+                (dow, default_start)
+            )
+
         # سجل حضور/انصراف المشرفين - صف واحد لكل مشرف لكل يوم
         cur.execute("""
         CREATE TABLE IF NOT EXISTS supervisor_attendance (
