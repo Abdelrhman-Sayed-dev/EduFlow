@@ -2417,6 +2417,18 @@ def get_group_content_by_month(
                         "videos": [],             # فيديوهات الشهر العامة (من غير رقم حصة) تفضل مقفولة
                         "quizzes_no_session": [],  # نفس الفكرة للكويزات من غير رقم حصة
                     }
+            # الشهور اللي الطالب مسددها بس لسه مفيهاش أي محتوى/حضور اتسجل خالص
+            # (يعني أصلاً معملهاش bucket فوق) لازم برضه تظهر - فاضية - عشان
+            # الطالب يطمن إن اشتراكه اتسجل صح، بدل ما الشهر يختفي كأنه مش مسدد
+            for month_key in paid_months:
+                if month_key not in filtered:
+                    filtered[month_key] = {
+                        "month": month_key,
+                        "label": _month_label(month_key),
+                        "sessions": {},
+                        "videos": [],
+                        "quizzes_no_session": [],
+                    }
             months = filtered
 
         dated_keys = sorted(k for k in months.keys() if k != NO_DATE_KEY)
