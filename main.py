@@ -417,6 +417,12 @@ class VideoLinkIn(BaseModel):
     video_url: str
 
 
+class VideoDateUpdateIn(BaseModel):
+    """تعديل تاريخ رفع فيديو موجود بالفعل (created_at) - مفيد لو المشرف عايز
+    يرجّع الفيديو يظهر تحت شهر/تاريخ قديم بدل تاريخ اليوم الفعلي للرفع."""
+    created_at: str  # بصيغة YYYY-MM-DD أو YYYY-MM-DD HH:MM:SS
+
+
 class VideoBunnyIn(BaseModel):
     """إضافة فيديو مستضاف على Bunny Stream - بدل رفع ملف أو رابط عادي.
     bunny_video_id هو الـ Video GUID الظاهر في لوحة تحكم Bunny (Stream Library)."""
@@ -2417,18 +2423,6 @@ def get_group_content_by_month(
                         "videos": [],             # فيديوهات الشهر العامة (من غير رقم حصة) تفضل مقفولة
                         "quizzes_no_session": [],  # نفس الفكرة للكويزات من غير رقم حصة
                     }
-            # الشهور اللي الطالب مسددها بس لسه مفيهاش أي محتوى/حضور اتسجل خالص
-            # (يعني أصلاً معملهاش bucket فوق) لازم برضه تظهر - فاضية - عشان
-            # الطالب يطمن إن اشتراكه اتسجل صح، بدل ما الشهر يختفي كأنه مش مسدد
-            for month_key in paid_months:
-                if month_key not in filtered:
-                    filtered[month_key] = {
-                        "month": month_key,
-                        "label": _month_label(month_key),
-                        "sessions": {},
-                        "videos": [],
-                        "quizzes_no_session": [],
-                    }
             months = filtered
 
         dated_keys = sorted(k for k in months.keys() if k != NO_DATE_KEY)
@@ -2753,6 +2747,44 @@ def delete_video_permanently(video_id: int, session=Depends(require_roles("admin
                 pass
 
         return {"message": "تم حذف الفيديو نهائيًا من المنصة"}
+
+
+@app.patch("/api/videos/{video_id}/date")
+def update_video_date(
+    video_id: int,
+    payload: VideoDateUpdateIn,
+    session=Depends(require_roles("admin", "head_supervisor")),
+):
+    """تعديل تاريخ الفيديو (created_at) - عشان لو المشرف عدّل التاريخ بالغلط أو
+    عايز الفيديو يظهر تحت شهر/يوم قديم بدل تاريخ الرفع الفعلي. متاح بس للأدمن
+    ومشرف المشرفين نفس صلاحية الحذف النهائي."""
+    raw = payload.created_at.strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="التاريخ مطلوب")
+
+    # لو المشرف بعت تاريخ بس من غير وقت (YYYY-MM-DD) بنكمله بوقت افتراضي عشان
+    # يفضل الفورمات موحّد زي باقي الصفوف (CURRENT_TIMESTAMP بيرجع "YYYY-MM-DD HH:MM:SS")
+    if len(raw) == 10:
+        try:
+            datetime.strptime(raw, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="صيغة التاريخ غير صحيحة")
+        raw = f"{raw} 00:00:00"
+    else:
+        try:
+            datetime.strptime(raw, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="صيغة التاريخ غير صحيحة")
+
+    with get_connection() as conn:
+        vid = conn.execute("SELECT * FROM group_videos WHERE id=?", (video_id,)).fetchone()
+        if not vid:
+            raise HTTPException(status_code=404, detail="الفيديو غير موجود")
+
+        conn.execute("UPDATE group_videos SET created_at=? WHERE id=?", (raw, video_id))
+        log_session_activity(conn, session, "video_date_update", f"تعديل تاريخ فيديو \"{vid['title']}\" إلى {raw}")
+
+        return {"message": "تم تعديل تاريخ الفيديو بنجاح", "created_at": raw}
 
 
 @app.get("/api/videos/{video_id}/stream")
