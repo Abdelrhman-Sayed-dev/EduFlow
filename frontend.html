@@ -6895,6 +6895,7 @@ async function loadAllVideosList(){
       <div style="display:flex;flex-direction:column;gap:6px;align-items:stretch;">
         <button class="btn btn-primary btn-sm" onclick="openVideoPlayerModal(${v.id}, '${jsAttr(v.title)}', '${v.video_type||'upload'}', '${jsAttr(v.external_url||'')}', '${jsAttr(v.provider_video_id||'')}')"><i data-lucide="play" style="width:13px;height:13px;"></i> تشغيل</button>
         <button class="btn btn-ghost btn-sm" onclick="openManageVideoGroupsModal(${v.id}, '${jsAttr(v.title)}')"><i data-lucide="settings-2" style="width:13px;height:13px;"></i> المجموعات</button>
+        <button class="btn btn-ghost btn-sm" onclick="openEditVideoDateModal(${v.id}, '${jsAttr(v.title)}', '${jsAttr((v.created_at||'').slice(0,10))}')"><i data-lucide="calendar-clock" style="width:13px;height:13px;"></i> تعديل التاريخ</button>
         <button class="btn btn-ghost btn-sm" style="color:var(--danger);" onclick="deleteVideoPermanently(${v.id}, '${jsAttr(v.title)}')"><i data-lucide="trash-2" style="width:13px;height:13px;color:var(--danger);"></i> حذف نهائي</button>
       </div>
     </div>
@@ -6941,6 +6942,34 @@ async function saveVideoGroupsChanges(videoId, previouslyLinkedIds){
       await api(`/api/groups/${gid}/videos/${videoId}`, {method:"DELETE"});
     }
     showToast("تم تحديث مجموعات الفيديو بنجاح", "success");
+    closeOverlay("genericModal");
+    loadAllVideosList();
+  }catch(e){
+    if (btn){ btn.disabled = false; btn.style.opacity = "1"; }
+  }
+}
+
+function openEditVideoDateModal(videoId, title, currentDate){
+  openModal(`تعديل تاريخ الفيديو: ${escapeHtml(title)}`, `
+    <div class="form-group">
+      <label class="form-label">تاريخ الفيديو</label>
+      <input class="form-input" type="date" id="f_vid_date" value="${currentDate || todayStr()}">
+      <div class="form-hint">التاريخ ده هو اللي بيتحدد بيه تحت أي شهر/يوم هيظهر الفيديو - غيّره لو عايز الفيديو يرجع يظهر في تاريخه الصحيح.</div>
+    </div>
+  `, `
+    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+    <button class="btn btn-primary" id="saveVidDateBtn" onclick="saveVideoDateChange(${videoId})">حفظ</button>
+  `);
+}
+
+async function saveVideoDateChange(videoId){
+  const dateVal = document.getElementById("f_vid_date").value;
+  if (!dateVal){ showToast("اختار التاريخ الأول", "error"); return; }
+  const btn = document.getElementById("saveVidDateBtn");
+  if (btn){ btn.disabled = true; btn.style.opacity = "0.6"; }
+  try{
+    await api(`/api/videos/${videoId}/date`, {method:"PATCH", body: JSON.stringify({created_at: dateVal})});
+    showToast("تم تعديل تاريخ الفيديو بنجاح", "success");
     closeOverlay("genericModal");
     loadAllVideosList();
   }catch(e){
