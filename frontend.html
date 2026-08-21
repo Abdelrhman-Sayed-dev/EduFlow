@@ -5675,7 +5675,18 @@ async function saveAllQuizScores(){
 ===================================================================== */
 const ATT_LABELS = {present:"حاضر", absent:"غايب", late:"متأخر", excused:"بإذن"};
 const ATT_BADGE = {present:"badge-green", absent:"badge-red", late:"badge-amber", excused:"badge-blue"};
-const ATT_SESSION_NAMES = ["","الأولى","الثانية","الثالثة","الرابعة"];
+function attOrdinalWord(n){
+  const units = ["","الأولى","الثانية","الثالثة","الرابعة","الخامسة","السادسة","السابعة","الثامنة","التاسعة"];
+  const teens = ["العاشرة","الحادية عشرة","الثانية عشرة","الثالثة عشرة","الرابعة عشرة","الخامسة عشرة","السادسة عشرة","السابعة عشرة","الثامنة عشرة","التاسعة عشرة"];
+  const tens = ["","","العشرون","الثلاثون","الأربعون","الخمسون","الستون","السبعون","الثمانون","التسعون"];
+  if (n < 10) return units[n];
+  if (n < 20) return teens[n - 10];
+  if (n % 10 === 0) return tens[Math.floor(n / 10)];
+  if (n < 100) return `${units[n % 10]} و${tens[Math.floor(n / 10)]}`;
+  return `رقم ${n}`;
+}
+// مصفوفة بتحول رقم الحصة لصيغتها العربية (الأولى/الثانية/...) - بتغطي لحد 99 حصة
+const ATT_SESSION_NAMES = Array.from({length: 100}, (_, i) => i === 0 ? "" : attOrdinalWord(i));
 
 let QUICK_ATT_STATUS_BY_SESSION = {};
 let ATT_ROWS_CACHE_BY_SESSION = {};
@@ -5762,7 +5773,10 @@ async function loadAttendanceHistoryList(){
   }
   tbody.innerHTML = rows.map(r=>{
     const label = ATT_SESSION_NAMES[r.session_number] || r.session_number;
-    const groupNameEsc = escapeHtml(r.group_name).replace(/'/g, "\\'");
+    // نفس دالة jsAttr المستخدمة في باقي الصفحة عشان نضمن إن اسم المجموعة
+    // بيتحط بأمان جوه onclick حتى لو فيه علامات اقتباس - النمط القديم هنا
+    // كان بيكسر الـ JS في بعض أسماء المجموعات فيمنع فتح نفس الحصة بشكل صحيح
+    const groupNameEsc = jsAttr(r.group_name);
     return `<tr>
       <td class="td-name">${escapeHtml(r.group_name)}</td>
       <td>${r.session_date}</td>
@@ -5772,8 +5786,8 @@ async function loadAttendanceHistoryList(){
       <td><span class="badge badge-amber">${r.late_count}</span></td>
       <td><span class="badge badge-blue">${r.excused_count}</span></td>
       <td style="color:var(--text-3);">${r.marked_count}/${r.total_students}</td>
-      <td><button class="btn btn-ghost" style="height:28px;font-size:12px;" onclick="openAttendancePanel(${r.group_id}, '${groupNameEsc}', ${r.session_number}, '${r.session_date}')"><i data-lucide="edit-3" style="width:12px;height:12px;"></i> فتح / تعديل</button></td>
-      <td><button class="btn btn-ghost" style="height:28px;font-size:12px;color:var(--danger);" onclick="deleteAttendanceSession(${r.group_id}, '${groupNameEsc}', ${r.session_number}, '${r.session_date}')"><i data-lucide="trash-2" style="width:12px;height:12px;"></i> حذف</button></td>
+      <td><button class="btn btn-ghost" style="height:28px;font-size:12px;" onclick="openAttendancePanel(${r.group_id}, '${groupNameEsc}', ${r.session_number}, '${jsAttr(r.session_date)}')"><i data-lucide="edit-3" style="width:12px;height:12px;"></i> فتح / تعديل</button></td>
+      <td><button class="btn btn-ghost" style="height:28px;font-size:12px;color:var(--danger);" onclick="deleteAttendanceSession(${r.group_id}, '${groupNameEsc}', ${r.session_number}, '${jsAttr(r.session_date)}')"><i data-lucide="trash-2" style="width:12px;height:12px;"></i> حذف</button></td>
     </tr>`;
   }).join("");
   icons();
