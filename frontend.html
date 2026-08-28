@@ -4370,11 +4370,14 @@ async function loadCommitmentTable(){
   icons();
 }
 
+let CURRENT_COMMITMENT_DETAIL = null;
+
 async function openCommitmentDetail(studentId){
   let r;
   try{
     r = await api(`/api/students/${studentId}/commitment`);
   }catch(e){ return; }
+  CURRENT_COMMITMENT_DETAIL = r;
   const pct = r.commitment_percentage;
   const color = ratingColor(pct);
   const rows = Object.keys(COMMITMENT_LABELS).map(key=>{
@@ -4421,10 +4424,122 @@ async function openCommitmentDetail(studentId){
       ${rows}
       ${reasonsHtml}
     `,
-    `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`,
+    `<button class="btn btn-primary" onclick="printCommitmentReport()"><i data-lucide="printer" style="width:14px;height:14px;"></i> طباعة تقرير</button>
+     <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>`,
     {width: "480px"}
   );
   icons();
+}
+
+/* ---- عبارات تفاصيل كل بند لتقرير الطباعة (كام حصة حضر/غاب، كام واجب سلّم...) ---- */
+function commitmentDetailLine(key, b){
+  const d = b.done_count, m = b.missed_count, t = b.total_count;
+  if (!t) return "لا يوجد بيانات بعد لهذا البند";
+  switch(key){
+    case "exams":
+      return `أدّى ${d} من ${t} امتحان شامل${m ? ` — غاب عن ${m}` : ""}`;
+    case "quizzes":
+      return `أدّى ${d} من ${t} كويز${m ? ` — غاب عن ${m}` : ""}`;
+    case "homework":
+      return `سلّم ${d} من ${t} واجب${m ? ` — لم يسلّم ${m}` : ""}`;
+    case "attendance":
+      return `حضر ${d} من ${t} حصة${m ? ` — غاب عن ${m}` : ""}`;
+    case "interaction":
+      return `${d} نقطة تفاعل من أصل ${t} حصة`;
+    default:
+      return "";
+  }
+}
+
+function printCommitmentReport(){
+  const r = CURRENT_COMMITMENT_DETAIL;
+  if (!r) return;
+  const pct = r.commitment_percentage;
+  const color = ratingColor(pct);
+  const now = new Date();
+  const dateStr = now.toLocaleDateString("ar-EG", {year:"numeric", month:"long", day:"numeric"});
+
+  const rowsHtml = Object.keys(COMMITMENT_LABELS).map(key=>{
+    const b = r.breakdown[key];
+    const meta = COMMITMENT_LABELS[key];
+    const cpct = b.percentage;
+    return `
+      <tr>
+        <td>${meta.label}</td>
+        <td>${b.weight}%</td>
+        <td style="font-weight:700;">${cpct != null ? cpct + '%' : '—'}</td>
+        <td>${commitmentDetailLine(key, b)}</td>
+      </tr>`;
+  }).join("");
+
+  const reasonsHtml = r.reasons && r.reasons.length ? `
+    <div class="reasons-box">
+      <div class="reasons-title">أسباب نقص النسبة:</div>
+      <ul>${r.reasons.map(x=>`<li>${escapeHtml(x)}</li>`).join("")}</ul>
+    </div>` : `<div class="ok-box">لا يوجد أي نقاط نقص - الطالب ملتزم بكل المطلوب منه 👌</div>`;
+
+  const html = `
+  <!DOCTYPE html>
+  <html lang="ar" dir="rtl">
+  <head>
+  <meta charset="UTF-8">
+  <title>تقرير التزام - ${escapeHtml(r.student_name)}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; padding: 32px; color:#1f2320; direction: rtl; }
+    .header { display:flex; align-items:center; justify-content:space-between; border-bottom: 3px solid #1f2320; padding-bottom: 14px; margin-bottom: 20px; }
+    .header h1 { margin:0; font-size: 20px; }
+    .header .brand { font-weight:800; font-size: 18px; }
+    .header .date { font-size: 12px; color:#666; }
+    .student-info { display:flex; align-items:center; justify-content:space-between; margin-bottom: 22px; }
+    .student-info h2 { margin:0 0 4px 0; font-size: 22px; }
+    .student-info p { margin:0; color:#555; font-size: 13px; }
+    .score-circle { width:90px; height:90px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+                    background: conic-gradient(${color} ${pct != null ? Math.round(pct*3.6) : 0}deg, #F2F1ED 0deg); flex-shrink:0; }
+    .score-circle .inner { width:72px; height:72px; border-radius:50%; background:#fff; display:flex; align-items:center; justify-content:center;
+                           font-weight:800; font-size:18px; color:${color}; }
+    table { width:100%; border-collapse: collapse; margin-bottom: 20px; }
+    th, td { border: 1px solid #ddd; padding: 10px 12px; font-size: 13px; text-align: right; }
+    th { background: #f5f4f0; font-weight: 700; }
+    .reasons-box { background:#FEF2F2; border-radius:10px; padding:14px 16px; margin-bottom: 16px; }
+    .reasons-title { font-weight:700; margin-bottom:8px; font-size:13px; }
+    .reasons-box ul { margin:0; padding-inline-start:18px; font-size:13px; color:#444; line-height:1.9; }
+    .ok-box { background:#F0FDF4; color:#166534; border-radius:10px; padding:14px 16px; text-align:center; font-size:13px; margin-bottom:16px; }
+    .footer-note { font-size:11px; color:#888; text-align:center; margin-top:28px; border-top:1px solid #eee; padding-top:10px; }
+    @media print {
+      body { padding: 12px; }
+      @page { margin: 14mm; }
+    }
+  </style>
+  </head>
+  <body>
+    <div class="header">
+      <div class="brand">EduFlow</div>
+      <h1>تقرير التزام طالب</h1>
+      <div class="date">تاريخ الطباعة: ${dateStr}</div>
+    </div>
+    <div class="student-info">
+      <div>
+        <h2>${escapeHtml(r.student_name)}</h2>
+        <p>المجموعة: ${escapeHtml(r.group_name || "-")}</p>
+      </div>
+      <div class="score-circle"><div class="inner">${pct != null ? pct + '%' : '—'}</div></div>
+    </div>
+    <table>
+      <thead><tr><th>البند</th><th>الوزن</th><th>النسبة</th><th>التفاصيل</th></tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+    ${reasonsHtml}
+    <div class="footer-note">نسبة الالتزام مبنية على إتمام المطلوب (حضور/تسليم) وليس على الدرجة الأكاديمية — تقرير آلي من نظام EduFlow</div>
+  </body>
+  </html>`;
+
+  const w = window.open("", "_blank");
+  if (!w) { alert("افتح النوافذ المنبثقة (Pop-ups) للمتصفح عشان تقدر تطبع التقرير"); return; }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+  w.onload = () => { w.focus(); w.print(); };
 }
 
 function handleImportCsvFile(file){
