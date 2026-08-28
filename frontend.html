@@ -5924,7 +5924,14 @@ async function loadAttendanceHistoryList(){
     const groupNameEsc = jsAttr(r.group_name);
     return `<tr>
       <td class="td-name">${escapeHtml(r.group_name)}</td>
-      <td>${r.session_date}</td>
+      <td>
+        <span style="display:inline-flex;align-items:center;gap:6px;">
+          ${r.session_date}
+          <button class="act-btn" title="تعديل تاريخ الحصة" onclick="openEditSessionDateModal(${r.group_id}, '${groupNameEsc}', ${r.session_number}, '${jsAttr(r.session_date)}')">
+            <i data-lucide="pencil" style="width:11px;height:11px;"></i>
+          </button>
+        </span>
+      </td>
       <td>${label}</td>
       <td><span class="badge badge-green">${r.present_count}</span></td>
       <td><span class="badge badge-red">${r.absent_count}</span></td>
@@ -6133,18 +6140,65 @@ function closeAttendancePanel(groupId, sn, date){
   }
 }
 
+function openEditSessionDateModal(groupId, groupName, sn, currentDate){
+  const label = ATT_SESSION_NAMES[sn] || sn;
+  openModal(
+    `تعديل تاريخ الحصة`,
+    `
+      <p style="color:var(--text-3);font-size:13px;margin:0 0 12px;">
+        ${escapeHtml(groupName)} — الحصة ${label}<br>
+        هيتغيّر تاريخ الحضور والتفاعل والواجب والسبورة المرتبطين بالحصة دي كلهم مع بعض.
+      </p>
+      <label class="form-label">التاريخ الصحيح اللي اتاخد فيه الغياب فعلاً</label>
+      <input class="form-input" type="date" id="edit_session_date_input" value="${currentDate}">
+    `,
+    `
+      <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+      <button class="btn btn-primary" onclick="submitEditSessionDate(${groupId}, ${sn}, '${jsAttr(currentDate)}')">حفظ</button>
+    `
+  );
+}
+
+async function submitEditSessionDate(groupId, sn, oldDate){
+  const input = document.getElementById("edit_session_date_input");
+  const newDate = input ? input.value : "";
+  if (!newDate){ showToast("اختار تاريخ", "error"); return; }
+  if (newDate === oldDate){ closeOverlay("genericModal"); return; }
+  try{
+    await api(`/api/attendance-sessions/date`, {
+      method: "PUT",
+      body: JSON.stringify({group_id: groupId, session_number: sn, old_date: oldDate, new_date: newDate})
+    });
+  }catch(e){ return; }
+  closeOverlay("genericModal");
+  showToast("تم تعديل تاريخ الحصة", "success");
+
+  // لو الحصة كانت مفتوحة تحت بنفس التاريخ القديم، اقفلها وافتحها تاني بالتاريخ الجديد
+  const oldEntry = ATT_ACTIVE_SESSIONS.find(s => s.group_id === groupId && s.session_number === sn && s.date === oldDate);
+  if (oldEntry){
+    const groupName = oldEntry.group_name;
+    closeAttendancePanel(groupId, sn, oldDate);
+    await openAttendancePanel(groupId, groupName, sn, newDate);
+  }
+  await loadAttendanceHistoryList();
+}
+
 function renderAttendanceSessionShell(groupId, groupName, sn, isOpen, date){
   date = date || todayStr();
   const label = ATT_SESSION_NAMES[sn] || sn;
   const key = `${groupId}_${sn}_${date}`;
   const isPast = date !== todayStr();
+  const groupNameAttr = jsAttr(groupName);
   return `
     <div class="collapse-card" id="att_panel_${key}">
       <div class="collapse-header" onclick="toggleCollapse('att_session_body_${key}', this)">
         <div style="display:flex;align-items:center;gap:10px;flex:1;flex-wrap:wrap;">
           <i data-lucide="calendar-check" style="width:15px;height:15px;color:var(--primary);flex-shrink:0;"></i>
-          <span style="font-weight:700;font-size:14px;">${groupName} <span style="color:var(--text-3);font-weight:500;">— الحصة ${label}</span></span>
+          <span style="font-weight:700;font-size:14px;">${escapeHtml(groupName)} <span style="color:var(--text-3);font-weight:500;">— الحصة ${label}</span></span>
           <span class="badge ${isPast ? 'badge-amber' : 'badge-blue'}">${isPast ? `<i data-lucide="history" style="width:10px;height:10px;"></i> تعديل يوم سابق: ${date}` : `النهارده ${date}`}</span>
+          <button class="act-btn" title="تعديل تاريخ الحصة دي" onclick="event.stopPropagation();openEditSessionDateModal(${groupId}, '${groupNameAttr}', ${sn}, '${date}')" style="flex-shrink:0;">
+            <i data-lucide="pencil" style="width:12px;height:12px;"></i>
+          </button>
           <div style="display:flex;gap:6px;margin-right:auto;flex-wrap:wrap;" id="att_session_badges_${key}"></div>
         </div>
         <button class="act-btn act-del" title="إغلاق الحصة" onclick="event.stopPropagation();closeAttendancePanel(${groupId}, ${sn}, '${date}')" style="margin-right:8px;"><i data-lucide="x" style="width:13px;height:13px;"></i></button>
