@@ -4434,6 +4434,9 @@ async function openCommitmentDetail(studentId){
 /* ---- عبارات تفاصيل كل بند لتقرير الطباعة (كام حصة حضر/غاب، كام واجب سلّم...) ---- */
 function commitmentDetailLine(key, b){
   const d = b.done_count, m = b.missed_count, t = b.total_count;
+  if (key === "interaction"){
+    return d > 0 ? `اتفاعل ${d} ${d === 1 ? "مرة" : "مرات"} على الأقل` : "لم يتفاعل ولا مرة";
+  }
   if (!t) return "لا يوجد بيانات بعد لهذا البند";
   switch(key){
     case "exams":
@@ -4444,10 +4447,6 @@ function commitmentDetailLine(key, b){
       return `سلّم ${d} من ${t} واجب${m ? ` — لم يسلّم ${m}` : ""}`;
     case "attendance":
       return `حضر ${d} من ${t} حصة${m ? ` — غاب عن ${m}` : ""}`;
-    case "interaction":
-      return t === 1
-        ? (d >= 1 ? `اتفاعل في الشهر الوحيد المسجل` : `لم يتفاعل خلال الشهر المسجل`)
-        : `اتفاعل في ${d} من ${t} شهر${m ? ` — ${m} شهر من غير تفاعل` : ""}`;
     default:
       return "";
   }
