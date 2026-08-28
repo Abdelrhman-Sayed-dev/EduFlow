@@ -4459,25 +4459,43 @@ function printCommitmentReport(){
   const color = ratingColor(pct);
   const now = new Date();
   const dateStr = now.toLocaleDateString("ar-EG", {year:"numeric", month:"long", day:"numeric"});
+  const statusLabel = pct == null ? "" : pct >= 85 ? "ملتزم جدًا 👏" : pct >= 65 ? "التزام متوسط" : "بحاجة إلى متابعة";
+
+  // ---- دائرة SVG بدل الـ conic-gradient عشان تفضل ظاهرة مهما كانت إعدادات
+  // طباعة الخلفيات في المتصفح (background graphics) ----
+  const R = 46, CX = 60, CY = 60;
+  const circumference = 2 * Math.PI * R;
+  const dashOffset = pct != null ? circumference * (1 - Math.min(100, pct) / 100) : circumference;
+  const ringSvg = `
+    <svg width="120" height="120" viewBox="0 0 120 120" style="flex-shrink:0;">
+      <circle cx="${CX}" cy="${CY}" r="${R}" fill="none" stroke="#EDEBE5" stroke-width="12"></circle>
+      <circle cx="${CX}" cy="${CY}" r="${R}" fill="none" stroke="${color}" stroke-width="12"
+              stroke-linecap="round" stroke-dasharray="${circumference.toFixed(2)}"
+              stroke-dashoffset="${dashOffset.toFixed(2)}"
+              transform="rotate(-90 ${CX} ${CY})"></circle>
+      <text x="${CX}" y="${CY - 3}" text-anchor="middle" font-size="21" font-weight="800" fill="${color}" font-family="Segoe UI, Tahoma, Arial, sans-serif">${pct != null ? pct + '%' : '—'}</text>
+      <text x="${CX}" y="${CY + 16}" text-anchor="middle" font-size="9.5" fill="#8a8a85" font-family="Segoe UI, Tahoma, Arial, sans-serif">الالتزام</text>
+    </svg>`;
 
   const rowsHtml = Object.keys(COMMITMENT_LABELS).map(key=>{
     const b = r.breakdown[key];
     const meta = COMMITMENT_LABELS[key];
     const cpct = b.percentage;
+    const rowColor = cpct != null ? ratingColor(cpct) : "#999";
     return `
       <tr>
-        <td>${meta.label}</td>
-        <td>${b.weight}%</td>
-        <td style="font-weight:700;">${cpct != null ? cpct + '%' : '—'}</td>
-        <td>${commitmentDetailLine(key, b)}</td>
+        <td><span class="dot" style="background:${rowColor};"></span>${meta.label}</td>
+        <td class="muted">${b.weight}%</td>
+        <td><span class="pct-badge" style="color:${rowColor};background:${rowColor}18;">${cpct != null ? cpct + '%' : '—'}</span></td>
+        <td class="muted">${commitmentDetailLine(key, b)}</td>
       </tr>`;
   }).join("");
 
   const reasonsHtml = r.reasons && r.reasons.length ? `
     <div class="reasons-box">
-      <div class="reasons-title">أسباب نقص النسبة:</div>
+      <div class="reasons-title">⚠️ أسباب نقص النسبة</div>
       <ul>${r.reasons.map(x=>`<li>${escapeHtml(x)}</li>`).join("")}</ul>
-    </div>` : `<div class="ok-box">لا يوجد أي نقاط نقص - الطالب ملتزم بكل المطلوب منه 👌</div>`;
+    </div>` : `<div class="ok-box">👌 لا يوجد أي نقاط نقص - الطالب ملتزم بكل المطلوب منه</div>`;
 
   const html = `
   <!DOCTYPE html>
@@ -4486,46 +4504,56 @@ function printCommitmentReport(){
   <meta charset="UTF-8">
   <title>تقرير التزام - ${escapeHtml(r.student_name)}</title>
   <style>
-    * { box-sizing: border-box; }
-    body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; padding: 32px; color:#1f2320; direction: rtl; }
-    .header { display:flex; align-items:center; justify-content:space-between; border-bottom: 3px solid #1f2320; padding-bottom: 14px; margin-bottom: 20px; }
-    .header h1 { margin:0; font-size: 20px; }
-    .header .brand { font-weight:800; font-size: 18px; }
-    .header .date { font-size: 12px; color:#666; }
-    .student-info { display:flex; align-items:center; justify-content:space-between; margin-bottom: 22px; }
-    .student-info h2 { margin:0 0 4px 0; font-size: 22px; }
-    .student-info p { margin:0; color:#555; font-size: 13px; }
-    .score-circle { width:90px; height:90px; border-radius:50%; display:flex; align-items:center; justify-content:center;
-                    background: conic-gradient(${color} ${pct != null ? Math.round(pct*3.6) : 0}deg, #F2F1ED 0deg); flex-shrink:0; }
-    .score-circle .inner { width:72px; height:72px; border-radius:50%; background:#fff; display:flex; align-items:center; justify-content:center;
-                           font-weight:800; font-size:18px; color:${color}; }
-    table { width:100%; border-collapse: collapse; margin-bottom: 20px; }
-    th, td { border: 1px solid #ddd; padding: 10px 12px; font-size: 13px; text-align: right; }
-    th { background: #f5f4f0; font-weight: 700; }
-    .reasons-box { background:#FEF2F2; border-radius:10px; padding:14px 16px; margin-bottom: 16px; }
-    .reasons-title { font-weight:700; margin-bottom:8px; font-size:13px; }
-    .reasons-box ul { margin:0; padding-inline-start:18px; font-size:13px; color:#444; line-height:1.9; }
-    .ok-box { background:#F0FDF4; color:#166534; border-radius:10px; padding:14px 16px; text-align:center; font-size:13px; margin-bottom:16px; }
-    .footer-note { font-size:11px; color:#888; text-align:center; margin-top:28px; border-top:1px solid #eee; padding-top:10px; }
+    * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; margin:0; padding: 40px 44px; color:#22241f; direction: rtl; background:#fff; }
+    .header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 26px; }
+    .header .brand { font-weight:800; font-size: 19px; color:#1f2320; display:flex; align-items:center; gap:6px; }
+    .header .brand .dot-logo { width:9px; height:9px; border-radius:50%; background:#2563EB; display:inline-block; }
+    .header .date { font-size: 11.5px; color:#9a9a94; }
+    .accent-line { height:4px; border-radius:4px; background:linear-gradient(90deg,#2563EB,#7C3AED); margin-bottom:26px; }
+    .title-row { text-align:center; margin-bottom:28px; }
+    .title-row h1 { margin:0; font-size: 15px; letter-spacing:.5px; color:#7a7a74; font-weight:700; text-transform:uppercase; }
+    .card { border:1px solid #EDEBE5; border-radius:16px; padding:22px 26px; margin-bottom:22px;
+            display:flex; align-items:center; justify-content:space-between; gap:20px; background:#FAFAF8; }
+    .card h2 { margin:0 0 6px 0; font-size: 21px; color:#1f2320; }
+    .card p { margin:0; color:#6b6b65; font-size: 13px; }
+    .status-chip { display:inline-block; margin-top:10px; font-size:11.5px; font-weight:700; padding:4px 12px;
+                   border-radius:20px; color:${color}; background:${color}18; }
+    table { width:100%; border-collapse: separate; border-spacing:0; margin-bottom: 22px; font-size: 13px; }
+    thead th { text-align:right; font-size:11px; color:#9a9a94; font-weight:700; padding:0 12px 10px 12px; }
+    tbody tr td { padding: 13px 12px; border-top:1px solid #EFEDE8; }
+    tbody tr:first-child td { border-top:none; }
+    .dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-inline-end:8px; vertical-align:middle; }
+    .muted { color:#6b6b65; }
+    .pct-badge { font-weight:800; font-size:12.5px; padding:3px 10px; border-radius:8px; }
+    .reasons-box { background:#FEF4F3; border-radius:14px; padding:16px 20px; margin-bottom: 18px; }
+    .reasons-title { font-weight:700; margin-bottom:9px; font-size:13px; color:#B4443A; }
+    .reasons-box ul { margin:0; padding-inline-start:18px; font-size:12.5px; color:#5c4a48; line-height:2; }
+    .ok-box { background:#F0FBF3; color:#1E7A43; border-radius:14px; padding:16px 20px; text-align:center; font-size:13px; font-weight:600; margin-bottom:18px; }
+    .footer-note { font-size:10.5px; color:#aaa; text-align:center; margin-top:30px; border-top:1px solid #EFEDE8; padding-top:14px; }
     @media print {
-      body { padding: 12px; }
-      @page { margin: 14mm; }
+      body { padding: 16px 22px; }
+      @page { margin: 12mm; }
     }
   </style>
   </head>
   <body>
     <div class="header">
-      <div class="brand">EduFlow</div>
-      <h1>تقرير التزام طالب</h1>
+      <div class="brand"><span class="dot-logo"></span> EduFlow</div>
       <div class="date">تاريخ الطباعة: ${dateStr}</div>
     </div>
-    <div class="student-info">
+    <div class="accent-line"></div>
+    <div class="title-row"><h1>تقرير التزام طالب</h1></div>
+
+    <div class="card">
       <div>
         <h2>${escapeHtml(r.student_name)}</h2>
         <p>المجموعة: ${escapeHtml(r.group_name || "-")}</p>
+        ${statusLabel ? `<span class="status-chip">${statusLabel}</span>` : ""}
       </div>
-      <div class="score-circle"><div class="inner">${pct != null ? pct + '%' : '—'}</div></div>
+      ${ringSvg}
     </div>
+
     <table>
       <thead><tr><th>البند</th><th>الوزن</th><th>النسبة</th><th>التفاصيل</th></tr></thead>
       <tbody>${rowsHtml}</tbody>
