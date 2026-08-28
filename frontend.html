@@ -2671,7 +2671,7 @@ function renderSearchableSelect(idPrefix, options, selectedId, placeholder){
   `;
 }
 
-function initSearchableSelect(idPrefix, options){
+function initSearchableSelect(idPrefix, options, onSelect){
   const input = document.getElementById(idPrefix+"_input");
   const hidden = document.getElementById(idPrefix+"_value");
   const dropdown = document.getElementById(idPrefix+"_dropdown");
@@ -2713,6 +2713,7 @@ function initSearchableSelect(idPrefix, options){
         hidden.value = el.dataset.id;
         input.value = el.dataset.name;
         closeDropdown();
+        if (typeof onSelect === "function") onSelect(el.dataset.id, el.dataset.name);
       });
     });
   }
@@ -6014,14 +6015,21 @@ function openTakeAttendanceModal(){
       ${renderSearchableSelect("take_att_group", groupOptions, groups.length===1?groups[0].id:null, "دوس واكتب اسم المجموعة...")}
     </div>
     <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;">
-      <div style="flex:1;min-width:120px;">
-        <label class="form-label">رقم الحصة</label>
-        <input class="form-input" id="take_att_session_num" type="number" min="1" step="1" value="1" placeholder="مثال: 1">
+      <div style="flex:1;min-width:150px;">
+        <label class="form-label">رقم الحصة <span style="font-weight:400;color:var(--text-3);">(متسجّل تلقائي)</span></label>
+        <input class="form-input" id="take_att_session_num" type="number" min="1" step="1" value="" placeholder="اختر مجموعة الأول..." readonly style="background:var(--surface-2);">
+        <div id="take_att_session_hint" style="font-size:11.5px;color:var(--text-3);margin-top:4px;"></div>
       </div>
       <div style="flex:1;min-width:150px;">
         <label class="form-label">التاريخ</label>
         <input class="form-input" id="take_att_date" type="date" max="${todayStr()}" value="${todayStr()}">
       </div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-3);cursor:pointer;">
+        <input type="checkbox" id="take_att_manual_toggle" onchange="toggleManualSessionNumber()">
+        عايز أكتب رقم الحصة بنفسي (احذر: ده اللي بيسبب تكرار نفس الرقم بتاريخ مختلف بالغلط)
+      </label>
     </div>
     <div style="background:var(--surface-2);border-radius:var(--radius-md);padding:10px 14px;font-size:13px;color:var(--text-2);display:flex;align-items:center;gap:8px;">
       <i data-lucide="calendar" style="width:14px;height:14px;color:var(--primary);"></i>
@@ -6031,7 +6039,31 @@ function openTakeAttendanceModal(){
     `<button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
      <button class="btn btn-primary" onclick="startTakeAttendance()"><i data-lucide="play" style="width:14px;height:14px;"></i> ابدأ أخذ الغياب</button>`
   );
-  initSearchableSelect("take_att_group", groupOptions);
+  initSearchableSelect("take_att_group", groupOptions, (groupId)=>suggestNextSessionNumber(groupId));
+  if (groups.length === 1) suggestNextSessionNumber(groups[0].id);
+}
+
+async function suggestNextSessionNumber(groupId){
+  const input = document.getElementById("take_att_session_num");
+  const hint = document.getElementById("take_att_session_hint");
+  if (!input) return;
+  input.value = "";
+  if (hint) hint.textContent = "بنجيب رقم الحصة الصح...";
+  try{
+    const res = await api(`/api/attendance-sessions/next-number?group_id=${groupId}`);
+    input.value = res.next_session_number;
+    input.dataset.suggested = res.next_session_number;
+    if (hint) hint.textContent = `الحصة رقم ${res.next_session_number} هي الحصة الجديدة لهذه المجموعة - اتحسبت تلقائي عشان محدش يكرر رقم حصة قديم بالغلط`;
+  }catch(e){
+    if (hint) hint.textContent = "";
+  }
+}
+
+function toggleManualSessionNumber(){
+  const checked = document.getElementById("take_att_manual_toggle").checked;
+  const input = document.getElementById("take_att_session_num");
+  input.readOnly = !checked;
+  input.style.background = checked ? "" : "var(--surface-2)";
 }
 
 async function startTakeAttendance(){
@@ -6040,8 +6072,14 @@ async function startTakeAttendance(){
   const groupId = parseInt(groupIdRaw);
   const sn = parseInt(document.getElementById("take_att_session_num").value);
   const date = document.getElementById("take_att_date").value || todayStr();
+  const isManual = document.getElementById("take_att_manual_toggle").checked;
+  const suggested = parseInt(document.getElementById("take_att_session_num").dataset.suggested || "0");
   if (!groupId){ showToast("لازم تختار مجموعة من القائمة", "error"); return; }
   if (!sn || sn < 1){ showToast("لازم تكتب رقم حصة صحيح", "error"); return; }
+  if (isManual && suggested && sn !== suggested){
+    const confirmed = confirm(`الرقم المقترح تلقائي للحصة الجديدة هو ${suggested}. إنت داخل برقم ${sn} يدويًا.\n\nلو الرقم ده مستخدم قبل كده بتاريخ تاني، هيتحط الغياب في نفس الحصة القديمة مش حصة جديدة.\n\nمتأكد إنك عايز تكمل بالرقم ده؟`);
+    if (!confirmed) return;
+  }
   closeOverlay("genericModal");
   await openAttendancePanel(groupId, groupName, sn, date);
 }

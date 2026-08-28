@@ -4557,6 +4557,45 @@ def list_attendance_sessions(group_id: Optional[int] = None,
         return [dict(r) for r in rows]
 
 
+@app.get("/api/attendance-sessions/next-number")
+def get_next_session_number(group_id: int,
+                             session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
+    """
+    بيرجع أول رقم حصة جديد وصح للمجموعة دي (أعلى رقم حصة متسجل فعلاً لأي
+    نشاط في المجموعة دي - حضور/تفاعل/واجب/كويز/سبورة/فيديو - زائد 1).
+    الهدف: الواجهة تقترحه تلقائيًا بدل ما المستخدم يكتبه يدوي، عشان يتمنع
+    تكرار نفس رقم الحصة بالغلط بتاريخ مختلف (نفس "الحصة الأولى" بتتسجل
+    تاني بتاريخ تاني لأن حد نسي يغيّر الرقم).
+    """
+    with get_connection() as conn:
+        if session["role"] == "supervisor":
+            assert_supervisor_owns_group(conn, session, group_id)
+
+        group = conn.execute("SELECT id FROM groups WHERE id=?", (group_id,)).fetchone()
+        if not group:
+            raise HTTPException(status_code=404, detail="المجموعة غير موجودة")
+
+        max_numbers = []
+
+        row = conn.execute(
+            """SELECT MAX(a.session_number) as m FROM attendance a
+               JOIN students s ON s.id = a.student_id WHERE s.group_id=?""",
+            (group_id,)
+        ).fetchone()
+        if row and row["m"] is not None:
+            max_numbers.append(row["m"])
+
+        for table in ("participation", "homework", "board_images", "quizzes", "video_group_links"):
+            row = conn.execute(
+                f"SELECT MAX(session_number) as m FROM {table} WHERE group_id=?", (group_id,)
+            ).fetchone()
+            if row and row["m"] is not None:
+                max_numbers.append(row["m"])
+
+        next_number = (max(max_numbers) + 1) if max_numbers else 1
+        return {"next_session_number": next_number}
+
+
 @app.delete("/api/attendance-sessions")
 def delete_attendance_session(group_id: int, session_date: str, session_number: int,
                                session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
