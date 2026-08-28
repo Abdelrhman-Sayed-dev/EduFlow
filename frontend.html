@@ -4445,7 +4445,9 @@ function commitmentDetailLine(key, b){
     case "attendance":
       return `حضر ${d} من ${t} حصة${m ? ` — غاب عن ${m}` : ""}`;
     case "interaction":
-      return `${d} نقطة تفاعل من أصل ${t} حصة`;
+      return t === 1
+        ? (d >= 1 ? `اتفاعل في الشهر الوحيد المسجل` : `لم يتفاعل خلال الشهر المسجل`)
+        : `اتفاعل في ${d} من ${t} شهر${m ? ` — ${m} شهر من غير تفاعل` : ""}`;
     default:
       return "";
   }
