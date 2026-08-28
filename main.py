@@ -6646,27 +6646,18 @@ def compute_student_commitment(conn, student_id: int) -> dict:
     else:
         att_pct, att_count, absences_count = None, 0, 0
 
-    # ---- التفاعل: الطالب اللي اتفاعل ولو مرة واحدة في الشهر ياخد
-    # نسبة تفاعل كاملة (100%) عن الشهر ده - مش شرط يتفاعل كل حصة.
-    # النسبة الكلية = (عدد الشهور اللي فيها تفاعل) / (عدد الشهور اللي فيها حصص للمجموعة) ----
+    # ---- التفاعل: لو الطالب اتفاعل ولو مرة واحدة (في أي حصة/أي وقت) ياخد
+    # نسبة التفاعل كاملة 100%، وغير كده صفر. مفيش حساب تناسبي بالشهور. ----
     part_row = conn.execute(
-        "SELECT COALESCE(SUM(points), 0) as total FROM participation WHERE student_id = ?",
+        "SELECT COUNT(*) as cnt, COALESCE(SUM(points), 0) as total FROM participation WHERE student_id = ?",
         (student_id,),
     ).fetchone()
     interaction_points = part_row["total"] or 0
+    interaction_records_count = part_row["cnt"] or 0
     if group_session_rows:
-        months_with_sessions = sorted({s["session_date"][:7] for s in group_session_rows})
-        months_with_interaction = {
-            r["m"] for r in conn.execute(
-                "SELECT DISTINCT substr(session_date,1,7) as m FROM participation WHERE student_id = ?",
-                (student_id,),
-            ).fetchall()
-        }
-        interacted_months_count = sum(1 for m in months_with_sessions if m in months_with_interaction)
-        interaction_total_months = len(months_with_sessions)
-        interaction_pct = round(interacted_months_count / interaction_total_months * 100, 1)
+        interaction_pct = 100.0 if interaction_records_count > 0 else 0.0
     else:
-        interaction_pct, interacted_months_count, interaction_total_months = None, 0, 0
+        interaction_pct = None
 
     components = {
         "exams": exam_pct,
@@ -6680,7 +6671,7 @@ def compute_student_commitment(conn, student_id: int) -> dict:
         "quizzes": quiz_count,
         "homework": hw_count,
         "attendance": att_count,
-        "interaction": interaction_total_months,
+        "interaction": 1 if group_session_rows else 0,
     }
     present_att_count = (att_count - absences_count) if att_count else 0
     hw_done_count = (hw_count - missing_hw_count) if hw_count else 0
@@ -6691,9 +6682,9 @@ def compute_student_commitment(conn, student_id: int) -> dict:
         "homework": {"done": hw_done_count, "missed": missing_hw_count, "total": hw_count},
         "attendance": {"done": present_att_count, "missed": absences_count, "total": att_count},
         "interaction": {
-            "done": interacted_months_count,
-            "missed": (interaction_total_months - interacted_months_count) if interaction_total_months else None,
-            "total": interaction_total_months,
+            "done": interaction_records_count,
+            "missed": None,
+            "total": None,
         },
     }
 
@@ -6723,9 +6714,8 @@ def compute_student_commitment(conn, student_id: int) -> dict:
         reasons.append(f"{missing_hw_count} واجب لم يُسلَّم")
     if absences_count > 0:
         reasons.append(f"{absences_count} غياب عن الحصص")
-    if interaction_total_months and interacted_months_count < interaction_total_months:
-        missed_months = interaction_total_months - interacted_months_count
-        reasons.append(f"{missed_months} شهر بدون أي تفاعل مسجل")
+    if group_session_rows and interaction_records_count == 0:
+        reasons.append("لم يتفاعل ولا مرة")
 
     return {
         "student_id": student_id,
