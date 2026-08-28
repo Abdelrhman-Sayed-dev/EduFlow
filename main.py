@@ -6590,6 +6590,8 @@ def compute_student_commitment(conn, student_id: int) -> dict:
 
     exam_pct, exam_count, missed_exams = _completion_component("exam")
     quiz_pct, quiz_count, missed_quizzes = _completion_component("quiz")
+    exam_done_count = exam_count - len(missed_exams)
+    quiz_done_count = quiz_count - len(missed_quizzes)
 
     # ---- الواجبات: submitted (done=1) = كامل ----
     hw_rows = conn.execute(
@@ -6670,6 +6672,16 @@ def compute_student_commitment(conn, student_id: int) -> dict:
         "attendance": att_count,
         "interaction": att_count,
     }
+    present_att_count = (att_count - absences_count) if att_count else 0
+    hw_done_count = (hw_count - missing_hw_count) if hw_count else 0
+    # ---- تفاصيل إضافية عددية (كام حصة حضر/غاب، كام واجب سلّم/متسلمش...) للتقرير المطبوع ----
+    detail_counts = {
+        "exams": {"done": exam_done_count, "missed": len(missed_exams), "total": exam_count},
+        "quizzes": {"done": quiz_done_count, "missed": len(missed_quizzes), "total": quiz_count},
+        "homework": {"done": hw_done_count, "missed": missing_hw_count, "total": hw_count},
+        "attendance": {"done": present_att_count, "missed": absences_count, "total": att_count},
+        "interaction": {"done": interaction_points, "missed": None, "total": att_count},
+    }
 
     present_weight_sum = sum(
         COMMITMENT_WEIGHTS[k] for k, v in components.items() if v is not None
@@ -6707,6 +6719,9 @@ def compute_student_commitment(conn, student_id: int) -> dict:
                 "percentage": components[k],
                 "weighted_score": round(COMMITMENT_WEIGHTS[k] * components[k] / 100, 1) if components[k] is not None else None,
                 "items_count": counts[k],
+                "done_count": detail_counts[k]["done"],
+                "missed_count": detail_counts[k]["missed"],
+                "total_count": detail_counts[k]["total"],
             }
             for k in COMMITMENT_WEIGHTS
         },
