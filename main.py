@@ -320,6 +320,15 @@ class AttendanceCodeIn(BaseModel):
     session_number: int = 1
 
 
+class SessionDateUpdateIn(BaseModel):
+    """تعديل تاريخ حصة كاملة (لو المشرف سجّلها بتاريخ غلط) - بينقل كل
+    السجلات المرتبطة بنفس المجموعة ورقم الحصة من التاريخ القديم للجديد."""
+    group_id: int
+    session_number: int
+    old_date: str
+    new_date: str
+
+
 class SupervisorCheckInOut(BaseModel):
     """بيانات الموقع اللي بيبعتها المتصفح - القرار النهائي كله في الباك إند،
     مفيش هنا أي status/distance/time جاي من الفرونت"""
@@ -4624,6 +4633,95 @@ def delete_attendance_session(group_id: int, session_date: str, session_number: 
             group_id=group_id
         )
         return {"message": f"تم حذف {deleted.rowcount} سجل حضور"}
+
+
+@app.put("/api/attendance-sessions/date")
+def update_attendance_session_date(data: SessionDateUpdateIn,
+                                    session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
+    """
+    تعديل تاريخ حصة كاملة (حضور + تفاعل + واجب + سبورة + كويز) لمجموعة
+    معينة، من تاريخ قديم لتاريخ جديد - مفيد لو المشرف أخد الغياب فعليًا
+    يوم معين بس سجّله بتاريخ غلط بالغلط.
+    """
+    if data.old_date == data.new_date:
+        raise HTTPException(status_code=400, detail="التاريخ الجديد لازم يكون مختلف عن التاريخ القديم")
+
+    with get_connection() as conn:
+        if session["role"] == "supervisor":
+            assert_supervisor_owns_group(conn, session, data.group_id)
+
+        group = conn.execute("SELECT name FROM groups WHERE id=?", (data.group_id,)).fetchone()
+        if not group:
+            raise HTTPException(status_code=404, detail="المجموعة غير موجودة")
+
+        # تحقق الأول إن مفيش تعارض: يعني مفيش أصلاً سجلات حضور/تفاعل لنفس
+        # رقم الحصة على التاريخ الجديد (غير كده هيبوظ الـ UNIQUE constraint)
+        conflict = conn.execute("""
+            SELECT COUNT(*) as c FROM attendance a
+            JOIN students s ON s.id = a.student_id
+            WHERE s.group_id=? AND a.session_number=? AND a.session_date=?
+        """, (data.group_id, data.session_number, data.new_date)).fetchone()
+        if conflict and conflict["c"]:
+            raise HTTPException(
+                status_code=409,
+                detail=f"في سجلات حضور مسجلة بالفعل بتاريخ {data.new_date} لنفس رقم الحصة ({data.session_number}) - "
+                       f"مينفعش تنقل الحصة للتاريخ ده غير لو غيّرت رقم الحصة"
+            )
+        conflict_p = conn.execute("""
+            SELECT COUNT(*) as c FROM participation
+            WHERE group_id=? AND session_number=? AND session_date=?
+        """, (data.group_id, data.session_number, data.new_date)).fetchone()
+        if conflict_p and conflict_p["c"]:
+            raise HTTPException(
+                status_code=409,
+                detail=f"في سجلات تفاعل مسجلة بالفعل بتاريخ {data.new_date} لنفس رقم الحصة - "
+                       f"مينفعش تنقل الحصة للتاريخ ده غير لو غيّرت رقم الحصة"
+            )
+
+        updated = {}
+
+        r = conn.execute("""
+            UPDATE attendance SET session_date=?
+            WHERE session_date=? AND session_number=?
+              AND student_id IN (SELECT id FROM students WHERE group_id=?)
+        """, (data.new_date, data.old_date, data.session_number, data.group_id))
+        updated["attendance"] = r.rowcount
+
+        r = conn.execute("""
+            UPDATE participation SET session_date=?
+            WHERE group_id=? AND session_number=? AND session_date=?
+        """, (data.new_date, data.group_id, data.session_number, data.old_date))
+        updated["participation"] = r.rowcount
+
+        r = conn.execute("""
+            UPDATE homework SET session_date=?
+            WHERE group_id=? AND session_number=?
+        """, (data.new_date, data.group_id, data.session_number))
+        updated["homework"] = r.rowcount
+
+        r = conn.execute("""
+            UPDATE board_images SET session_date=?
+            WHERE group_id=? AND session_number=? AND session_date=?
+        """, (data.new_date, data.group_id, data.session_number, data.old_date))
+        updated["board_images"] = r.rowcount
+
+        r = conn.execute("""
+            UPDATE quizzes SET quiz_date=?
+            WHERE group_id=? AND session_number=? AND quiz_date=?
+        """, (data.new_date, data.group_id, data.session_number, data.old_date))
+        updated["quizzes"] = r.rowcount
+
+        total = sum(updated.values())
+        if total == 0:
+            raise HTTPException(status_code=404, detail="مفيش سجلات لقيتها بالتاريخ والحصة والمجموعة دول")
+
+        log_session_activity(
+            conn, session, "attendance",
+            f"تعديل تاريخ حصة - مجموعة \"{group['name']}\" - حصة {data.session_number} - "
+            f"من {data.old_date} إلى {data.new_date}",
+            group_id=data.group_id
+        )
+        return {"message": "تم تعديل تاريخ الحصة بنجاح", "updated": updated}
 
 
 @app.get("/api/attendance/{session_date}")
