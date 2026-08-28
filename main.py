@@ -7753,10 +7753,31 @@ def get_stage_overview(stage_id: int, governorate_id: Optional[int] = None,
         students_attendance = [dict(r) for r in students_attendance]
         for s in students_attendance:
             s["attendance_rate"] = round(s["attendance_rate"], 1)
-        most_committed_students = sorted(students_attendance, key=lambda x: x["attendance_rate"], reverse=True)[:10]
         most_absent_students = sorted(
             [s for s in students_attendance if s["absent_count"] >= 3],
             key=lambda x: x["absent_count"], reverse=True
+        )[:10]
+
+        # ---- الأكثر التزامًا: بنستخدم نفس نسبة الالتزام التفصيلية المستخدمة في
+        # صفحة "التزام الطالب" (امتحانات 30% + كويزات 20% + واجبات 20% + حضور 20% +
+        # تفاعل 10%) - مش مجرد نسبة الحضور - عشان الرقم يتوحد في كل شاشات النظام
+        # ولا يختلف من مكان للتاني (ملحوظة: مش بتاخد في اعتبارها فلتر التاريخ). ----
+        commit_scope_students = conn.execute(f"""
+            SELECT s.id, s.full_name, g.name as group_name, gov.name as governorate_name
+            FROM students s JOIN groups g ON g.id=s.group_id JOIN governorates gov ON gov.id=g.governorate_id
+            WHERE g.stage_id=?{gov_filter_sql} AND s.is_active=1
+        """, base_params()).fetchall()
+        commitment_list = []
+        for cs in commit_scope_students:
+            cr = compute_student_commitment(conn, cs["id"])
+            if cr["commitment_percentage"] is not None:
+                commitment_list.append({
+                    "id": cs["id"], "full_name": cs["full_name"],
+                    "group_name": cs["group_name"], "governorate_name": cs["governorate_name"],
+                    "commitment_percentage": cr["commitment_percentage"],
+                })
+        most_committed_students = sorted(
+            commitment_list, key=lambda x: x["commitment_percentage"], reverse=True
         )[:10]
 
         # ---- اتجاه متوسط الدرجات لآخر 10 كويزات داخل السنة الدراسية ----
@@ -7898,10 +7919,27 @@ def get_group_detail(group_id: int, date_from: Optional[str] = None, date_to: Op
         students_attendance = [dict(r) for r in students_attendance]
         for s in students_attendance:
             s["attendance_rate"] = round(s["attendance_rate"], 1)
-        most_committed_students = sorted(students_attendance, key=lambda x: x["attendance_rate"], reverse=True)[:10]
         most_absent_students = sorted(
             [s for s in students_attendance if s["absent_count"] >= 3],
             key=lambda x: x["absent_count"], reverse=True
+        )[:10]
+
+        # ---- الأكثر التزامًا: نفس نسبة الالتزام التفصيلية المستخدمة في صفحة
+        # "التزام الطالب" (امتحانات + كويزات + واجبات + حضور + تفاعل) بدل ما تكون
+        # مجرد نسبة الحضور، عشان الرقم يتوحد مع باقي شاشات النظام. ----
+        commit_scope_students = conn.execute(
+            "SELECT id, full_name FROM students WHERE group_id=? AND is_active=1", (group_id,)
+        ).fetchall()
+        commitment_list = []
+        for cs in commit_scope_students:
+            cr = compute_student_commitment(conn, cs["id"])
+            if cr["commitment_percentage"] is not None:
+                commitment_list.append({
+                    "id": cs["id"], "full_name": cs["full_name"],
+                    "commitment_percentage": cr["commitment_percentage"],
+                })
+        most_committed_students = sorted(
+            commitment_list, key=lambda x: x["commitment_percentage"], reverse=True
         )[:10]
 
         return {
