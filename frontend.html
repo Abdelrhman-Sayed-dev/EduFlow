@@ -6164,14 +6164,15 @@ async function submitEditSessionDate(groupId, sn, oldDate){
   const newDate = input ? input.value : "";
   if (!newDate){ showToast("اختار تاريخ", "error"); return; }
   if (newDate === oldDate){ closeOverlay("genericModal"); return; }
+  let res;
   try{
-    await api(`/api/attendance-sessions/date`, {
+    res = await api(`/api/attendance-sessions/date`, {
       method: "PUT",
       body: JSON.stringify({group_id: groupId, session_number: sn, old_date: oldDate, new_date: newDate})
     });
   }catch(e){ return; }
   closeOverlay("genericModal");
-  showToast("تم تعديل تاريخ الحصة", "success");
+  showToast(res && res.message ? res.message : "تم تعديل تاريخ الحصة", "success");
 
   // لو الحصة كانت مفتوحة تحت بنفس التاريخ القديم، اقفلها وافتحها تاني بالتاريخ الجديد
   const oldEntry = ATT_ACTIVE_SESSIONS.find(s => s.group_id === groupId && s.session_number === sn && s.date === oldDate);

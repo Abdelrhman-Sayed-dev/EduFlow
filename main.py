@@ -4642,6 +4642,12 @@ def update_attendance_session_date(data: SessionDateUpdateIn,
     تعديل تاريخ حصة كاملة (حضور + تفاعل + واجب + سبورة + كويز) لمجموعة
     معينة، من تاريخ قديم لتاريخ جديد - مفيد لو المشرف أخد الغياب فعليًا
     يوم معين بس سجّله بتاريخ غلط بالغلط.
+
+    لو التاريخ الجديد أصلاً فيه سجلات حضور/تفاعل لنفس رقم الحصة (مثلاً
+    المشرف نسي يسجل بعض الطلاب، وبعدين رجع سجلهم في حصة تانية غلط باسم
+    تاريخ مختلف) - السجلات بتتضاف على اللي موجود بدل ما تتمنع: أي طالب
+    مسجل بالفعل في التاريخ الجديد بيفضل زي ما هو (مايتلمسش)، وأي طالب
+    جديد (مش مسجل في التاريخ الجديد) بتتضاف سجلاته من التاريخ القديم.
     """
     if data.old_date == data.new_date:
         raise HTTPException(status_code=400, detail="التاريخ الجديد لازم يكون مختلف عن التاريخ القديم")
@@ -4654,74 +4660,92 @@ def update_attendance_session_date(data: SessionDateUpdateIn,
         if not group:
             raise HTTPException(status_code=404, detail="المجموعة غير موجودة")
 
-        # تحقق الأول إن مفيش تعارض: يعني مفيش أصلاً سجلات حضور/تفاعل لنفس
-        # رقم الحصة على التاريخ الجديد (غير كده هيبوظ الـ UNIQUE constraint)
-        conflict = conn.execute("""
-            SELECT COUNT(*) as c FROM attendance a
+        moved = {}
+        kept = {}  # سجلات كانت موجودة بالفعل في التاريخ الجديد فاتحفظت زي ما هي
+
+        # --- الحضور: ننقل كل سجل من التاريخ القديم، ولو الطالب أصلاً ليه
+        # سجل حضور في التاريخ الجديد لنفس رقم الحصة، نسيبه زي ما هو ونشيل
+        # سجله القديم (المكرر) بس
+        src_rows = conn.execute("""
+            SELECT a.student_id, a.status, a.notes FROM attendance a
             JOIN students s ON s.id = a.student_id
-            WHERE s.group_id=? AND a.session_number=? AND a.session_date=?
-        """, (data.group_id, data.session_number, data.new_date)).fetchone()
-        if conflict and conflict["c"]:
-            raise HTTPException(
-                status_code=409,
-                detail=f"في سجلات حضور مسجلة بالفعل بتاريخ {data.new_date} لنفس رقم الحصة ({data.session_number}) - "
-                       f"مينفعش تنقل الحصة للتاريخ ده غير لو غيّرت رقم الحصة"
-            )
-        conflict_p = conn.execute("""
-            SELECT COUNT(*) as c FROM participation
-            WHERE group_id=? AND session_number=? AND session_date=?
-        """, (data.group_id, data.session_number, data.new_date)).fetchone()
-        if conflict_p and conflict_p["c"]:
-            raise HTTPException(
-                status_code=409,
-                detail=f"في سجلات تفاعل مسجلة بالفعل بتاريخ {data.new_date} لنفس رقم الحصة - "
-                       f"مينفعش تنقل الحصة للتاريخ ده غير لو غيّرت رقم الحصة"
-            )
-
-        updated = {}
-
+            WHERE s.group_id=? AND a.session_date=? AND a.session_number=?
+        """, (data.group_id, data.old_date, data.session_number)).fetchall()
+        added = 0
+        for row in src_rows:
+            cur = conn.execute("""
+                INSERT INTO attendance (student_id, session_date, session_number, status, notes)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(student_id, session_date, session_number) DO NOTHING
+            """, (row["student_id"], data.new_date, data.session_number, row["status"], row["notes"]))
+            if cur.rowcount:
+                added += 1
         r = conn.execute("""
-            UPDATE attendance SET session_date=?
+            DELETE FROM attendance
             WHERE session_date=? AND session_number=?
               AND student_id IN (SELECT id FROM students WHERE group_id=?)
-        """, (data.new_date, data.old_date, data.session_number, data.group_id))
-        updated["attendance"] = r.rowcount
+        """, (data.old_date, data.session_number, data.group_id))
+        moved["attendance"] = added
+        kept["attendance"] = len(src_rows) - added
 
-        r = conn.execute("""
-            UPDATE participation SET session_date=?
-            WHERE group_id=? AND session_number=? AND session_date=?
-        """, (data.new_date, data.group_id, data.session_number, data.old_date))
-        updated["participation"] = r.rowcount
+        # --- التفاعل: نفس منطق الدمج
+        src_rows = conn.execute("""
+            SELECT student_id, points, notes, author_id FROM participation
+            WHERE group_id=? AND session_date=? AND session_number=?
+        """, (data.group_id, data.old_date, data.session_number)).fetchall()
+        added = 0
+        for row in src_rows:
+            cur = conn.execute("""
+                INSERT INTO participation (student_id, group_id, session_date, session_number, points, notes, author_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(student_id, session_date, session_number) DO NOTHING
+            """, (row["student_id"], data.group_id, data.new_date, data.session_number,
+                  row["points"], row["notes"], row["author_id"]))
+            if cur.rowcount:
+                added += 1
+        conn.execute("""
+            DELETE FROM participation WHERE group_id=? AND session_date=? AND session_number=?
+        """, (data.group_id, data.old_date, data.session_number))
+        moved["participation"] = added
+        kept["participation"] = len(src_rows) - added
 
+        # --- الواجب: صف واحد بس لكل مجموعة+رقم حصة (unique)، مفيش تعارض ممكن
         r = conn.execute("""
             UPDATE homework SET session_date=?
             WHERE group_id=? AND session_number=?
         """, (data.new_date, data.group_id, data.session_number))
-        updated["homework"] = r.rowcount
+        moved["homework"] = r.rowcount
 
+        # --- سبورة الحصة: مفيش قيد unique، تحديث مباشر
         r = conn.execute("""
             UPDATE board_images SET session_date=?
             WHERE group_id=? AND session_number=? AND session_date=?
         """, (data.new_date, data.group_id, data.session_number, data.old_date))
-        updated["board_images"] = r.rowcount
+        moved["board_images"] = r.rowcount
 
+        # --- الكويز: مفيش قيد unique على التاريخ، تحديث مباشر
         r = conn.execute("""
             UPDATE quizzes SET quiz_date=?
             WHERE group_id=? AND session_number=? AND quiz_date=?
         """, (data.new_date, data.group_id, data.session_number, data.old_date))
-        updated["quizzes"] = r.rowcount
+        moved["quizzes"] = r.rowcount
 
-        total = sum(updated.values())
-        if total == 0:
+        total_touched = sum(moved.values()) + sum(kept.values())
+        if total_touched == 0:
             raise HTTPException(status_code=404, detail="مفيش سجلات لقيتها بالتاريخ والحصة والمجموعة دول")
+
+        skipped_note = ""
+        total_kept = sum(kept.values())
+        if total_kept:
+            skipped_note = f" ({total_kept} سجل كان موجود بالفعل في التاريخ الجديد فاتسابوا زي ما هما)"
 
         log_session_activity(
             conn, session, "attendance",
             f"تعديل تاريخ حصة - مجموعة \"{group['name']}\" - حصة {data.session_number} - "
-            f"من {data.old_date} إلى {data.new_date}",
+            f"من {data.old_date} إلى {data.new_date}{skipped_note}",
             group_id=data.group_id
         )
-        return {"message": "تم تعديل تاريخ الحصة بنجاح", "updated": updated}
+        return {"message": f"تم تعديل تاريخ الحصة بنجاح{skipped_note}", "moved": moved, "kept_as_is": kept}
 
 
 @app.get("/api/attendance/{session_date}")
