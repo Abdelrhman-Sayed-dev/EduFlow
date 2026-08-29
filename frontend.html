@@ -15,6 +15,7 @@
 </script>
 <script src="https://unpkg.com/html-to-image@1.11.11/dist/html-to-image.js"></script>
 <script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
 <style>
 :root{
   --primary:#3E7CB1;--primary-10:#EFF5FA;--primary-20:#DCEAF4;--primary-40:#7FAFD4;--primary-60:#3E7CB1;--primary-80:#2C5A82;
@@ -8605,19 +8606,26 @@ async function renderMonthlyReportsPage(){
   const groupIds = groups.map(g=>g.id);
   const allStudents = await loadStudents();
   const students = allStudents.filter(s=>groupIds.includes(s.group_id));
+  MONTHLY_REPORTS_STUDENTS_CACHE = students;
 
   c.innerHTML = `
     <div class="page-header">
       <div><h1>التقرير الشهري</h1><p>تقرير حضور ودرجات كل طالب، جاهز للطباعة</p></div>
     </div>
     <div class="table-card">
-      <div class="toolbar" style="gap:10px;">
+      <div class="toolbar" style="gap:10px;flex-wrap:wrap;">
         <div class="search-wrap"><i data-lucide="search" class="search-ic" style="width:14px;height:14px;"></i><input id="mrSearchInput" placeholder="بحث بالاسم..." oninput="filterMonthlyReportsTable()"></div>
         <select class="form-select" id="mrGroupFilter" style="width:auto;min-width:180px;" onchange="filterMonthlyReportsTable()">
           <option value="">كل المجموعات</option>
           ${groups.map(g=>`<option value="${g.id}">${escapeHtml(g.name)}</option>`).join("")}
         </select>
+        <div style="display:flex;align-items:center;gap:6px;margin-inline-start:auto;">
+          <label class="form-label" style="margin:0;white-space:nowrap;">شهر التحميل الجماعي</label>
+          <input class="form-input" id="mrBulkMonth" type="month" value="${currentMonthStr()}" style="width:auto;">
+        </div>
+        <button class="btn btn-primary btn-sm" id="mrBulkDownloadBtn" onclick="downloadAllMonthlyReportsZip()"><i data-lucide="download" style="width:14px;height:14px;"></i> تحميل الكل PDF (Zip)</button>
       </div>
+      <div id="mrBulkProgress" style="display:none;padding:8px 16px;font-size:12.5px;color:var(--text-3);"></div>
       <div class="table-wrap"><table>
         <thead><tr><th>#</th><th>الطالب</th><th>المجموعة</th><th></th></tr></thead>
         <tbody id="mrTableBody">
@@ -8675,6 +8683,7 @@ function openMonthlyReportModal(studentId, studentName){
 }
 
 let LAST_REPORT_DATA = null;
+let MONTHLY_REPORTS_STUDENTS_CACHE = [];
 let LAST_OVERALL_RATING = null;
 
 // بيجهز نص مختصر يترفق مع ملف الـ PDF كرسالة واتساب (وبيتستخدم كبديل نصي لو تعذر إرفاق الملف تلقائيًا)
@@ -9141,6 +9150,73 @@ async function downloadMonthlyReportPdf(studentId, studentName){
   document.body.appendChild(dlLink); dlLink.click(); dlLink.remove();
   setTimeout(() => URL.revokeObjectURL(url), 15000);
   showToast("اتنزّل ملف الـ PDF بنجاح", "success");
+}
+
+// بيرجع الطلاب الظاهرين حاليًا في جدول التقرير الشهري (بعد تطبيق فلتر البحث والمجموعة)
+function getVisibleMonthlyReportStudents(){
+  const q = (document.getElementById("mrSearchInput")?.value||"").toLowerCase();
+  const groupId = document.getElementById("mrGroupFilter")?.value || "";
+  return MONTHLY_REPORTS_STUDENTS_CACHE.filter(s=>{
+    const matchesSearch = s.full_name.toLowerCase().includes(q);
+    const matchesGroup = !groupId || String(s.group_id) === String(groupId);
+    return matchesSearch && matchesGroup;
+  });
+}
+
+// بيحمّل تقرير كل الطلاب الظاهرين حاليًا (حسب فلتر البحث/المجموعة) كملفات PDF مضغوطة في ملف Zip واحد،
+// بيولّد كل تقرير واحد ورا التاني (مش بالتوازي) عشان مايضغطش على المتصفح، وبيعرض تقدّم العملية أول بأول
+async function downloadAllMonthlyReportsZip(){
+  if (typeof JSZip === "undefined"){
+    showToast("تعذر تحميل مكتبة الضغط، جرّب تحدّث الصفحة", "error");
+    return;
+  }
+  const students = getVisibleMonthlyReportStudents();
+  if (!students.length){
+    showToast("مفيش طلاب ظاهرين دلوقتي عشان نحمّل تقاريرهم", "error");
+    return;
+  }
+  const month = document.getElementById("mrBulkMonth")?.value || currentMonthStr();
+  const monthLabel = monthLabelAr(month);
+  const btn = document.getElementById("mrBulkDownloadBtn");
+  const progressEl = document.getElementById("mrBulkProgress");
+  if (btn){ btn.disabled = true; btn.style.opacity = "0.6"; }
+  if (progressEl) progressEl.style.display = "block";
+
+  const zip = new JSZip();
+  const failed = [];
+  for (let i = 0; i < students.length; i++){
+    const s = students[i];
+    if (progressEl) progressEl.textContent = `بيجهز تقرير ${i+1} من ${students.length}: ${s.full_name}...`;
+    try{
+      const data = await api(`/api/students/${s.id}/monthly-report?month=${month}`);
+      const blob = await generateMonthlyReportPdfBlob(data, s.full_name);
+      const fileName = `تقرير-${s.full_name}-${monthLabel}.pdf`.replace(/\s+/g, "-").replace(/\//g, "-");
+      zip.file(fileName, blob);
+    }catch(e){
+      failed.push(s.full_name);
+    }
+  }
+
+  if (progressEl) progressEl.textContent = "بيضغط الملفات في Zip...";
+  try{
+    const zipBlob = await zip.generateAsync({type: "blob"});
+    const url = URL.createObjectURL(zipBlob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `تقارير-شهرية-${monthLabel}.zip`.replace(/\s+/g, "-");
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 15000);
+  }catch(e){
+    showToast("حصلت مشكلة أثناء تجهيز ملف الـ Zip", "error");
+  }
+
+  if (progressEl) progressEl.style.display = "none";
+  if (btn){ btn.disabled = false; btn.style.opacity = ""; }
+
+  if (failed.length){
+    showToast(`اتحمّل الملف - بس فشل تجهيز تقرير ${failed.length} طالب (${failed.slice(0,3).join("، ")}${failed.length>3?"...":""})`, "error");
+  } else {
+    showToast(`اتحمّل ملف Zip فيه ${students.length} تقرير بنجاح`, "success");
+  }
 }
 
 // بيبعت ملف الـ PDF الفعلي على واتساب - على الموبايل بيفتح شاشة المشاركة ويرفق الملف مباشرة،
