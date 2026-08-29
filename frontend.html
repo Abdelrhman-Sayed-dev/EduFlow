@@ -8709,16 +8709,11 @@ function buildMonthlyReportWaText(data, studentName){
 async function loadMonthlyReport(studentId, canEditPayment){
   if (canEditPayment === undefined) canEditPayment = SESSION.role === "admin" || SESSION.role === "supervisor" || SESSION.role === "teacher";
   const month = document.getElementById("mr_month").value;
-  const [data, overallRating] = await Promise.all([
-    api(`/api/students/${studentId}/monthly-report?month=${month}`),
-    api(`/api/students/${studentId}/overall-rating`).catch(()=>null),
-  ]);
+  const data = await api(`/api/students/${studentId}/monthly-report?month=${month}`);
   LAST_REPORT_DATA = data;
-  LAST_OVERALL_RATING = overallRating;
   const a = data.attendance_summary;
   const pay = data.payment;
   document.getElementById("mrWrap").innerHTML = `
-    ${overallRating ? renderOverallRatingCard(overallRating) : ""}
     <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px;">
       <div class="stat-card" style="padding:12px;"><div class="stat-value" style="font-size:20px;">${a.present}</div><div class="stat-label">حاضر</div></div>
       <div class="stat-card" style="padding:12px;"><div class="stat-value" style="font-size:20px;">${a.absent}</div><div class="stat-label">غايب</div></div>
@@ -8813,7 +8808,7 @@ function buildReportRecommendation(avgPct, attSummary){
 }
 
 // بيبني نص الـ HTML الكامل للتقرير (يتستخدم في نافذة الطباعة وفي توليد ملف الـ PDF بنفس الشكل بالظبط)
-function buildMonthlyReportHtmlDoc(d, studentName, opts, overallRating){
+function buildMonthlyReportHtmlDoc(d, studentName, opts){
   opts = opts || {};
   const includePrintBar = opts.includePrintBar !== false;
   const a = d.attendance_summary;
@@ -8827,42 +8822,6 @@ function buildMonthlyReportHtmlDoc(d, studentName, opts, overallRating){
   const [rec1, rec2] = buildReportRecommendation(avgPct, a);
   const supervisorName = d.student.supervisor_name || "—";
   const supervisorPhone = d.student.supervisor_phone || "";
-
-  // ---- قسم التقييم التراكمي الكلي (من أول ما الطالب اتسجل - مش شهر معين) ----
-  // نفس البيانات اللي ظاهرة في المودال على الشاشة، عشان النسبة تفضل موحّدة
-  // بين اللي بيشوفه المستخدم واللي بيتطبع في الـ PDF.
-  let cumulativeSectionHtml = "";
-  if (overallRating && overallRating.overall_percentage != null){
-    const overallPct = overallRating.overall_percentage;
-    const overallColor = ratingColor(overallPct);
-    const overallDeg = Math.round(overallPct * 3.6);
-    const rowsHtml = Object.keys(OVERALL_RATING_LABELS).map(key=>{
-      const b = overallRating.breakdown[key];
-      const meta = OVERALL_RATING_LABELS[key];
-      const cpct = b.percentage;
-      const barColor = cpct != null ? ratingColor(cpct) : "#B9B6AC";
-      return `
-        <div class="cum-row">
-          <div class="cum-row-top">
-            <span class="cum-row-label">${meta.label} <span class="cum-row-weight">(وزنها ${b.weight}%)</span></span>
-            <span class="cum-row-value" style="color:${barColor};">${cpct != null ? cpct + '%' : 'لا يوجد بيانات'}</span>
-          </div>
-          <div class="cum-bar-track"><div class="cum-bar-fill" style="width:${cpct != null ? Math.max(3,Math.min(100,cpct)) : 0}%;background:${barColor};"></div></div>
-        </div>`;
-    }).join("");
-
-    cumulativeSectionHtml = `
-      <div class="section-title"><span class="bar"></span> التقييم التراكمي الكلي (من أول التسجيل)</div>
-      <div class="card cum-card">
-        <div class="cum-head">
-          <div class="cum-ring" style="background:conic-gradient(${overallColor} ${overallDeg}deg, var(--neutral-soft) ${overallDeg}deg);">
-            <div class="cum-ring-inner" style="color:${overallColor};">${overallPct}%</div>
-          </div>
-          <div class="cum-note">نسبة تراكمية محسوبة من كل تاريخ الطالب من أول ما اتسجل - مش من شهر معين - عشان تدي صورة شاملة عن مستواه بشكل عام.</div>
-        </div>
-        ${rowsHtml}
-      </div>`;
-  }
 
   return `
     <!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
@@ -9010,8 +8969,6 @@ function buildMonthlyReportHtmlDoc(d, studentName, opts, overallRating){
         </div>
       </div>
 
-      ${cumulativeSectionHtml}
-
       <div class="section-title"><span class="bar"></span> الكويزات</div>
       <div class="card table-card">
         <table><thead><tr><th>الكويز</th><th>التاريخ</th><th>الدرجة</th></tr></thead>
@@ -9064,17 +9021,17 @@ function buildMonthlyReportHtmlDoc(d, studentName, opts, overallRating){
 function printMonthlyReport(studentId, studentName){
   if (!LAST_REPORT_DATA){ showToast("لسه البيانات مبتحمّلتش", "error"); return; }
   const win = window.open("", "_blank");
-  win.document.write(buildMonthlyReportHtmlDoc(LAST_REPORT_DATA, studentName, {includePrintBar:true}, LAST_OVERALL_RATING));
+  win.document.write(buildMonthlyReportHtmlDoc(LAST_REPORT_DATA, studentName, {includePrintBar:true}));
   win.document.close();
 }
 
 // بيولّد ملف PDF حقيقي للتقرير (نفس تصميم الطباعة بالظبط) عشان نقدر نبعته كمرفق فعلي
 // بيستخدم html-to-image بدل html2canvas لأنه بيخلي المتصفح نفسه يرسم الخط (بيحافظ على شكل الحروف
 // العربية المتصلة والاتجاه صح)، عكس html2canvas اللي بيعيد تنفيذ رسم النص بنفسه وبيبوظ العربي
-function generateMonthlyReportPdfBlob(data, studentName, overallRating){
+function generateMonthlyReportPdfBlob(data, studentName){
   return new Promise((resolve, reject) => {
     try {
-      const htmlDoc = buildMonthlyReportHtmlDoc(data, studentName, {includePrintBar:false}, overallRating);
+      const htmlDoc = buildMonthlyReportHtmlDoc(data, studentName, {includePrintBar:false});
       const iframe = document.createElement("iframe");
       iframe.style.position = "fixed";
       iframe.style.top = "-10000px";
@@ -9152,14 +9109,11 @@ function generateMonthlyReportPdfBlob(data, studentName, overallRating){
 // ويفتح واتساب برسالة، وعلى المستخدم يرفق الملف يدويًا لأن واتساب مش بيسمح بإرفاق تلقائي من المتصفح
 async function shareMonthlyReportPdf(studentId, studentName, target){
   let data;
-  let overallRating;
   if (LAST_REPORT_DATA && LAST_REPORT_DATA.student && LAST_REPORT_DATA.student.id === studentId) {
     data = LAST_REPORT_DATA;
-    overallRating = LAST_OVERALL_RATING;
   } else {
     try {
       data = await api(`/api/students/${studentId}/monthly-report?month=${currentMonthStr()}`);
-      overallRating = await api(`/api/students/${studentId}/overall-rating`).catch(()=>null);
     } catch (e) {
       showToast("تعذر تحميل بيانات التقرير", "error");
       return;
@@ -9174,7 +9128,7 @@ async function shareMonthlyReportPdf(studentId, studentName, target){
   showToast("جارِ تجهيز ملف PDF...", "info");
   let blob;
   try {
-    blob = await generateMonthlyReportPdfBlob(data, studentName, overallRating);
+    blob = await generateMonthlyReportPdfBlob(data, studentName);
   } catch (e) {
     showToast("حصلت مشكلة في تجهيز ملف الـ PDF، جرّب تاني", "error");
     return;
