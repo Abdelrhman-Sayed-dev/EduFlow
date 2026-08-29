@@ -1236,6 +1236,7 @@ const NAV_BY_ROLE = {
     {id:"students", label:"الطلاب", icon:"user"},
     {id:"import_students", label:"استيراد طلاب (CSV)", icon:"upload"},
     {id:"never_engaged", label:"طلاب بدون تفاعل", icon:"user-x"},
+    {id:"low_attendance", label:"طلاب مش بتحضر", icon:"user-minus"},
     {id:"subscriptions", label:"اشتراكات الطلاب", icon:"credit-card"},
     {id:"subscriptions_report", label:"تقرير الاشتراكات الشهري", icon:"file-bar-chart"},
     {id:"session_subscriptions", label:"الاشتراك بالحصص", icon:"ticket"},
@@ -1429,7 +1430,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
    موجه الصفحات الرئيسي
 ===================================================================== */
 const PAGE_TITLES = {
-  dashboard:"لوحة التحكم", groups:"المجموعات", students:"الطلاب", import_students:"استيراد طلاب", never_engaged:"طلاب بدون تفاعل", subscriptions:"اشتراكات الطلاب",
+  dashboard:"لوحة التحكم", groups:"المجموعات", students:"الطلاب", import_students:"استيراد طلاب", never_engaged:"طلاب بدون تفاعل", low_attendance:"طلاب مش بتحضر", subscriptions:"اشتراكات الطلاب",
   supervisors:"المشرفين", teachers:"المدرسين", schedule:"جدول المواعيد",
   head_supervisors:"مشرفي المشرفين",
   quizzes:"الكويزات والامتحانات", attendance:"الحضور والغياب", participation:"تفاعل الطلاب", boards:"سبورة الحصص",
@@ -1469,6 +1470,7 @@ async function renderPage(page){
       students: renderStudentsPage,
       import_students: renderImportStudentsPage,
       never_engaged: renderNeverEngagedPage,
+      low_attendance: renderLowAttendancePage,
       subscriptions: renderSubscriptionsPage,
       supervisors: ()=>renderUsersPage("supervisor"),
       teachers: ()=>renderUsersPage("teacher"),
@@ -4307,6 +4309,113 @@ function deleteAllNeverEngagedStudents(){
 
 
 /* =====================================================================
+   الطلاب اللي نسبة حضورهم ضعيفة - Low Attendance Students
+   بيحسب نسبة الحضور لكل طالب (حاضر / إجمالي الحصص المسجلة) وبيعرض بس اللي
+   نسبتهم أقل من حد معين - مع خاصية ترتيب حسب الاسم عشان الأسماء المكررة
+   (لو حد اتسجل مرتين بالغلط) تيجي جنب بعض وتبقى سهلة الاكتشاف
+===================================================================== */
+let LOW_ATTENDANCE_CACHE = [];
+let LOW_ATTENDANCE_SORT_MODE = "rate"; // "rate" = الأسوأ حضورًا الأول | "name" = أبجديًا (لتجميع المكرر)
+
+async function renderLowAttendancePage(){
+  const groups = await loadGroups();
+  CACHE_ALL_GROUPS = groups;
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>طلاب مش بتحضر</h1><p>طلاب نسبة حضورهم ضعيفة (حاضر / إجمالي الحصص) - وبيشمل اللي معندهمش سجل حضور خالص</p></div>
+      <div class="header-actions">
+        <select class="form-select" id="lowAttGroupFilter" onchange="loadLowAttendanceTable()" style="min-width:200px;">
+          <option value="">كل المجموعات</option>
+          ${groupOptionsAll()}
+        </select>
+        <select class="form-select" id="lowAttThreshold" onchange="loadLowAttendanceTable()" style="width:auto;">
+          <option value="30">نسبة حضور أقل من 30%</option>
+          <option value="50" selected>نسبة حضور أقل من 50%</option>
+          <option value="70">نسبة حضور أقل من 70%</option>
+          <option value="100">كل اللي مش 100% حضور</option>
+        </select>
+        <button class="btn btn-ghost" id="lowAttSortBtn" onclick="toggleLowAttendanceSort()" title="رتّب أبجديًا عشان الأسماء المكررة تيجي جنب بعض"><i data-lucide="arrow-down-a-z" style="width:14px;height:14px;"></i> تجميع الأسماء المكررة</button>
+        <button class="btn btn-ghost" onclick="exportLowAttendanceStudents()"><i data-lucide="download" style="width:14px;height:14px;"></i> تحميل كشيت</button>
+      </div>
+    </div>
+    <div class="table-card">
+      <div class="table-wrap"><table>
+        <thead><tr><th>#</th><th>الطالب</th><th>المجموعة</th><th>نسبة الحضور</th><th>حاضر</th><th>غايب</th><th>متأخر</th><th>هاتف الطالب</th><th>هاتف ولي الأمر</th></tr></thead>
+        <tbody id="lowAttTableBody"><tr><td colspan="9" class="loading-row"><span class="spinner"></span> بتحمّل...</td></tr></tbody>
+      </table></div>
+    </div>
+  `;
+  icons();
+  await loadLowAttendanceTable();
+}
+
+function getLowAttendanceFilters(){
+  const groupSel = document.getElementById("lowAttGroupFilter");
+  const threshSel = document.getElementById("lowAttThreshold");
+  return {
+    groupId: groupSel && groupSel.value ? groupSel.value : "",
+    threshold: threshSel && threshSel.value ? threshSel.value : "50",
+  };
+}
+
+function toggleLowAttendanceSort(){
+  LOW_ATTENDANCE_SORT_MODE = LOW_ATTENDANCE_SORT_MODE === "rate" ? "name" : "rate";
+  renderLowAttendanceRows();
+}
+
+async function loadLowAttendanceTable(){
+  const { groupId, threshold } = getLowAttendanceFilters();
+  const qs = `?threshold=${threshold}${groupId ? `&group_id=${groupId}` : ""}`;
+  let rows = [];
+  try{
+    rows = await api(`/api/students/low-attendance${qs}`);
+  }catch(e){ rows = []; }
+  LOW_ATTENDANCE_CACHE = rows;
+  renderLowAttendanceRows();
+}
+
+function renderLowAttendanceRows(){
+  const tbody = document.getElementById("lowAttTableBody");
+  if (!tbody) return;
+  const sortBtn = document.getElementById("lowAttSortBtn");
+  if (sortBtn) sortBtn.classList.toggle("active", LOW_ATTENDANCE_SORT_MODE === "name");
+
+  const rows = [...LOW_ATTENDANCE_CACHE];
+  if (LOW_ATTENDANCE_SORT_MODE === "name"){
+    // ترتيب أبجدي بسيط - الأسماء المتطابقة أو المتقاربة تيجي جنب بعض تلقائيًا
+    rows.sort((a,b)=> a.full_name.localeCompare(b.full_name, "ar"));
+  } else {
+    // الأسوأ نسبة حضور الأول (اللي معندهمش بيانات خالص - null - يتحسبوا الأسوأ)
+    rows.sort((a,b)=> (a.attendance_rate ?? -1) - (b.attendance_rate ?? -1));
+  }
+
+  tbody.innerHTML = rows.map(r=>{
+    const rateDisplay = r.attendance_rate != null ? `${r.attendance_rate}%` : "لا يوجد بيانات";
+    const rateBadge = r.attendance_rate == null ? "badge-gray" : r.attendance_rate < 30 ? "badge-red" : r.attendance_rate < 50 ? "badge-amber" : "badge-blue";
+    return `
+    <tr>
+      <td style="color:var(--text-3);font-family:monospace;font-size:12px;">#${r.id}</td>
+      <td class="td-name">${escapeHtml(r.full_name)}</td>
+      <td>${escapeHtml(r.group_name || "-")}</td>
+      <td><span class="badge ${rateBadge}">${rateDisplay}</span></td>
+      <td>${r.present_count}</td>
+      <td>${r.absent_count}</td>
+      <td>${r.late_count}</td>
+      <td>${escapeHtml(r.phone || "-")}</td>
+      <td>${escapeHtml(r.parent_phone || "-")}</td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:24px;">مفيش طلاب - كل الطلاب فوق النسبة المحددة</td></tr>`;
+  icons();
+}
+
+function exportLowAttendanceStudents(){
+  const { groupId, threshold } = getLowAttendanceFilters();
+  const qs = `?threshold=${threshold}${groupId ? `&group_id=${groupId}` : ""}`;
+  downloadFile(`/api/students/low-attendance/export${qs}`, "طلاب ضعاف الحضور.xlsx");
+}
+
+/* =====================================================================
    التزام الطلاب - Student Commitment Percentage (أدمن فقط في المرحلة الأولى)
    نظام مستقل عن "التقييم التراكمي" - completion-based (هل الطالب أدى
    المطلوب منه ولا لأ) مش على أساس درجته. مش متاح لواجهة الطالب.
@@ -5526,6 +5635,7 @@ async function loadSupervisorHomework(groupId){
           <span class="badge ${doneCount===subs.length&&subs.length?'badge-green':doneCount>0?'badge-amber':'badge-gray'}" style="margin-right:auto;">${doneCount}/${subs.length} سلّموا</span>
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
+          <button class="action-btn edit" title="تعديل تاريخ/وصف الواجب" onclick="event.stopPropagation();openEditHomeworkModal(${hw.id}, ${hw.group_id}, ${hw.session_number}, '${jsAttr(hw.session_date||'')}', '${jsAttr(hw.description||'')}')"><i data-lucide="pencil" style="width:14px;height:14px;"></i></button>
           <button class="action-btn del" onclick="event.stopPropagation();deleteHomeworkItem(${hw.id}, ${JSON.stringify(hw.group_id)})"><i data-lucide="trash-2" style="width:14px;height:14px;"></i></button>
           <i data-lucide="${isOpen?'chevron-up':'chevron-down'}" class="collapse-icon" style="width:16px;height:16px;color:var(--text-3);transition:transform .2s;"></i>
         </div>
@@ -5579,6 +5689,28 @@ async function submitAddHomework(){
   CURRENT_HOMEWORK_GROUP_ID = groupId;
   const switcher = document.getElementById("hwGroupSwitcher");
   if (switcher) switcher.value = groupId;
+  loadSupervisorHomework(groupId);
+}
+
+function openEditHomeworkModal(hwId, groupId, sessionNumber, sessionDate, description){
+  openModal(`تعديل واجب - الحصة ${sessionNumber}`, `
+    <div class="form-group"><label class="form-label">تاريخ الحصة</label><input class="form-input" id="f_hw_edit_date" type="date" value="${sessionDate}"></div>
+    <div class="form-group"><label class="form-label">وصف الواجب <span class="req">*</span></label><textarea class="form-textarea" id="f_hw_edit_desc">${escapeHtml(description)}</textarea></div>
+  `, `
+    <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
+    <button class="btn btn-primary" onclick="submitEditHomework(${hwId}, ${groupId}, ${sessionNumber})"><i data-lucide="check" style="width:14px;height:14px;"></i> حفظ</button>
+  `);
+}
+
+async function submitEditHomework(hwId, groupId, sessionNumber){
+  const sessionDate = document.getElementById("f_hw_edit_date").value || null;
+  const description = document.getElementById("f_hw_edit_desc").value.trim();
+  if (!description){ showToast("لازم تكتب وصف الواجب", "error"); return; }
+  await api(`/api/homework/${hwId}`, {method:"PUT", body: JSON.stringify({
+    group_id: groupId, session_number: sessionNumber, session_date: sessionDate, description
+  })});
+  showToast("تم تعديل الواجب", "success");
+  closeOverlay("genericModal");
   loadSupervisorHomework(groupId);
 }
 
