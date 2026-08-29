@@ -1248,6 +1248,7 @@ const NAV_BY_ROLE = {
     {id:"online_exams_admin", label:"الامتحانات الإلكترونية", icon:"shield-check"},
     {id:"event_calendar", label:"التقويم", icon:"calendar-days"},
     {id:"attendance", label:"الحضور والغياب", icon:"calendar-check"},
+    {id:"monthly_reports", label:"التقرير الشهري", icon:"file-bar-chart"},
     {id:"supervisors_attendance_admin", label:"حضور المشرفين", icon:"map-pin"},
     {id:"student_search", label:"بحث عن طالب", icon:"search"},
     {id:"activity_log", label:"سجل الأنشطة", icon:"history"},
@@ -1261,6 +1262,7 @@ const NAV_BY_ROLE = {
     {id:"teacher_compare", label:"مقارنة المجموعات", icon:"git-compare"},
     {id:"teacher_ranking", label:"الترتيب المتقدم", icon:"trophy"},
     {id:"teacher_reports", label:"التقارير", icon:"file-text"},
+    {id:"monthly_reports", label:"التقرير الشهري", icon:"file-bar-chart"},
     {id:"teacher_schedule", label:"جدولي", icon:"calendar-clock"},
     {id:"event_calendar", label:"التقويم", icon:"calendar-days"},
   ],
@@ -1274,6 +1276,7 @@ const NAV_BY_ROLE = {
     {id:"teacher_analytics", label:"التحليلات", icon:"bar-chart-3"},
     {id:"teacher_compare", label:"مقارنة المجموعات", icon:"git-compare"},
     {id:"teacher_ranking", label:"الترتيب المتقدم", icon:"trophy"},
+    {id:"monthly_reports", label:"التقرير الشهري", icon:"file-bar-chart"},
     {id:"supervisors", label:"المشرفين", icon:"shield-check"},
     {id:"supervisors_attendance_admin", label:"حضور المشرفين", icon:"map-pin"},
     {id:"activity_log", label:"سجل الأنشطة", icon:"history"},
@@ -8625,6 +8628,7 @@ async function renderMonthlyReportsPage(){
               <td><span class="badge badge-teal">${escapeHtml(s.group_name)}</span></td>
               <td class="td-actions" style="display:flex;gap:6px;flex-wrap:wrap;">
                 <button class="btn btn-primary btn-sm" onclick="openMonthlyReportModal(${s.id}, '${jsAttr(s.full_name)}')"><i data-lucide="file-bar-chart" style="width:14px;height:14px;"></i> عرض التقرير</button>
+                <button class="btn btn-sm btn-ghost" title="تحميل ملف PDF" onclick="downloadMonthlyReportPdf(${s.id}, '${jsAttr(s.full_name)}')"><i data-lucide="download" style="width:14px;height:14px;"></i> تحميل</button>
                 <button class="btn btn-sm" style="background:#25D366;color:#fff;" title="إرسال التقرير للطالب على واتساب" onclick="shareMonthlyReportPdf(${s.id}, '${jsAttr(s.full_name)}', 'student')"><i data-lucide="message-circle" style="width:14px;height:14px;"></i> للطالب</button>
                 <button class="btn btn-sm" style="background:#25D366;color:#fff;" title="إرسال التقرير لولي الأمر على واتساب" onclick="shareMonthlyReportPdf(${s.id}, '${jsAttr(s.full_name)}', 'parent')"><i data-lucide="message-circle" style="width:14px;height:14px;"></i> لولي الأمر</button>
               </td>
@@ -8662,6 +8666,7 @@ function openMonthlyReportModal(studentId, studentName){
     <div id="mrWrap"><div class="form-hint">بتحمّل...</div></div>
   `, `
     <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إغلاق</button>
+    <button class="btn btn-sm btn-ghost" title="تحميل ملف PDF" onclick="downloadMonthlyReportPdf(${studentId}, '${jsAttr(studentName)}')"><i data-lucide="download" style="width:14px;height:14px;"></i> تحميل PDF</button>
     <button class="btn btn-sm" style="background:#25D366;color:#fff;" onclick="shareMonthlyReportPdf(${studentId}, '${jsAttr(studentName)}', 'student')"><i data-lucide="message-circle" style="width:14px;height:14px;"></i> إرسال للطالب</button>
     <button class="btn btn-sm" style="background:#25D366;color:#fff;" onclick="shareMonthlyReportPdf(${studentId}, '${jsAttr(studentName)}', 'parent')"><i data-lucide="message-circle" style="width:14px;height:14px;"></i> إرسال لولي الأمر</button>
     <button class="btn btn-primary" onclick="printMonthlyReport(${studentId}, '${jsAttr(studentName)}')"><i data-lucide="printer" style="width:14px;height:14px;"></i> طباعة / حفظ PDF</button>
@@ -9102,6 +9107,40 @@ function generateMonthlyReportPdfBlob(data, studentName){
       reject(err);
     }
   });
+}
+
+// تحميل ملف الـ PDF مباشرة على جهاز المستخدم (من غير فتح واتساب) - نفس تصميم
+// التقرير المطبوع بالظبط، ومفيد لما المستخدم عايز يحفظ نسخة أو يبعتها بأي وسيلة تانية غير واتساب
+async function downloadMonthlyReportPdf(studentId, studentName){
+  let data;
+  if (LAST_REPORT_DATA && LAST_REPORT_DATA.student && LAST_REPORT_DATA.student.id === studentId) {
+    data = LAST_REPORT_DATA;
+  } else {
+    try {
+      data = await api(`/api/students/${studentId}/monthly-report?month=${currentMonthStr()}`);
+    } catch (e) {
+      showToast("تعذر تحميل بيانات التقرير", "error");
+      return;
+    }
+  }
+
+  showToast("جارِ تجهيز ملف PDF...", "info");
+  let blob;
+  try {
+    blob = await generateMonthlyReportPdfBlob(data, studentName);
+  } catch (e) {
+    showToast("حصلت مشكلة في تجهيز ملف الـ PDF، جرّب تاني", "error");
+    return;
+  }
+
+  const monthLabel = monthLabelAr(data.month);
+  const fileName = `تقرير-${studentName}-${monthLabel}.pdf`.replace(/\s+/g, "-");
+  const url = URL.createObjectURL(blob);
+  const dlLink = document.createElement("a");
+  dlLink.href = url; dlLink.download = fileName;
+  document.body.appendChild(dlLink); dlLink.click(); dlLink.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 15000);
+  showToast("اتنزّل ملف الـ PDF بنجاح", "success");
 }
 
 // بيبعت ملف الـ PDF الفعلي على واتساب - على الموبايل بيفتح شاشة المشاركة ويرفق الملف مباشرة،
