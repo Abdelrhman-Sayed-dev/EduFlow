@@ -848,8 +848,17 @@ function escapeHtml(str){
 }
 function jsAttr(str){
   // آمن لتضمين نص جوه onclick="fn('...')" - بيهرب الباك سلاش والكوتيشن الفردي
-  // الأول (عشان الـ JS string منفسهاش) وبعدين بيعمل HTML escape كامل (عشان الـ HTML attribute)
-  const s = String(str ?? "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+  // الأول (عشان الـ JS string منفسهاش) وبعدين بيهرب أي سطر جديد أو تاب
+  // (لأن أي Enter جوه textarea بيبقى newline حقيقي، وده بيكسر الـ JS string
+  // ويوقف تنفيذ onclick بالكامل من غير أي رسالة خطأ واضحة للمستخدم)
+  // وبعدين بيعمل HTML escape كامل (عشان الـ HTML attribute)
+  const s = String(str ?? "")
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+    .replace(/\r\n/g, "\\n")
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\n")
+    .replace(/\t/g, "\\t");
   return escapeHtml(s);
 }
 
@@ -4316,6 +4325,65 @@ function deleteAllNeverEngagedStudents(){
 ===================================================================== */
 let LOW_ATTENDANCE_CACHE = [];
 let LOW_ATTENDANCE_SORT_MODE = "rate"; // "rate" = الأسوأ حضورًا الأول | "name" = أبجديًا (لتجميع المكرر)
+let LOW_ATTENDANCE_DUPES_ONLY = false; // true = اعرض بس الطلاب اللي ليهم تكرار فعلي (نفس الاسم أو نفس رقم هاتف)
+
+/* تطبيع بسيط للاسم/الرقم عشان المقارنة تتم صح (مسافات زيادة، رقم فيه مسافات أو شرطات...) */
+function normalizeNameForDupe(name){
+  return String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+function normalizePhoneForDupe(phone){
+  const digits = normalizeDigits(String(phone || "")).replace(/[^\d]/g, "");
+  return digits;
+}
+
+/* بيرجع بس الطلاب اللي فعليًا متكررين: نفس الاسم بالظبط، أو نفس رقم هاتف
+   الطالب، أو نفس رقم هاتف ولي الأمر - مع بعض طالب تاني في نفس القايمة.
+   بيستخدم Union-Find عشان لو طالبين اتربطوا بأي صفة (اسم/تليفون) يتحطوا
+   في نفس المجموعة حتى لو مش كل الصفات متطابقة بينهم. */
+function findDuplicateStudentRows(rows){
+  const n = rows.length;
+  const parent = Array.from({length:n}, (_,i)=>i);
+  function find(x){ while(parent[x]!==x){ parent[x]=parent[parent[x]]; x=parent[x]; } return x; }
+  function union(a,b){ const ra=find(a), rb=find(b); if (ra!==rb) parent[ra]=rb; }
+
+  const byName = {}, byPhone = {}, byParentPhone = {};
+  rows.forEach((r, i)=>{
+    const nameKey = normalizeNameForDupe(r.full_name);
+    if (nameKey){ (byName[nameKey] ||= []).push(i); }
+    const phoneKey = normalizePhoneForDupe(r.phone);
+    if (phoneKey){ (byPhone[phoneKey] ||= []).push(i); }
+    const parentKey = normalizePhoneForDupe(r.parent_phone);
+    if (parentKey){ (byParentPhone[parentKey] ||= []).push(i); }
+  });
+
+  [byName, byPhone, byParentPhone].forEach(map=>{
+    Object.values(map).forEach(idxs=>{
+      if (idxs.length > 1) for (let k=1;k<idxs.length;k++) union(idxs[0], idxs[k]);
+    });
+  });
+
+  // اجمع الطلاب حسب الجذر بتاعهم، وسيب بس المجموعات اللي فيها أكتر من طالب
+  const clusters = {};
+  rows.forEach((r,i)=>{ const root = find(i); (clusters[root] ||= []).push(i); });
+
+  const dupIndexes = [];
+  let clusterNum = 0;
+  Object.values(clusters).forEach(idxs=>{
+    if (idxs.length < 2) return;
+    clusterNum++;
+    idxs.forEach(i=>{
+      const nameKey = normalizeNameForDupe(rows[i].full_name);
+      const phoneKey = normalizePhoneForDupe(rows[i].phone);
+      const parentKey = normalizePhoneForDupe(rows[i].parent_phone);
+      const reasons = [];
+      if (nameKey && byName[nameKey] && byName[nameKey].length>1) reasons.push("نفس الاسم");
+      if (phoneKey && byPhone[phoneKey] && byPhone[phoneKey].length>1) reasons.push("نفس هاتف الطالب");
+      if (parentKey && byParentPhone[parentKey] && byParentPhone[parentKey].length>1) reasons.push("نفس هاتف ولي الأمر");
+      dupIndexes.push({ index:i, cluster:clusterNum, reasons });
+    });
+  });
+  return dupIndexes;
+}
 
 async function renderLowAttendancePage(){
   const groups = await loadGroups();
@@ -4335,7 +4403,7 @@ async function renderLowAttendancePage(){
           <option value="70">نسبة حضور أقل من 70%</option>
           <option value="100">كل اللي مش 100% حضور</option>
         </select>
-        <button class="btn btn-ghost" id="lowAttSortBtn" onclick="toggleLowAttendanceSort()" title="رتّب أبجديًا عشان الأسماء المكررة تيجي جنب بعض"><i data-lucide="arrow-down-a-z" style="width:14px;height:14px;"></i> تجميع الأسماء المكررة</button>
+        <button class="btn btn-ghost" id="lowAttSortBtn" onclick="toggleLowAttendanceSort()" title="اعرض بس الطلاب اللي متكررين فعليًا (نفس الاسم أو نفس رقم هاتف الطالب/ولي الأمر)"><i data-lucide="copy" style="width:14px;height:14px;"></i> إظهار المتكررين بس</button>
         <button class="btn btn-ghost" onclick="exportLowAttendanceStudents()"><i data-lucide="download" style="width:14px;height:14px;"></i> تحميل كشيت</button>
       </div>
     </div>
@@ -4360,7 +4428,8 @@ function getLowAttendanceFilters(){
 }
 
 function toggleLowAttendanceSort(){
-  LOW_ATTENDANCE_SORT_MODE = LOW_ATTENDANCE_SORT_MODE === "rate" ? "name" : "rate";
+  LOW_ATTENDANCE_DUPES_ONLY = !LOW_ATTENDANCE_DUPES_ONLY;
+  LOW_ATTENDANCE_SORT_MODE = LOW_ATTENDANCE_DUPES_ONLY ? "name" : "rate";
   renderLowAttendanceRows();
 }
 
@@ -4379,24 +4448,45 @@ function renderLowAttendanceRows(){
   const tbody = document.getElementById("lowAttTableBody");
   if (!tbody) return;
   const sortBtn = document.getElementById("lowAttSortBtn");
-  if (sortBtn) sortBtn.classList.toggle("active", LOW_ATTENDANCE_SORT_MODE === "name");
+  if (sortBtn) sortBtn.classList.toggle("active", LOW_ATTENDANCE_DUPES_ONLY);
 
-  const rows = [...LOW_ATTENDANCE_CACHE];
-  if (LOW_ATTENDANCE_SORT_MODE === "name"){
-    // ترتيب أبجدي بسيط - الأسماء المتطابقة أو المتقاربة تيجي جنب بعض تلقائيًا
+  let rows = [...LOW_ATTENDANCE_CACHE];
+  let dupInfoByIndex = null;
+
+  if (LOW_ATTENDANCE_DUPES_ONLY){
+    // اكتشاف حقيقي للتكرار: نفس الاسم بالظبط، أو نفس رقم هاتف الطالب، أو
+    // نفس رقم هاتف ولي الأمر - مش مجرد ترتيب أبجدي
+    const dupes = findDuplicateStudentRows(rows);
+    if (!dupes.length){
+      tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:24px;">مفيش أي تكرار في الأسماء أو أرقام الهواتف ضمن القايمة الحالية ✅</td></tr>`;
+      icons();
+      return;
+    }
+    // رتّب حسب رقم المجموعة (الكلاستر) عشان كل التكرارات المرتبطة تيجي جنب بعض، وجوه كل مجموعة أبجديًا
+    const origRows = rows;
+    dupes.sort((a,b)=> a.cluster - b.cluster || origRows[a.index].full_name.localeCompare(origRows[b.index].full_name, "ar"));
+    rows = dupes.map(d=> origRows[d.index]);
+    dupInfoByIndex = {};
+    dupes.forEach((d,i)=>{ dupInfoByIndex[i] = d; });
+  } else if (LOW_ATTENDANCE_SORT_MODE === "name"){
     rows.sort((a,b)=> a.full_name.localeCompare(b.full_name, "ar"));
   } else {
     // الأسوأ نسبة حضور الأول (اللي معندهمش بيانات خالص - null - يتحسبوا الأسوأ)
     rows.sort((a,b)=> (a.attendance_rate ?? -1) - (b.attendance_rate ?? -1));
   }
 
-  tbody.innerHTML = rows.map(r=>{
+  const clusterColors = ["#fff7e6", "#e6f4ff", "#f0e6ff", "#e6fff2", "#ffe6ec"];
+
+  tbody.innerHTML = rows.map((r, i)=>{
     const rateDisplay = r.attendance_rate != null ? `${r.attendance_rate}%` : "لا يوجد بيانات";
     const rateBadge = r.attendance_rate == null ? "badge-gray" : r.attendance_rate < 30 ? "badge-red" : r.attendance_rate < 50 ? "badge-amber" : "badge-blue";
+    const dup = dupInfoByIndex ? dupInfoByIndex[i] : null;
+    const rowStyle = dup ? `background:${clusterColors[(dup.cluster-1) % clusterColors.length]};` : "";
+    const dupBadge = dup ? `<div style="margin-top:4px;"><span class="badge badge-red" style="font-size:10px;" title="${escapeHtml(dup.reasons.join(" + "))}">مكرر: ${escapeHtml(dup.reasons.join(" + "))}</span></div>` : "";
     return `
-    <tr>
+    <tr style="${rowStyle}">
       <td style="color:var(--text-3);font-family:monospace;font-size:12px;">#${r.id}</td>
-      <td class="td-name">${escapeHtml(r.full_name)}</td>
+      <td class="td-name">${escapeHtml(r.full_name)}${dupBadge}</td>
       <td>${escapeHtml(r.group_name || "-")}</td>
       <td><span class="badge ${rateBadge}">${rateDisplay}</span></td>
       <td>${r.present_count}</td>
