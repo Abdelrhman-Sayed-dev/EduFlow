@@ -1810,6 +1810,100 @@ def delete_never_engaged_students(group_id: Optional[int] = None, session=Depend
         return {"message": f"تم حذف {len(ids)} طالب", "deleted": len(ids)}
 
 
+# ---------------------------------------------------------------------------
+# الطلاب اللي نسبة حضورهم ضعيفة - Low Attendance Students
+# بيحسب نسبة الحضور (حاضر / إجمالي الحصص المسجلة له) لكل طالب، ويرجع بس اللي
+# نسبتهم أقل من حد معين (threshold) - بيشمل كمان الطلاب اللي معندهمش أي سجل
+# حضور خالص (نسبتهم بتتحسب null وبتتحسب كإنها أقل من أي threshold)
+# ---------------------------------------------------------------------------
+
+def _low_attendance_rows(conn, group_id: Optional[int] = None, threshold: float = 50.0):
+    query = """
+        SELECT s.id, s.full_name, s.phone, s.parent_phone, s.group_id, g.name as group_name,
+               COUNT(a.id) as total_sessions,
+               SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END) as present_count,
+               SUM(CASE WHEN a.status='absent' THEN 1 ELSE 0 END) as absent_count,
+               SUM(CASE WHEN a.status='late' THEN 1 ELSE 0 END) as late_count,
+               SUM(CASE WHEN a.status='excused' THEN 1 ELSE 0 END) as excused_count
+        FROM students s
+        LEFT JOIN groups g ON g.id = s.group_id
+        LEFT JOIN attendance a ON a.student_id = s.id
+        WHERE s.is_active = 1
+    """
+    params = []
+    if group_id:
+        query += " AND s.group_id = ?"
+        params.append(group_id)
+    query += " GROUP BY s.id ORDER BY s.full_name"
+    rows = conn.execute(query, params).fetchall()
+
+    result = []
+    for r in rows:
+        total = r["total_sessions"] or 0
+        present = r["present_count"] or 0
+        rate = round(present / total * 100, 1) if total else None
+        if rate is None or rate < threshold:
+            result.append({
+                "id": r["id"], "full_name": r["full_name"], "group_id": r["group_id"],
+                "group_name": r["group_name"], "phone": r["phone"], "parent_phone": r["parent_phone"],
+                "total_sessions": total, "present_count": present,
+                "absent_count": r["absent_count"] or 0, "late_count": r["late_count"] or 0,
+                "excused_count": r["excused_count"] or 0, "attendance_rate": rate,
+            })
+    return result
+
+
+@app.get("/api/students/low-attendance")
+def get_low_attendance_students(group_id: Optional[int] = None, threshold: float = 50.0,
+                                 session=Depends(require_roles("admin"))):
+    """
+    قايمة الطلاب اللي نسبة حضورهم (حاضر / إجمالي الحصص المسجلة) أقل من
+    threshold% (افتراضيًا 50%) - بتشمل كمان اللي معندهمش سجل حضور خالص.
+    """
+    with get_connection() as conn:
+        return _low_attendance_rows(conn, group_id, threshold)
+
+
+@app.get("/api/students/low-attendance/export")
+def export_low_attendance_students(group_id: Optional[int] = None, threshold: float = 50.0,
+                                    session=Depends(require_roles("admin"))):
+    """تصدير قايمة الطلاب ضعاف الحضور كملف إكسيل"""
+    with get_connection() as conn:
+        students = _low_attendance_rows(conn, group_id, threshold)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "طلاب ضعاف الحضور"
+    ws.sheet_view.rightToLeft = True
+    headers = ["الطالب", "المجموعة", "نسبة الحضور", "حاضر", "غايب", "متأخر", "بإذن", "رقم هاتف الطالب", "رقم هاتف ولي الأمر"]
+    ws.append(headers)
+    for s in students:
+        ws.append([
+            s["full_name"], s.get("group_name") or "-",
+            f'{s["attendance_rate"]}%' if s["attendance_rate"] is not None else "لا يوجد بيانات",
+            s["present_count"], s["absent_count"], s["late_count"], s["excused_count"],
+            s.get("phone") or "-", s.get("parent_phone") or "-",
+        ])
+    for col_idx, header in enumerate(headers, start=1):
+        col_values = [header] + [str(row[col_idx - 1]) for row in [
+            [s["full_name"], s.get("group_name") or "-",
+             f'{s["attendance_rate"]}%' if s["attendance_rate"] is not None else "لا يوجد بيانات",
+             s["present_count"], s["absent_count"], s["late_count"], s["excused_count"],
+             s.get("phone") or "-", s.get("parent_phone") or "-"]
+            for s in students
+        ]]
+        ws.column_dimensions[chr(64 + col_idx)].width = min(max(len(v) for v in col_values) + 4, 40)
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    filename = "طلاب ضعاف الحضور.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
+
+
 @app.delete("/api/students/{student_id}")
 def delete_student(student_id: int, session=Depends(require_roles("admin"))):
     with get_connection() as conn:
