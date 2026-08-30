@@ -681,6 +681,29 @@ def init_db():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_absence_debts_student ON absence_debts(student_id, is_paid)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_absence_debts_group ON absence_debts(group_id, is_paid)")
 
+        # ---------------------------------------------------------------
+        # دفتر حسابات يدوي (Manual Ledger) - جدول بسيط زي شيت إكسل، منفصل
+        # تمامًا عن أي نظام مالي تاني في المشروع (مديونيات الغياب، الاشتراك
+        # الشهري، الاشتراك بالحصص). مفيش أي ربط تلقائي هنا - كل سطر بيتكتب
+        # يدويًا: اسم (نص حر، مش لازم يكون طالب مسجل في النظام)، نوع
+        # (دفع/عليه)، مبلغ، وملاحظة. الهدف منه إنه دفتر سريع للتقييد اليومي
+        # وطباعة تقرير بيه.
+        # ---------------------------------------------------------------
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS manual_ledger_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entry_date TEXT NOT NULL,
+            student_name TEXT NOT NULL DEFAULT '',
+            amount REAL NOT NULL DEFAULT 0,
+            entry_type TEXT NOT NULL DEFAULT 'paid',
+            notes TEXT,
+            created_by INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_manual_ledger_date ON manual_ledger_entries(entry_date)")
+
         # جدول الكويزات - كويز عام على مستوى المرحلة الدراسية (بيشوفه كل مشرفي المرحلة)
         # أو مرتبط بمجموعة معينة (النظام القديم، لسه متاح للتوافق)
         cur.execute("""
