@@ -11185,7 +11185,7 @@ function qbWeakStudentsListHtml(students){
 /* =====================================================================
    بنك الأسئلة - واجهة الطالب
 ===================================================================== */
-let QBANK_STUDENT_STATE = {chapter: null, lesson: null, filter: "all", chapters: [], stats: null};
+let QBANK_STUDENT_STATE = {chapter: null, lesson: null, filter: "unsolved", chapters: [], stats: null};
 
 async function renderQbankStudentPage(){
   const c = document.getElementById("pageContainer");
@@ -11194,7 +11194,7 @@ async function renderQbankStudentPage(){
     api("/api/qbank/student/stats"),
     api("/api/qbank/student/chapters"),
   ]);
-  QBANK_STUDENT_STATE = {chapter: null, lesson: null, filter: "all", chapters, stats};
+  QBANK_STUDENT_STATE = {chapter: null, lesson: null, filter: "unsolved", chapters, stats};
   const chapterNames = [...new Set(chapters.map(ch=>ch.chapter))];
 
   c.innerHTML = `
@@ -11228,8 +11228,8 @@ async function renderQbankStudentPage(){
 
     <div class="table-card" style="padding:12px 14px;margin-bottom:14px;">
       <div class="seg-toggle" id="qbFilterToggle" style="width:100%;flex-wrap:wrap;">
-        <button type="button" class="seg-btn active-green" data-val="all" onclick="qbSetFilter('all')" style="flex:1;">الكل</button>
-        <button type="button" class="seg-btn" data-val="unsolved" onclick="qbSetFilter('unsolved')" style="flex:1;">لسه محلتهاش <span class="qb-tab-count" data-count="unsolved">(${stats.unsolved_count})</span></button>
+        <button type="button" class="seg-btn active-green" data-val="unsolved" onclick="qbSetFilter('unsolved')" style="flex:1;">لسه محلتهاش <span class="qb-tab-count" data-count="unsolved">(${stats.unsolved_count})</span></button>
+        <button type="button" class="seg-btn" data-val="correct" onclick="qbSetFilter('correct')" style="flex:1;">إجابات صحيحة <span class="qb-tab-count" data-count="correct">(${stats.correct_count})</span></button>
         <button type="button" class="seg-btn" data-val="wrong" onclick="qbSetFilter('wrong')" style="flex:1;">أخطائي <span class="qb-tab-count" data-count="wrong">(${stats.wrong_count})</span></button>
         <button type="button" class="seg-btn" data-val="favorites" onclick="qbSetFilter('favorites')" style="flex:1;">المفضلة <span class="qb-tab-count" data-count="favorites">(${stats.favorites_count})</span></button>
         <button type="button" class="seg-btn" data-val="solve_later" onclick="qbSetFilter('solve_later')" style="flex:1;">للمراجعة <span class="qb-tab-count" data-count="solve_later">(${stats.solve_later_count})</span></button>
@@ -11307,52 +11307,8 @@ async function qbLoadQuestions(){
     icons();
     return;
   }
-  const groups = qbGroupQuestions(questions);
-  wrap.innerHTML = groups.map((g,i)=>qbLessonGroupHtml(g, i, groups.length===1)).join("");
+  wrap.innerHTML = `<div class="table-card" style="padding:14px;">${questions.map(q=>qbQuestionCardHtml(q)).join("")}</div>`;
   icons();
-}
-
-function qbGroupQuestions(questions){
-  const groups = {};
-  questions.forEach(q=>{
-    const key = `${q.chapter}|||${q.lesson}`;
-    if (!groups[key]) groups[key] = {chapter: q.chapter, lesson: q.lesson, questions: []};
-    groups[key].questions.push(q);
-  });
-  // ترتيب المجموعات بنفس ترتيب الأبواب/الدروس الأصلي (مش بترتيب وصول الأسئلة)
-  const orderIndex = {};
-  (QBANK_STUDENT_STATE.chapters || []).forEach((c, i)=>{ orderIndex[`${c.chapter}|||${c.lesson}`] = i; });
-  return Object.values(groups).sort((a, b)=>{
-    const ai = orderIndex[`${a.chapter}|||${a.lesson}`] ?? 9999;
-    const bi = orderIndex[`${b.chapter}|||${b.lesson}`] ?? 9999;
-    return ai - bi;
-  });
-}
-
-function qbLessonGroupHtml(group, idx, expanded){
-  const groupId = `qbGroup_${idx}`;
-  const solvedCount = group.questions.filter(q=>q.attempts > 0).length;
-  return `
-  <div class="table-card" style="margin-bottom:12px;overflow:hidden;">
-    <button type="button" onclick="qbToggleGroup('${groupId}')" style="width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px;background:none;border:none;cursor:pointer;font-family:'Cairo',sans-serif;text-align:right;">
-      <span style="display:flex;flex-direction:column;gap:2px;align-items:flex-start;min-width:0;">
-        <span style="font-size:14px;font-weight:800;color:var(--text);">${escapeHtml(group.lesson)}</span>
-        <span style="font-size:11.5px;color:var(--text-3);">${escapeHtml(group.chapter)} · ${group.questions.length} سؤال${solvedCount ? ` · حليت ${solvedCount}` : ""}</span>
-      </span>
-      <i data-lucide="chevron-down" style="width:18px;height:18px;color:var(--text-3);flex-shrink:0;transition:transform .15s;${expanded?'transform:rotate(180deg);':''}" id="${groupId}_chevron"></i>
-    </button>
-    <div id="${groupId}_body" style="display:${expanded?'block':'none'};padding:0 14px 8px;">
-      ${group.questions.map(q=>qbQuestionCardHtml(q)).join("")}
-    </div>
-  </div>`;
-}
-
-function qbToggleGroup(groupId){
-  const body = document.getElementById(`${groupId}_body`);
-  const chevron = document.getElementById(`${groupId}_chevron`);
-  const isOpen = body.style.display !== "none";
-  body.style.display = isOpen ? "none" : "block";
-  if (chevron) chevron.style.transform = isOpen ? "" : "rotate(180deg)";
 }
 
 function qbQuestionCardHtml(q){
@@ -11360,7 +11316,8 @@ function qbQuestionCardHtml(q){
   return `
   <div class="qb-question-item" id="qb_card_${q.id}">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">
-      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+        <span class="badge badge-gray">${escapeHtml(q.chapter)} · ${escapeHtml(q.lesson)}</span>
         ${answered ? `<span class="badge ${q.ever_correct?'badge-green':'badge-red'}">${q.ever_correct?'حليتها صح ✅':'حليتها غلط قبل كده'}</span>` : ""}
       </div>
       <div style="display:flex;gap:6px;">
@@ -11373,9 +11330,10 @@ function qbQuestionCardHtml(q){
       </div>
     </div>
     ${q.answer_mode === "image" && q.question_image ? `
-      <div style="margin:10px 0 12px;">
-        <img src="${q.question_image}" onclick="showImageLightbox('${q.question_image}')" style="max-width:100%;border-radius:10px;border:1px solid var(--border);cursor:zoom-in;" oncontextmenu="return false" draggable="false">
+      <div style="margin:10px 0 12px;display:flex;justify-content:center;background:var(--surface-2);border-radius:10px;padding:8px;">
+        <img src="${q.question_image}" onclick="showImageLightbox('${q.question_image}')" style="max-width:100%;max-height:320px;width:auto;border-radius:8px;cursor:zoom-in;object-fit:contain;" oncontextmenu="return false" draggable="false">
       </div>
+      <div style="font-size:11px;color:var(--text-3);margin:-6px 0 10px;text-align:center;">اضغط على الصورة لتكبيرها</div>
     ` : `<div style="font-size:14.5px;font-weight:700;color:var(--text);margin:10px 0 12px;">${escapeHtml(q.question_text)}</div>`}
     <div class="qb-options" id="qb_options_${q.id}" data-locked="${answered?'1':''}" style="${q.answer_mode === "image" ? "flex-direction:row;flex-wrap:wrap;justify-content:center;" : ""}">
       ${q.options.map(opt=>{
@@ -11469,6 +11427,7 @@ async function qbRefreshTabCounts(){
     const stats = await api("/api/qbank/student/stats");
     QBANK_STUDENT_STATE.stats = stats;
     qbSetTabCountText("unsolved", stats.unsolved_count);
+    qbSetTabCountText("correct", stats.correct_count);
     qbSetTabCountText("wrong", stats.wrong_count);
     qbSetTabCountText("favorites", stats.favorites_count);
     qbSetTabCountText("solve_later", stats.solve_later_count);
