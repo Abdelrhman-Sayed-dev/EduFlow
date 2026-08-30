@@ -329,6 +329,26 @@ class AbsenceDebtAmountIn(BaseModel):
     amount: float = Field(..., ge=0)
 
 
+class LedgerEntryIn(BaseModel):
+    """دفتر الحسابات اليدوي - إنشاء سطر جديد. القيم كلها اختيارية عشان يتضاف
+    سطر فاضي بسرعة (زي صف جديد فاضي في إكسل) ويتملى بعدين بالتعديل."""
+    entry_date: Optional[str] = None
+    student_name: Optional[str] = Field(None, max_length=200)
+    amount: Optional[float] = None
+    entry_type: Optional[str] = None  # 'paid' أو 'due'
+    notes: Optional[str] = Field(None, max_length=1000)
+
+
+class LedgerEntryUpdateIn(BaseModel):
+    """تعديل جزئي لسطر موجود - أي حقل يتبعت بيتحدث بس، الباقي يفضل زي ما هو
+    (نفس فكرة تعديل خلية واحدة في إكسل)."""
+    entry_date: Optional[str] = None
+    student_name: Optional[str] = Field(None, max_length=200)
+    amount: Optional[float] = None
+    entry_type: Optional[str] = None
+    notes: Optional[str] = Field(None, max_length=1000)
+
+
 class GroupSessionPriceIn(BaseModel):
     session_price: float
 
@@ -3585,7 +3605,32 @@ def qb_analytics(stage_id: Optional[int] = None, session=Depends(require_roles("
                 "total_attempts": r["total_attempts"], "wrong_attempts": r["wrong_attempts"], "wrong_rate": rate,
             })
 
-        return {"weak_chapters": weak_chapters, "top_missed_questions": top_missed_questions}
+        lesson_query = """
+            SELECT qq.stage_id, st.name as stage_name, qq.chapter, qq.lesson,
+                   COUNT(a.id) as total_attempts,
+                   SUM(CASE WHEN a.is_correct=0 THEN 1 ELSE 0 END) as wrong_attempts
+            FROM qb_answers a
+            JOIN qb_questions qq ON qq.id = a.question_id
+            LEFT JOIN stages st ON st.id = qq.stage_id
+            WHERE 1=1
+        """
+        params3 = []
+        if stage_id:
+            lesson_query += " AND qq.stage_id=?"
+            params3.append(stage_id)
+        lesson_query += """ GROUP BY qq.stage_id, qq.chapter, qq.lesson HAVING total_attempts > 0
+                           ORDER BY (wrong_attempts * 1.0 / total_attempts) DESC, wrong_attempts DESC"""
+        lesson_rows = conn.execute(lesson_query, params3).fetchall()
+        weak_lessons = []
+        for r in lesson_rows:
+            rate = round((r["wrong_attempts"] / r["total_attempts"]) * 100, 1) if r["total_attempts"] else 0
+            weak_lessons.append({
+                "stage_id": r["stage_id"], "stage_name": r["stage_name"], "chapter": r["chapter"], "lesson": r["lesson"],
+                "total_attempts": r["total_attempts"], "wrong_attempts": r["wrong_attempts"],
+                "wrong_rate": rate,
+            })
+
+        return {"weak_chapters": weak_chapters, "weak_lessons": weak_lessons, "top_missed_questions": top_missed_questions}
 
 
 @app.get("/api/qbank/analytics/weak-students")
@@ -6354,6 +6399,84 @@ def pay_all_absence_debts(student_id: int, data: Optional[AbsenceDebtPayIn] = No
             group_id=student["group_id"]
         )
         return {"message": f"تم تسجيل سداد {result.rowcount} مديونية - المنصة اتفتحت للطالب", "count": result.rowcount}
+
+
+
+# ---------------------------------------------------------------------------
+# دفتر الحسابات اليدوي (Manual Ledger) - جدول حر زي شيت إكسل، منفصل تمامًا عن
+# أي نظام مالي تاني (مديونيات الغياب / الاشتراك الشهري / الاشتراك بالحصص).
+# مفيش أي حساب تلقائي هنا - كل حاجة بتتكتب يدويًا وبتتحفظ زي ما هي.
+# ---------------------------------------------------------------------------
+
+@app.get("/api/ledger")
+def list_ledger_entries(date_from: Optional[str] = None, date_to: Optional[str] = None,
+                         session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
+    with get_connection() as conn:
+        query = "SELECT * FROM manual_ledger_entries WHERE 1=1"
+        params = []
+        if date_from:
+            query += " AND entry_date >= ?"
+            params.append(date_from)
+        if date_to:
+            query += " AND entry_date <= ?"
+            params.append(date_to)
+        query += " ORDER BY entry_date DESC, id DESC"
+        rows = conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+
+@app.post("/api/ledger")
+def add_ledger_entry(data: Optional[LedgerEntryIn] = None,
+                      session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
+    """إضافة سطر جديد في دفتر الحسابات - زي إضافة صف فاضي في إكسل، القيم
+    الافتراضية بتتملى وبعدين تتعدل بالتعديل الجزئي (PUT)."""
+    with get_connection() as conn:
+        from datetime import date
+        entry_date = (data.entry_date if data else None) or date.today().isoformat()
+        entry_type = (data.entry_type if data and data.entry_type in ("paid", "due") else "paid")
+        student_name = (data.student_name if data else None) or ""
+        amount = (data.amount if data else None) or 0
+        notes = data.notes if data else None
+        cur = conn.execute(
+            """INSERT INTO manual_ledger_entries (entry_date, student_name, amount, entry_type, notes, created_by)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (entry_date, student_name, amount, entry_type, notes, session["id"])
+        )
+        row = conn.execute("SELECT * FROM manual_ledger_entries WHERE id=?", (cur.lastrowid,)).fetchone()
+        return dict(row)
+
+
+@app.put("/api/ledger/{entry_id}")
+def update_ledger_entry(entry_id: int, data: LedgerEntryUpdateIn,
+                         session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
+    """تعديل جزئي لسطر - أي حقل مبعوتش يفضل زي ما هو"""
+    with get_connection() as conn:
+        row = conn.execute("SELECT * FROM manual_ledger_entries WHERE id=?", (entry_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="السطر غير موجود")
+
+        entry_type = data.entry_type if data.entry_type in ("paid", "due") else None
+        conn.execute(
+            """UPDATE manual_ledger_entries SET
+                 entry_date = COALESCE(?, entry_date),
+                 student_name = COALESCE(?, student_name),
+                 amount = COALESCE(?, amount),
+                 entry_type = COALESCE(?, entry_type),
+                 notes = COALESCE(?, notes)
+               WHERE id=?""",
+            (data.entry_date, data.student_name, data.amount, entry_type, data.notes, entry_id)
+        )
+        updated = conn.execute("SELECT * FROM manual_ledger_entries WHERE id=?", (entry_id,)).fetchone()
+        return dict(updated)
+
+
+@app.delete("/api/ledger/{entry_id}")
+def delete_ledger_entry(entry_id: int, session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
+    with get_connection() as conn:
+        result = conn.execute("DELETE FROM manual_ledger_entries WHERE id=?", (entry_id,))
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="السطر غير موجود")
+        return {"message": "تم حذف السطر"}
 
 
 @app.get("/api/reports/subscriptions-summary")
