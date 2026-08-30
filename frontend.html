@@ -1269,6 +1269,7 @@ const NAV_BY_ROLE = {
     {id:"session_subscriptions", label:"الاشتراك بالحصص", icon:"ticket"},
     {id:"session_subscriptions_report", label:"تقرير الاشتراك بالحصص", icon:"receipt"},
     {id:"absence_debts", label:"مديونيات الغياب", icon:"alert-triangle"},
+    {id:"manual_ledger", label:"دفتر الحسابات", icon:"notebook-pen"},
     {id:"supervisors", label:"المشرفين", icon:"shield-check"},
     {id:"head_supervisors", label:"مشرفي المشرفين", icon:"shield"},
     {id:"teachers", label:"المدرسين", icon:"presentation"},
@@ -1310,6 +1311,7 @@ const NAV_BY_ROLE = {
     {id:"supervisors", label:"المشرفين", icon:"shield-check"},
     {id:"supervisors_attendance_admin", label:"حضور المشرفين", icon:"map-pin"},
     {id:"absence_debts", label:"مديونيات الغياب", icon:"alert-triangle"},
+    {id:"manual_ledger", label:"دفتر الحسابات", icon:"notebook-pen"},
     {id:"activity_log", label:"سجل الأنشطة", icon:"history"},
     {id:"fraud_alerts", label:"كشف التلاعب", icon:"shield-alert"},
   ],
@@ -1322,6 +1324,7 @@ const NAV_BY_ROLE = {
     {id:"attendance", label:"الحضور والغياب", icon:"calendar-check"},
     {id:"participation", label:"تفاعل الطلاب", icon:"sparkles"},
     {id:"absence_debts", label:"مديونيات الغياب", icon:"alert-triangle"},
+    {id:"manual_ledger", label:"دفتر الحسابات", icon:"notebook-pen"},
     {id:"event_calendar", label:"التقويم", icon:"calendar-days"},
     {id:"monthly_reports", label:"التقرير الشهري", icon:"file-bar-chart"},
     {id:"student_requests", label:"طلبات الطلاب", icon:"inbox"},
@@ -1487,6 +1490,7 @@ const PAGE_TITLES = {
   sup_checkin:"حضوري وانصرافي",
   supervisors_attendance_admin:"حضور المشرفين",
   absence_debts:"مديونيات الغياب",
+  manual_ledger:"دفتر الحسابات",
 };
 
 async function renderPage(page){
@@ -1552,6 +1556,7 @@ async function renderPage(page){
       sup_checkin: renderSupervisorCheckinPage,
       supervisors_attendance_admin: renderSupervisorsAttendanceAdminPage,
       absence_debts: renderAbsenceDebtsPage,
+      manual_ledger: renderManualLedgerPage,
     };
     const fn = renderers[page];
     if (fn) await fn();
@@ -3545,6 +3550,183 @@ async function payAllAbsenceDebtsForStudent(studentId, studentName, onSuccess){
       if (listWrap) loadAbsenceDebtsList();
     }
   );
+}
+
+/* =====================================================================
+   دفتر الحسابات اليدوي (Manual Ledger) - جدول حر زي شيت إكسل: اسم، مبلغ
+   (دفع/عليه)، وملاحظة. منفصل تمامًا عن أي نظام مالي تاني في المنصة (مديونية
+   الغياب / الاشتراك الشهري / الاشتراك بالحصص) - مفيش أي حساب تلقائي هنا،
+   كل حاجة بتتكتب يدويًا وبتتحفظ زي ما هي، وبيتطبع منها تقرير.
+===================================================================== */
+let LEDGER_ROWS_CACHE = [];
+let LEDGER_SAVE_TIMERS = {};
+
+async function renderManualLedgerPage(){
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>دفتر الحسابات</h1><p>دفتر حر زي شيت الإكسل - اكتب اسم، حدد "دفع" أو "عليه"، والمبلغ وأي ملاحظة. كل سطر بيتحفظ لوحده أول ما تكتب فيه.</p></div>
+      <div class="header-actions">
+        <button class="btn btn-ghost" onclick="printLedgerReport()"><i data-lucide="printer" style="width:14px;height:14px;"></i> طباعة تقرير</button>
+        <button class="btn btn-primary" onclick="addLedgerRow()"><i data-lucide="plus" style="width:14px;height:14px;"></i> صف جديد</button>
+      </div>
+    </div>
+    <div class="table-card">
+      <div class="toolbar" style="gap:10px;flex-wrap:wrap;">
+        <div class="form-group" style="margin:0;"><label class="form-label" style="font-size:11px;">من تاريخ</label><input class="form-input" type="date" id="ledgerFrom" style="width:150px;" onchange="loadLedgerEntries()"></div>
+        <div class="form-group" style="margin:0;"><label class="form-label" style="font-size:11px;">لحد تاريخ</label><input class="form-input" type="date" id="ledgerTo" style="width:150px;" onchange="loadLedgerEntries()"></div>
+        <div class="search-wrap" style="width:220px;align-self:flex-end;"><i data-lucide="search" class="search-ic" style="width:14px;height:14px;"></i><input id="ledgerSearchInput" placeholder="بحث بالاسم..." oninput="renderLedgerTable()"></div>
+      </div>
+      <div id="ledgerListWrap"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>
+    </div>
+  `;
+  icons();
+  await loadLedgerEntries();
+}
+
+async function loadLedgerEntries(){
+  const wrap = document.getElementById("ledgerListWrap");
+  if (!wrap) return;
+  const from = document.getElementById("ledgerFrom").value;
+  const to = document.getElementById("ledgerTo").value;
+  const qs = [from ? `date_from=${from}` : "", to ? `date_to=${to}` : ""].filter(Boolean).join("&");
+  LEDGER_ROWS_CACHE = await api(`/api/ledger${qs ? "?"+qs : ""}`);
+  renderLedgerTable();
+}
+
+function getFilteredLedgerRows(){
+  const q = (document.getElementById("ledgerSearchInput")?.value || "").trim().toLowerCase();
+  return LEDGER_ROWS_CACHE.filter(r => !q || (r.student_name||"").toLowerCase().includes(q));
+}
+
+function renderLedgerTable(){
+  const wrap = document.getElementById("ledgerListWrap");
+  if (!wrap) return;
+  const rows = getFilteredLedgerRows();
+  const totalPaid = rows.filter(r=>r.entry_type==='paid').reduce((s,r)=>s+(r.amount||0), 0);
+  const totalDue = rows.filter(r=>r.entry_type==='due').reduce((s,r)=>s+(r.amount||0), 0);
+
+  wrap.innerHTML = `
+    <div style="padding:8px 16px;font-size:12px;color:var(--text-3);display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+      <span>${rows.length} سطر</span>
+      <span style="display:flex;gap:16px;flex-wrap:wrap;">
+        <span style="font-weight:700;color:var(--success);">إجمالي المدفوع: ${moneyLabel(totalPaid)}</span>
+        <span style="font-weight:700;color:var(--danger);">إجمالي المستحق: ${moneyLabel(totalDue)}</span>
+      </span>
+    </div>
+    <div class="table-wrap"><table id="ledgerTable">
+      <thead><tr><th style="width:130px;">التاريخ</th><th>الاسم</th><th style="width:100px;">النوع</th><th style="width:120px;">المبلغ</th><th>ملاحظات</th><th style="width:40px;"></th></tr></thead>
+      <tbody>
+        ${rows.length ? rows.map(r => `
+          <tr data-id="${r.id}">
+            <td><input class="form-input" type="date" value="${r.entry_date||''}" onchange="updateLedgerField(${r.id}, 'entry_date', this.value)"></td>
+            <td><input class="form-input" type="text" placeholder="اسم الطالب" value="${escapeHtml(r.student_name||'')}" oninput="scheduleLedgerFieldSave(${r.id}, 'student_name', this.value)"></td>
+            <td>
+              <select class="form-select" onchange="updateLedgerField(${r.id}, 'entry_type', this.value)">
+                <option value="paid" ${r.entry_type==='paid'?'selected':''}>دفع</option>
+                <option value="due" ${r.entry_type==='due'?'selected':''}>عليه</option>
+              </select>
+            </td>
+            <td><input class="form-input" type="number" value="${r.amount||0}" onchange="updateLedgerField(${r.id}, 'amount', parseFloat(this.value)||0)"></td>
+            <td><input class="form-input" type="text" placeholder="ملاحظات" value="${escapeHtml(r.notes||'')}" oninput="scheduleLedgerFieldSave(${r.id}, 'notes', this.value)"></td>
+            <td><button class="icon-btn" title="حذف الصف" onclick="deleteLedgerRow(${r.id})"><i data-lucide="trash-2" style="width:14px;height:14px;"></i></button></td>
+          </tr>
+        `).join("") : `<tr><td colspan="6"><div class="empty-state"><div class="empty-title">الدفتر فاضي - دوس "صف جديد" عشان تبدأ</div></div></td></tr>`}
+      </tbody>
+    </table></div>
+  `;
+  icons();
+}
+
+// تحديث فوري (dropdown / رقم / تاريخ) - بيتحفظ أول ما تتغير القيمة
+async function updateLedgerField(id, field, value){
+  try{
+    await api(`/api/ledger/${id}`, {method:"PUT", body: JSON.stringify({[field]: value})});
+    const row = LEDGER_ROWS_CACHE.find(r=>r.id===id);
+    if (row) row[field] = value;
+    // نحدث الإجماليات من غير ما نعيد بناء كل الجدول (عشان مايفقدش تركيز الكتابة)
+    renderLedgerTotalsOnly();
+  }catch(e){ showToast("حصل خطأ في الحفظ", "error"); }
+}
+
+// تحديث مع تأخير بسيط (debounce) للحقول النصية (اسم/ملاحظات) عشان مايبعتش
+// طلب لكل حرف وهو لسه بيكتب
+function scheduleLedgerFieldSave(id, field, value){
+  clearTimeout(LEDGER_SAVE_TIMERS[id+field]);
+  LEDGER_SAVE_TIMERS[id+field] = setTimeout(()=> updateLedgerField(id, field, value), 500);
+}
+
+function renderLedgerTotalsOnly(){
+  const rows = getFilteredLedgerRows();
+  const totalPaid = rows.filter(r=>r.entry_type==='paid').reduce((s,r)=>s+(r.amount||0), 0);
+  const totalDue = rows.filter(r=>r.entry_type==='due').reduce((s,r)=>s+(r.amount||0), 0);
+  const bar = document.querySelector("#ledgerListWrap > div:first-child");
+  if (bar) bar.innerHTML = `
+    <span>${rows.length} سطر</span>
+    <span style="display:flex;gap:16px;flex-wrap:wrap;">
+      <span style="font-weight:700;color:var(--success);">إجمالي المدفوع: ${moneyLabel(totalPaid)}</span>
+      <span style="font-weight:700;color:var(--danger);">إجمالي المستحق: ${moneyLabel(totalDue)}</span>
+    </span>
+  `;
+}
+
+async function addLedgerRow(){
+  const today = new Date().toISOString().slice(0,10);
+  await api("/api/ledger", {method:"POST", body: JSON.stringify({entry_date: today, entry_type:"paid"})});
+  await loadLedgerEntries();
+  showToast("تم إضافة صف جديد", "success");
+}
+
+async function deleteLedgerRow(id){
+  confirmAction(
+    "حذف السطر",
+    "متأكد إنك عايز تحذف السطر ده من الدفتر؟",
+    async ()=>{
+      await api(`/api/ledger/${id}`, {method:"DELETE"});
+      showToast("تم حذف السطر", "success");
+      loadLedgerEntries();
+    }
+  );
+}
+
+function printLedgerReport(){
+  const rows = getFilteredLedgerRows();
+  const totalPaid = rows.filter(r=>r.entry_type==='paid').reduce((s,r)=>s+(r.amount||0), 0);
+  const totalDue = rows.filter(r=>r.entry_type==='due').reduce((s,r)=>s+(r.amount||0), 0);
+  const todayLabel = new Date().toLocaleDateString("ar-EG", {year:"numeric", month:"long", day:"numeric"});
+  const html = `
+    <html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>تقرير دفتر الحسابات</title>
+    <style>
+      body{font-family:'Segoe UI',Tahoma,sans-serif;padding:24px;color:#222;}
+      h1{font-size:20px;margin-bottom:4px;}
+      .sub{color:#666;font-size:12.5px;margin-bottom:18px;}
+      table{width:100%;border-collapse:collapse;font-size:13px;}
+      th,td{padding:8px 10px;text-align:right;border-bottom:1px solid #ddd;}
+      th{background:#f5f5f3;font-weight:700;}
+      .totals{margin-top:16px;display:flex;gap:24px;font-size:13.5px;font-weight:700;}
+      .paid{color:#2f7d4f;} .due{color:#b5473f;}
+      .print-btn-bar{margin-bottom:14px;}
+      .print-btn{background:#2f6fed;color:#fff;border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:700;cursor:pointer;}
+      @media print{ .no-print{display:none !important;} }
+    </style></head><body>
+    <div class="print-btn-bar no-print"><button class="print-btn" onclick="window.print()">🖨️ طباعة / حفظ PDF</button></div>
+    <h1>تقرير دفتر الحسابات</h1>
+    <div class="sub">تاريخ الطباعة: ${todayLabel} · عدد السطور: ${rows.length}</div>
+    <table>
+      <thead><tr><th>التاريخ</th><th>الاسم</th><th>النوع</th><th>المبلغ</th><th>ملاحظات</th></tr></thead>
+      <tbody>
+        ${rows.map(r => `<tr><td>${r.entry_date||''}</td><td>${escapeHtml(r.student_name||'')}</td><td>${r.entry_type==='paid'?'دفع':'عليه'}</td><td>${moneyLabel(r.amount||0)}</td><td>${escapeHtml(r.notes||'')}</td></tr>`).join("")}
+      </tbody>
+    </table>
+    <div class="totals">
+      <span class="paid">إجمالي المدفوع: ${moneyLabel(totalPaid)}</span>
+      <span class="due">إجمالي المستحق: ${moneyLabel(totalDue)}</span>
+    </div>
+    </body></html>
+  `;
+  const win = window.open("", "_blank");
+  win.document.write(html);
+  win.document.close();
 }
 
 /* =====================================================================
@@ -10677,6 +10859,7 @@ async function renderQbankAnalyticsPage(){
     <div class="table-card" style="padding:10px 12px;margin-bottom:12px;">
       <div class="seg-toggle" id="qbAnalyticsTabs" style="width:100%;">
         <button type="button" class="seg-btn active-green" data-val="chapters" onclick="qbAnalyticsSwitchTab('chapters')" style="flex:1;">🔴 الأبواب</button>
+        <button type="button" class="seg-btn" data-val="lessons" onclick="qbAnalyticsSwitchTab('lessons')" style="flex:1;">📘 الدروس</button>
         <button type="button" class="seg-btn" data-val="questions" onclick="qbAnalyticsSwitchTab('questions')" style="flex:1;">❌ الأسئلة</button>
       </div>
     </div>
@@ -10775,6 +10958,22 @@ function qbAnalyticsRenderTab(){
                 <div style="font-size:11.5px;color:var(--text-3);">${ch.stage_name?escapeHtml(ch.stage_name)+' · ':''}${ch.total_attempts} محاولة · ${ch.wrong_attempts} غلط</div>
               </div>
               ${qbWrongRateBadge(ch.wrong_rate)}
+              <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);flex-shrink:0;"></i>
+            </div>`).join("")}
+        </div>`;
+  } else if (QBANK_ANALYTICS_TAB === "lessons"){
+    const list = QBANK_ANALYTICS_DATA.weak_lessons || [];
+    wrap.innerHTML = !list.length
+      ? `<div class="empty-state"><div class="empty-title">لا يوجد بيانات</div></div>`
+      : `<div class="table-card" style="padding:4px 12px;">
+          ${list.map(ls=>`
+            <div class="student-more-item" onclick="openQbWeakStudentsModal('${jsAttr(ls.chapter)}', '${jsAttr(ls.lesson)}', ${ls.stage_id||"null"}, '${jsAttr(ls.chapter)} - ${jsAttr(ls.lesson)}')">
+              <div class="student-more-ic"><i data-lucide="book-marked" style="width:17px;height:17px;"></i></div>
+              <div style="flex:1;min-width:0;">
+                <div style="font-weight:700;font-size:13.5px;">${escapeHtml(ls.lesson)}</div>
+                <div style="font-size:11.5px;color:var(--text-3);">${escapeHtml(ls.chapter)}${ls.stage_name?' · '+escapeHtml(ls.stage_name):''} · ${ls.total_attempts} محاولة · ${ls.wrong_attempts} غلط</div>
+              </div>
+              ${qbWrongRateBadge(ls.wrong_rate)}
               <i data-lucide="chevron-left" style="width:16px;height:16px;color:var(--text-3);flex-shrink:0;"></i>
             </div>`).join("")}
         </div>`;
