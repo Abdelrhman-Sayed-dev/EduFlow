@@ -221,11 +221,17 @@ class QBQuestionIn(BaseModel):
     stage_id: int
     chapter: str = Field(..., max_length=200)
     lesson: str = Field(..., max_length=200)
-    question_text: str = Field(..., max_length=3000)
-    correct_answer: str = Field(..., max_length=1000)
-    wrong_answer_1: str = Field(..., max_length=1000)
-    wrong_answer_2: str = Field(..., max_length=1000)
-    wrong_answer_3: str = Field(..., max_length=1000)
+    answer_mode: str = Field("text", pattern="^(text|image)$")  # 'text' سؤال مكتوب أو 'image' سؤال بصورة
+    # --- وضع النص (الوضع القديم) ---
+    question_text: Optional[str] = Field(None, max_length=3000)
+    correct_answer: Optional[str] = Field(None, max_length=1000)
+    wrong_answer_1: Optional[str] = Field(None, max_length=1000)
+    wrong_answer_2: Optional[str] = Field(None, max_length=1000)
+    wrong_answer_3: Optional[str] = Field(None, max_length=1000)
+    # --- وضع الصورة (سؤال + اختيارات كصورة واحدة) ---
+    question_image: Optional[str] = None  # base64
+    label_style: str = Field("ar", pattern="^(ar|en)$")  # 'ar' -> أ ب ج د / 'en' -> A B C D
+    correct_option: Optional[int] = Field(None, ge=1, le=4)  # رقم الاختيار الصح من 1 لـ 4
     explanation: Optional[str] = Field(None, max_length=3000)
 
 
@@ -3330,6 +3336,60 @@ QB_UPLOAD_COLUMNS = {
     "التفسير": "explanation",
 }
 
+# حروف الاختيارات لسؤال بنك الأسئلة "بالصورة" - بترتيب ثابت (index 0 = اختيار 1 ... إلخ)
+QB_OPTION_LABELS = {
+    "ar": ["أ", "ب", "ج", "د"],
+    "en": ["A", "B", "C", "D"],
+}
+
+
+def _qb_prepare_question_fields(question: "QBQuestionIn"):
+    """
+    يجهز قيم الأعمدة اللي هتتخزن في qb_questions حسب answer_mode:
+    - text: زي ما هو، بيتحقق إن كل الحقول النصية مكتوبة.
+    - image: لازم صورة + رقم الاختيار الصح (1-4). بنخزن حروف الاختيارات
+      (أ/ب/ج/د أو A/B/C/D حسب label_style) في نفس أعمدة correct_answer/
+      wrong_answer_1..3 القديمة عشان منطق التصحيح (qb_student_answer) والمقارنة
+      النصية يفضل شغال زي ما هو من غير أي تغيير، وبيتسجل رقم الاختيار الصح
+      في correct_option كمان عشان الفرونت يعرف يلوّن الاختيار الصح بشكل مضمون.
+    """
+    mode = question.answer_mode
+    if mode == "image":
+        if not question.question_image:
+            raise HTTPException(status_code=400, detail="لازم ترفع صورة السؤال")
+        if not question.correct_option or not (1 <= question.correct_option <= 4):
+            raise HTTPException(status_code=400, detail="لازم تحدد الاختيار الصحيح (من 1 لـ 4)")
+        labels = QB_OPTION_LABELS.get(question.label_style, QB_OPTION_LABELS["ar"])
+        others = [l for i, l in enumerate(labels) if i != (question.correct_option - 1)]
+        return {
+            "question_text": (question.question_text or "").strip(),
+            "correct_answer": labels[question.correct_option - 1],
+            "wrong_answer_1": others[0],
+            "wrong_answer_2": others[1],
+            "wrong_answer_3": others[2],
+            "question_image": question.question_image,
+            "answer_mode": "image",
+            "label_style": question.label_style,
+            "correct_option": question.correct_option,
+        }
+    else:
+        missing = [f for f in ("question_text", "correct_answer", "wrong_answer_1",
+                                "wrong_answer_2", "wrong_answer_3")
+                   if not (getattr(question, f) or "").strip()]
+        if missing:
+            raise HTTPException(status_code=400, detail="لازم تملأ نص السؤال وكل الإجابات")
+        return {
+            "question_text": question.question_text.strip(),
+            "correct_answer": question.correct_answer.strip(),
+            "wrong_answer_1": question.wrong_answer_1.strip(),
+            "wrong_answer_2": question.wrong_answer_2.strip(),
+            "wrong_answer_3": question.wrong_answer_3.strip(),
+            "question_image": None,
+            "answer_mode": "text",
+            "label_style": question.label_style,
+            "correct_option": None,
+        }
+
 
 def _student_stage_id(conn, session) -> Optional[int]:
     """يرجّع رقم المرحلة الدراسية للطالب الحالي من الجلسة"""
@@ -3341,16 +3401,26 @@ def _student_stage_id(conn, session) -> Optional[int]:
 
 
 def _qb_question_out(row, student_extra=None):
-    """يجهز شكل السؤال للإرسال للطالب: الإجابات الأربعة متلخبطة من غير ما تتكشف
-    مين الصح. student_extra (اختياري) بيضيف حالة المفضلة/لاحقًا/آخر نتيجة"""
-    options = [row["correct_answer"], row["wrong_answer_1"], row["wrong_answer_2"], row["wrong_answer_3"]]
-    random.shuffle(options)
+    """يجهز شكل السؤال للإرسال للطالب.
+    - سؤال نصي (answer_mode='text'): الإجابات الأربعة متلخبطة من غير ما تتكشف مين الصح.
+    - سؤال بالصورة (answer_mode='image'): الاختيارات ثابتة بترتيب حروف (أ ب ج د / A B C D)
+      زي ما هي في الصورة بالظبط - مايصحش تتلخبط لأنها جزء من الصورة نفسها.
+    student_extra (اختياري) بيضيف حالة المفضلة/لاحقًا/آخر نتيجة"""
+    answer_mode = row["answer_mode"] if "answer_mode" in row.keys() else "text"
+    if answer_mode == "image":
+        labels = QB_OPTION_LABELS.get(row["label_style"] or "ar", QB_OPTION_LABELS["ar"])
+        options = list(labels)
+    else:
+        options = [row["correct_answer"], row["wrong_answer_1"], row["wrong_answer_2"], row["wrong_answer_3"]]
+        random.shuffle(options)
     out = {
         "id": row["id"],
         "stage_id": row["stage_id"],
         "chapter": row["chapter"],
         "lesson": row["lesson"],
         "question_text": row["question_text"],
+        "question_image": row["question_image"] if "question_image" in row.keys() else None,
+        "answer_mode": answer_mode,
         "options": options,
     }
     if student_extra:
@@ -3508,34 +3578,41 @@ def qb_list_questions(stage_id: Optional[int] = None, chapter: Optional[str] = N
 
 @app.post("/api/qbank/questions")
 def qb_add_question(question: QBQuestionIn, session=Depends(require_roles("admin"))):
-    """إضافة سؤال واحد يدويًا (بدل/بجانب رفع الإكسيل)"""
+    """إضافة سؤال واحد يدويًا - إما مكتوب نص، أو صورة واحدة للسؤال والاختيارات
+    مع تحديد رقم الاختيار الصحيح بس (بدل/بجانب رفع الإكسيل)"""
+    fields = _qb_prepare_question_fields(question)
     with get_connection() as conn:
         stage = conn.execute("SELECT id FROM stages WHERE id=?", (question.stage_id,)).fetchone()
         if not stage:
             raise HTTPException(status_code=404, detail="المرحلة الدراسية غير موجودة")
         cur = conn.execute("""
             INSERT INTO qb_questions (stage_id, chapter, lesson, question_text, correct_answer,
-                                       wrong_answer_1, wrong_answer_2, wrong_answer_3, explanation, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (question.stage_id, question.chapter, question.lesson, question.question_text,
-              question.correct_answer, question.wrong_answer_1, question.wrong_answer_2,
-              question.wrong_answer_3, question.explanation, session["id"]))
+                                       wrong_answer_1, wrong_answer_2, wrong_answer_3, explanation,
+                                       question_image, answer_mode, label_style, correct_option, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (question.stage_id, question.chapter, question.lesson, fields["question_text"],
+              fields["correct_answer"], fields["wrong_answer_1"], fields["wrong_answer_2"],
+              fields["wrong_answer_3"], question.explanation, fields["question_image"],
+              fields["answer_mode"], fields["label_style"], fields["correct_option"], session["id"]))
         return {"id": cur.lastrowid, "message": "تم إضافة السؤال"}
 
 
 @app.put("/api/qbank/questions/{question_id}")
 def qb_update_question(question_id: int, question: QBQuestionIn, session=Depends(require_roles("admin"))):
+    fields = _qb_prepare_question_fields(question)
     with get_connection() as conn:
         existing = conn.execute("SELECT id FROM qb_questions WHERE id=?", (question_id,)).fetchone()
         if not existing:
             raise HTTPException(status_code=404, detail="السؤال غير موجود")
         conn.execute("""
             UPDATE qb_questions SET stage_id=?, chapter=?, lesson=?, question_text=?, correct_answer=?,
-                                     wrong_answer_1=?, wrong_answer_2=?, wrong_answer_3=?, explanation=?
+                                     wrong_answer_1=?, wrong_answer_2=?, wrong_answer_3=?, explanation=?,
+                                     question_image=?, answer_mode=?, label_style=?, correct_option=?
             WHERE id=?
-        """, (question.stage_id, question.chapter, question.lesson, question.question_text,
-              question.correct_answer, question.wrong_answer_1, question.wrong_answer_2,
-              question.wrong_answer_3, question.explanation, question_id))
+        """, (question.stage_id, question.chapter, question.lesson, fields["question_text"],
+              fields["correct_answer"], fields["wrong_answer_1"], fields["wrong_answer_2"],
+              fields["wrong_answer_3"], question.explanation, fields["question_image"],
+              fields["answer_mode"], fields["label_style"], fields["correct_option"], question_id))
         return {"message": "تم تعديل السؤال"}
 
 

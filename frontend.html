@@ -10655,8 +10655,11 @@ async function qbAdminLoadQuestions(){
           ${questions.map(q=>{
             const wrongRate = q.attempts ? Math.round((q.wrong_attempts/q.attempts)*100) : null;
             const rateBadge = wrongRate==null ? "badge-gray" : (wrongRate>=50 ? "badge-red" : (wrongRate>=25 ? "badge-amber" : "badge-green"));
+            const qCellContent = q.answer_mode === "image"
+              ? `<div style="display:flex;align-items:center;gap:8px;">${q.question_image?`<img src="${q.question_image}" onclick="showImageLightbox('${q.question_image}')" style="width:34px;height:34px;border-radius:6px;object-fit:cover;cursor:pointer;flex-shrink:0;border:1px solid var(--border);">`:""}<span class="badge badge-blue">سؤال بصورة</span></div>`
+              : escapeHtml(q.question_text);
             return `<tr>
-              <td class="td-name" style="max-width:320px;">${escapeHtml(q.question_text)}</td>
+              <td class="td-name" style="max-width:320px;">${qCellContent}</td>
               <td>${q.stage_name?`<span class="badge badge-blue">${escapeHtml(q.stage_name)}</span>`:"—"}</td>
               <td><span class="badge badge-gray">${escapeHtml(q.chapter)}</span><div style="font-size:11px;color:var(--text-3);margin-top:3px;">${escapeHtml(q.lesson)}</div></td>
               <td>${q.attempts}</td>
@@ -10760,10 +10763,24 @@ async function submitQbankUpload(){
   qbAdminLoadQuestions();
 }
 
+let QB_EDIT_EXISTING_IMAGE = null;
+
 function openQbankQuestionModal(question){
   const isEdit = !!question;
+  QB_EDIT_EXISTING_IMAGE = (isEdit && question.question_image) ? question.question_image : null;
+  const mode = isEdit && question.answer_mode === "image" ? "image" : "text";
+  const labelStyle = (isEdit && question.label_style) || "ar";
+  const correctOption = isEdit && question.correct_option ? question.correct_option : null;
   openModal(isEdit ? "تعديل السؤال" : "إضافة سؤال جديد", `
     <input type="hidden" id="f_qb_id" value="${isEdit?question.id:""}">
+    <div class="form-group">
+      <label class="form-label">نوع السؤال</label>
+      <div class="seg-toggle" id="f_qb_mode_toggle">
+        <button type="button" class="seg-btn ${mode==="text"?"active-green":""}" data-val="text" onclick="selectQbMode('text')">سؤال مكتوب</button>
+        <button type="button" class="seg-btn ${mode==="image"?"active-green":""}" data-val="image" onclick="selectQbMode('image')">سؤال بالصورة</button>
+      </div>
+      <input type="hidden" id="f_qb_mode" value="${mode}">
+    </div>
     <div class="form-row-2">
       <div class="form-group"><label class="form-label">المرحلة الدراسية <span class="req">*</span></label>
         <select class="form-select" id="f_qb_stage">${(CACHE_STAGES||[]).map(s=>`<option value="${s.id}" ${isEdit&&question.stage_id==s.id?"selected":""}>${escapeHtml(s.name)}</option>`).join("")}</select>
@@ -10771,11 +10788,37 @@ function openQbankQuestionModal(question){
       <div class="form-group"><label class="form-label">الباب <span class="req">*</span></label><input class="form-input" id="f_qb_chapter" value="${isEdit?jsAttr(question.chapter):""}"></div>
     </div>
     <div class="form-group"><label class="form-label">الدرس <span class="req">*</span></label><input class="form-input" id="f_qb_lesson" value="${isEdit?jsAttr(question.lesson):""}"></div>
-    <div class="form-group"><label class="form-label">نص السؤال <span class="req">*</span></label><textarea class="form-textarea" id="f_qb_question">${isEdit?question.question_text:""}</textarea></div>
-    <div class="form-group"><label class="form-label">الإجابة الصحيحة <span class="req">*</span></label><input class="form-input" id="f_qb_correct" style="border-color:var(--success);" value="${isEdit?jsAttr(question.correct_answer):""}"></div>
-    <div class="form-group"><label class="form-label">إجابة خاطئة 1 <span class="req">*</span></label><input class="form-input" id="f_qb_wrong1" value="${isEdit?jsAttr(question.wrong_answer_1):""}"></div>
-    <div class="form-group"><label class="form-label">إجابة خاطئة 2 <span class="req">*</span></label><input class="form-input" id="f_qb_wrong2" value="${isEdit?jsAttr(question.wrong_answer_2):""}"></div>
-    <div class="form-group"><label class="form-label">إجابة خاطئة 3 <span class="req">*</span></label><input class="form-input" id="f_qb_wrong3" value="${isEdit?jsAttr(question.wrong_answer_3):""}"></div>
+
+    <div id="f_qb_text_fields" style="display:${mode==="text"?"block":"none"};">
+      <div class="form-group"><label class="form-label">نص السؤال <span class="req">*</span></label><textarea class="form-textarea" id="f_qb_question">${isEdit&&mode==="text"?(question.question_text||""):""}</textarea></div>
+      <div class="form-group"><label class="form-label">الإجابة الصحيحة <span class="req">*</span></label><input class="form-input" id="f_qb_correct" style="border-color:var(--success);" value="${isEdit&&mode==="text"?jsAttr(question.correct_answer):""}"></div>
+      <div class="form-group"><label class="form-label">إجابة خاطئة 1 <span class="req">*</span></label><input class="form-input" id="f_qb_wrong1" value="${isEdit&&mode==="text"?jsAttr(question.wrong_answer_1):""}"></div>
+      <div class="form-group"><label class="form-label">إجابة خاطئة 2 <span class="req">*</span></label><input class="form-input" id="f_qb_wrong2" value="${isEdit&&mode==="text"?jsAttr(question.wrong_answer_2):""}"></div>
+      <div class="form-group"><label class="form-label">إجابة خاطئة 3 <span class="req">*</span></label><input class="form-input" id="f_qb_wrong3" value="${isEdit&&mode==="text"?jsAttr(question.wrong_answer_3):""}"></div>
+    </div>
+
+    <div id="f_qb_image_fields" style="display:${mode==="image"?"block":"none"};">
+      <div class="form-group">
+        <label class="form-label">صورة السؤال والاختيارات <span class="req">*</span></label>
+        <input class="form-input" id="f_qb_image" type="file" accept="image/*">
+        ${isEdit&&question.question_image?`<div style="margin-top:8px;"><img src="${question.question_image}" style="max-width:100%;max-height:220px;border-radius:8px;border:1px solid var(--border);cursor:pointer;" onclick="showImageLightbox('${question.question_image}')"></div><div class="form-hint">فيه صورة متحفوظة بالفعل، اختار صورة جديدة بس لو عايز تستبدلها</div>`:""}
+      </div>
+      <div class="form-group">
+        <label class="form-label">شكل الاختيارات اللي هيشوفها الطالب</label>
+        <div class="seg-toggle" id="f_qb_label_style_toggle">
+          <button type="button" class="seg-btn ${labelStyle==="ar"?"active-green":""}" data-val="ar" onclick="selectQbLabelStyle('ar')">أ ب ج د</button>
+          <button type="button" class="seg-btn ${labelStyle==="en"?"active-green":""}" data-val="en" onclick="selectQbLabelStyle('en')">A B C D</button>
+        </div>
+        <input type="hidden" id="f_qb_label_style" value="${labelStyle}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">الاختيار الصحيح <span class="req">*</span></label>
+        <div class="seg-toggle" id="f_qb_correct_option_toggle">${[1,2,3,4].map(n=>`<button type="button" class="seg-btn ${correctOption===n?"active-green":""}" data-val="${n}" onclick="selectQbCorrectOption(${n})">${n}</button>`).join("")}</div>
+        <input type="hidden" id="f_qb_correct_option" value="${correctOption||""}">
+        <div class="form-hint">حدد رقم الاختيار الصح زي ما هو مرتب في الصورة (من غير كتابة نص، الطالب هيشوف الاختيارات بالحروف بس)</div>
+      </div>
+    </div>
+
     <div class="form-group"><label class="form-label">التفسير (بيظهر للطالب لو جاوب غلط)</label><textarea class="form-textarea" id="f_qb_explanation">${isEdit&&question.explanation?question.explanation:""}</textarea></div>
   `, `
     <button class="btn btn-ghost" onclick="closeOverlay('genericModal')">إلغاء</button>
@@ -10783,30 +10826,79 @@ function openQbankQuestionModal(question){
   `, {width:"560px"});
 }
 
+function selectQbMode(val){
+  document.getElementById("f_qb_mode").value = val;
+  document.getElementById("f_qb_text_fields").style.display = val === "text" ? "block" : "none";
+  document.getElementById("f_qb_image_fields").style.display = val === "image" ? "block" : "none";
+  document.querySelectorAll("#f_qb_mode_toggle .seg-btn").forEach(b=>b.classList.toggle("active-green", b.dataset.val === val));
+}
+
+function selectQbLabelStyle(val){
+  document.getElementById("f_qb_label_style").value = val;
+  document.querySelectorAll("#f_qb_label_style_toggle .seg-btn").forEach(b=>b.classList.toggle("active-green", b.dataset.val === val));
+}
+
+function selectQbCorrectOption(val){
+  document.getElementById("f_qb_correct_option").value = val;
+  document.querySelectorAll("#f_qb_correct_option_toggle .seg-btn").forEach(b=>b.classList.toggle("active-green", b.dataset.val == val));
+}
+
 async function submitQbankQuestion(isEdit){
+  const mode = document.getElementById("f_qb_mode").value;
   const body = {
     stage_id: parseInt(document.getElementById("f_qb_stage").value),
     chapter: document.getElementById("f_qb_chapter").value.trim(),
     lesson: document.getElementById("f_qb_lesson").value.trim(),
-    question_text: document.getElementById("f_qb_question").value.trim(),
-    correct_answer: document.getElementById("f_qb_correct").value.trim(),
-    wrong_answer_1: document.getElementById("f_qb_wrong1").value.trim(),
-    wrong_answer_2: document.getElementById("f_qb_wrong2").value.trim(),
-    wrong_answer_3: document.getElementById("f_qb_wrong3").value.trim(),
+    answer_mode: mode,
     explanation: document.getElementById("f_qb_explanation").value.trim() || null,
   };
-  if (!body.chapter || !body.lesson || !body.question_text || !body.correct_answer ||
-      !body.wrong_answer_1 || !body.wrong_answer_2 || !body.wrong_answer_3){
-    showToast("لازم تملأ كل الحقول المطلوبة (ماعدا التفسير)", "error");
+  if (!body.chapter || !body.lesson){
+    showToast("لازم تكتب الباب والدرس", "error");
     return;
   }
-  const id = document.getElementById("f_qb_id").value;
-  if (isEdit && id){
-    await api(`/api/qbank/questions/${id}`, {method:"PUT", body: JSON.stringify(body)});
-    showToast("تم تعديل السؤال", "success");
+
+  if (mode === "text"){
+    body.question_text = document.getElementById("f_qb_question").value.trim();
+    body.correct_answer = document.getElementById("f_qb_correct").value.trim();
+    body.wrong_answer_1 = document.getElementById("f_qb_wrong1").value.trim();
+    body.wrong_answer_2 = document.getElementById("f_qb_wrong2").value.trim();
+    body.wrong_answer_3 = document.getElementById("f_qb_wrong3").value.trim();
+    if (!body.question_text || !body.correct_answer || !body.wrong_answer_1 || !body.wrong_answer_2 || !body.wrong_answer_3){
+      showToast("لازم تملأ نص السؤال وكل الإجابات", "error");
+      return;
+    }
   } else {
-    await api("/api/qbank/questions", {method:"POST", body: JSON.stringify(body)});
-    showToast("تم إضافة السؤال", "success");
+    const fileInput = document.getElementById("f_qb_image");
+    let imageData = null;
+    if (fileInput && fileInput.files[0]){
+      imageData = await readFileAsDataURL(fileInput.files[0]);
+    }
+    // لو مفيش صورة جديدة متختارة وإحنا بنعدّل سؤال كان بالفعل بالصورة، نفضل مستخدمين الصورة القديمة
+    body.question_image = imageData || QB_EDIT_EXISTING_IMAGE;
+    body.label_style = document.getElementById("f_qb_label_style").value;
+    const correctOptionVal = document.getElementById("f_qb_correct_option").value;
+    body.correct_option = correctOptionVal ? parseInt(correctOptionVal) : null;
+    if (!body.correct_option){
+      showToast("لازم تحدد الاختيار الصحيح", "error");
+      return;
+    }
+    if (!body.question_image){
+      showToast("لازم ترفع صورة السؤال", "error");
+      return;
+    }
+  }
+
+  const id = document.getElementById("f_qb_id").value;
+  try{
+    if (isEdit && id){
+      await api(`/api/qbank/questions/${id}`, {method:"PUT", body: JSON.stringify(body)});
+      showToast("تم تعديل السؤال", "success");
+    } else {
+      await api("/api/qbank/questions", {method:"POST", body: JSON.stringify(body)});
+      showToast("تم إضافة السؤال", "success");
+    }
+  }catch(e){
+    return;
   }
   closeOverlay("genericModal");
   qbAdminLoadQuestions();
@@ -11280,8 +11372,12 @@ function qbQuestionCardHtml(q){
         </button>
       </div>
     </div>
-    <div style="font-size:14.5px;font-weight:700;color:var(--text);margin:10px 0 12px;">${escapeHtml(q.question_text)}</div>
-    <div class="qb-options" id="qb_options_${q.id}" data-locked="${answered?'1':''}">
+    ${q.answer_mode === "image" && q.question_image ? `
+      <div style="margin:10px 0 12px;">
+        <img src="${q.question_image}" onclick="showImageLightbox('${q.question_image}')" style="max-width:100%;border-radius:10px;border:1px solid var(--border);cursor:zoom-in;" oncontextmenu="return false" draggable="false">
+      </div>
+    ` : `<div style="font-size:14.5px;font-weight:700;color:var(--text);margin:10px 0 12px;">${escapeHtml(q.question_text)}</div>`}
+    <div class="qb-options" id="qb_options_${q.id}" data-locked="${answered?'1':''}" style="${q.answer_mode === "image" ? "flex-direction:row;flex-wrap:wrap;justify-content:center;" : ""}">
       ${q.options.map(opt=>{
         let cls = "qb-option-btn";
         if (answered){

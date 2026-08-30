@@ -319,6 +319,21 @@ def _migrate_quizzes_columns(cur):
     _safe_alter(cur, "ALTER TABLE quizzes ADD COLUMN quiz_type TEXT NOT NULL DEFAULT 'quiz'")
 
 
+def _migrate_qb_questions_columns(cur):
+    """
+    إضافة أعمدة "سؤال بالصورة" لبنك الأسئلة على القواعد القديمة:
+    - question_image: صورة السؤال والاختيارات (base64) بدل كتابتهم نص
+    - answer_mode: 'text' (الوضع القديم) أو 'image' (سؤال بالصورة)
+    - label_style: شكل حروف الاختيارات المعروضة للطالب - 'ar' (أ ب ج د) أو 'en' (A B C D)
+    - correct_option: رقم الاختيار الصح (1-4) في وضع الصورة، بترتيب ثابت مايتلخبطش
+      (عكس النص العادي، اختيارات الصورة مايصحش تتلخبط لأنها جزء من الصورة نفسها)
+    """
+    _safe_alter(cur, "ALTER TABLE qb_questions ADD COLUMN question_image TEXT")
+    _safe_alter(cur, "ALTER TABLE qb_questions ADD COLUMN answer_mode TEXT NOT NULL DEFAULT 'text'")
+    _safe_alter(cur, "ALTER TABLE qb_questions ADD COLUMN label_style TEXT NOT NULL DEFAULT 'ar'")
+    _safe_alter(cur, "ALTER TABLE qb_questions ADD COLUMN correct_option INTEGER")
+
+
 def _backfill_attendance_codes(cur):
     """توليد كود حضور رقمي لأي طالب قديم لسه معندوش كود (بعد إضافة العمود لأول مرة)"""
     rows = cur.execute("SELECT id FROM students WHERE attendance_code IS NULL OR attendance_code=''").fetchall()
@@ -1065,6 +1080,7 @@ def init_db():
         )
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_qb_questions_filter ON qb_questions(stage_id, chapter, lesson)")
+        _migrate_qb_questions_columns(cur)
 
         # سجل إجابات الطلاب على أسئلة بنك الأسئلة - كل محاولة بسجل مستقل
         # (بيسمح بمحاولات متكررة لنفس السؤال) عشان نقدر نحلل نقط الضعف المشتركة
