@@ -3897,6 +3897,11 @@ def qb_student_questions(chapter: Optional[str] = None, lesson: Optional[str] = 
                 SELECT question_id FROM qb_answers WHERE student_id=? AND is_correct=0
             )"""
             params.append(session["id"])
+        elif filter == "correct":
+            query += """ AND id IN (
+                SELECT question_id FROM qb_answers WHERE student_id=? AND is_correct=1
+            )"""
+            params.append(session["id"])
         elif filter == "unsolved":
             query += " AND id NOT IN (SELECT question_id FROM qb_answers WHERE student_id=?)"
             params.append(session["id"])
@@ -4026,6 +4031,12 @@ def qb_student_stats(session=Depends(require_roles("student"))):
             JOIN qb_questions qq ON qq.id = s.question_id
             WHERE s.student_id=? AND qq.stage_id=? AND qq.is_active=1
         """, (session["id"], stage_id)).fetchone()["c"]
+        correct_count = conn.execute("""
+            SELECT COUNT(DISTINCT a.question_id) as c
+            FROM qb_answers a
+            JOIN qb_questions qq ON qq.id = a.question_id
+            WHERE a.student_id=? AND a.is_correct=1 AND qq.stage_id=? AND qq.is_active=1
+        """, (session["id"], stage_id)).fetchone()["c"]
 
         solved = solved_row["solved"] or 0
         return {
@@ -4033,6 +4044,7 @@ def qb_student_stats(session=Depends(require_roles("student"))):
             "solved_questions": solved,
             "unsolved_count": max(total_questions - solved, 0),
             "wrong_count": wrong_count,
+            "correct_count": correct_count,
             "total_attempts": solved_row["total_attempts"] or 0,
             "correct_attempts": solved_row["correct_attempts"] or 0,
             "favorites_count": favorites_count,
