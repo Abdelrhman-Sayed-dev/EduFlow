@@ -1963,13 +1963,16 @@ def _low_attendance_rows(conn, group_id: Optional[int] = None, threshold: float 
     for r in rows:
         total = r["total_sessions"] or 0
         present = r["present_count"] or 0
-        rate = round(present / total * 100, 1) if total else None
+        late = r["late_count"] or 0
+        # المتأخر (late) بيتحسب حضور بالنسبة للنسبة المئوية (نفس منطق باقي شاشات
+        # النظام: status IN ('present','late')) - مش غياب، عشان كده بيتضاف هنا
+        rate = round((present + late) / total * 100, 1) if total else None
         if rate is None or rate < threshold:
             result.append({
                 "id": r["id"], "full_name": r["full_name"], "group_id": r["group_id"],
                 "group_name": r["group_name"], "phone": r["phone"], "parent_phone": r["parent_phone"],
                 "total_sessions": total, "present_count": present,
-                "absent_count": r["absent_count"] or 0, "late_count": r["late_count"] or 0,
+                "absent_count": r["absent_count"] or 0, "late_count": late,
                 "excused_count": r["excused_count"] or 0, "attendance_rate": rate,
             })
     return result
