@@ -468,10 +468,11 @@ def init_db():
         _safe_alter(cur, "ALTER TABLE groups ADD COLUMN session_price REAL")
         _safe_alter(cur, "ALTER TABLE groups ADD COLUMN monthly_fee REAL DEFAULT 0")
         _safe_alter(cur, "ALTER TABLE groups ADD COLUMN supervisor_id INTEGER REFERENCES users(id)")
-        # ملحوظة: عمود session_price و supervisor_id فوق باقيين في الجدول للتوافق مع نسخ
-        # قديمة من قاعدة البيانات، لكن النظام بقى مايستخدمهمش؛ سعر الحصة اتشال من واجهة
-        # تعيين المجموعة، والمشرف المسؤول بقى بيتسجل في جدول group_supervisors تحت
-        # عشان تقدر تعيّن أكتر من مشرف لنفس المجموعة.
+        # ملحوظة: عمود supervisor_id فوق باقي في الجدول للتوافق مع نسخ قديمة من قاعدة
+        # البيانات، لكن النظام بقى مايستخدموش؛ المشرف المسؤول بقى بيتسجل في جدول
+        # group_supervisors تحت عشان تقدر تعيّن أكتر من مشرف لنفس المجموعة.
+        # عمود session_price كان متوقف الاستخدام، وبقى دلوقتي مستخدم في حساب مديونية
+        # الغياب التلقائية (absence_debts تحت): قيمة الحصة الواحدة لطلاب المجموعة دي.
 
         # ---------------------------------------------------------------
         # جدول ربط المجموعات بالمشرفين - Many-to-Many
@@ -641,6 +642,44 @@ def init_db():
         )
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_session_purchase_items_purchase ON session_purchase_items(purchase_id)")
+
+        # ---------------------------------------------------------------
+        # مديونيات الغياب (Absence Debts) - Business Rule بسيطة مبنية فوق
+        # جدول الحضور (attendance) الموجود بالفعل، من غير ما تعمل أي نظام
+        # حضور جديد:
+        #   - أول ما يتسجل غياب (attendance.status='absent') لطالب في حصة معينة،
+        #     بيتسجل تلقائيًا سطر هنا بقيمة = سعر الحصة (groups.session_price)
+        #     وحالته "مش مسدد".
+        #   - وجود أي سطر هنا "مش مسدد" لطالب = المنصة مقفولة عليه (يقدر يدخل
+        #     لحسابه بس مش هيقدر يشوف أي محتوى) لحد ما الأدمن/المشرف يسجل
+        #     إنه سدد قيمة الحصة دي (is_paid=1).
+        #   - نظام منفصل تمامًا عن الاشتراك الشهري (payments) وعن رسوم الغياب
+        #     اليدوية اللي بتتضاف لفاتورة الشهر (payments.absence_fee) - ده
+        #     تلقائي بالكامل ومربوط بكل حصة غياب لوحدها.
+        #   - UNIQUE(student_id, session_date, session_number) بنفس مفتاح
+        #     جدول attendance عشان يفضل سطر واحد بالظبط لكل حصة غياب.
+        # ---------------------------------------------------------------
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS absence_debts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id INTEGER NOT NULL,
+            group_id INTEGER NOT NULL,
+            session_date TEXT NOT NULL,
+            session_number INTEGER NOT NULL DEFAULT 1,
+            amount REAL NOT NULL DEFAULT 0,
+            is_paid INTEGER NOT NULL DEFAULT 0,
+            paid_date TEXT,
+            paid_by INTEGER,
+            notes TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+            FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+            FOREIGN KEY (paid_by) REFERENCES users(id) ON DELETE SET NULL,
+            UNIQUE(student_id, session_date, session_number)
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_absence_debts_student ON absence_debts(student_id, is_paid)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_absence_debts_group ON absence_debts(group_id, is_paid)")
 
         # جدول الكويزات - كويز عام على مستوى المرحلة الدراسية (بيشوفه كل مشرفي المرحلة)
         # أو مرتبط بمجموعة معينة (النظام القديم، لسه متاح للتوافق)

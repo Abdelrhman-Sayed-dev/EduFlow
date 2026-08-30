@@ -45,6 +45,10 @@ DATED_TABLES = [
     ("homework", "group_id", "session_date", False),
     ("board_images", "group_id", "session_date", False),
     ("quizzes", "group_id", "quiz_date", False),
+    # مديونيات الغياب (Business Rule الغياب) - نفس مفتاح جدول attendance
+    # بالظبط (طالب + تاريخ + رقم حصة)، فلازم تترقّم مع باقي الجداول عشان
+    # تفضل مطابقة لسجل الحضور اللي اتولدت منه
+    ("absence_debts", "group_id", "session_date", False),
 ]
 
 

@@ -635,8 +635,8 @@ body.is-student .bottom-nav, body.is-supervisor .bottom-nav, body.is-teacher .bo
     <div style="width:64px;height:64px;border-radius:50%;background:var(--danger-bg);color:var(--danger);display:flex;align-items:center;justify-content:center;margin:0 auto 18px;">
       <i data-lucide="lock" style="width:30px;height:30px;"></i>
     </div>
-    <h1 style="font-size:19px;">محتاج تسدد الاشتراك</h1>
-    <p style="color:var(--text-2);line-height:1.8;margin:10px 0 22px;">
+    <h1 style="font-size:19px;" id="subscriptionBlockedTitle">محتاج تسدد الاشتراك</h1>
+    <p style="color:var(--text-2);line-height:1.8;margin:10px 0 22px;" id="subscriptionBlockedMsg">
       اشتراك الشهر الحالي لسه متسددش، عشان كده مش هتقدر تشوف أي محتوى دلوقتي.
       كلم المشرف أو الأدمن بتاعك عشان يسجل إن الاشتراك اتسدد، وبعدها تقدر تدخل عادي.
     </p>
@@ -880,7 +880,7 @@ async function api(path, options={}){
     throw new Error("unauthorized");
   }
   if (res.status === 402){
-    showSubscriptionBlockedScreen();
+    showSubscriptionBlockedScreen(data && data.detail);
     throw new Error("subscription_required");
   }
   if (!res.ok){
@@ -1061,9 +1061,20 @@ async function handleUnifiedLogin(ev){
   return false;
 }
 
-function showSubscriptionBlockedScreen(){
+// رسالة الشاشة قابلة للتخصيص - الافتراضي رسالة "الاشتراك الشهري"، وممكن تتبعت
+// رسالة تانية (زي مديونية الغياب) لما السبب يبقى مختلف
+function showSubscriptionBlockedScreen(customMessage){
   document.getElementById("app").classList.add("hidden");
   document.getElementById("loginScreen").classList.add("hidden");
+  const msgEl = document.getElementById("subscriptionBlockedMsg");
+  const titleEl = document.getElementById("subscriptionBlockedTitle");
+  if (customMessage){
+    titleEl.textContent = "المنصة مقفولة مؤقتًا";
+    msgEl.textContent = customMessage;
+  } else {
+    titleEl.textContent = "محتاج تسدد الاشتراك";
+    msgEl.textContent = "اشتراك الشهر الحالي لسه متسددش، عشان كده مش هتقدر تشوف أي محتوى دلوقتي. كلم المشرف أو الأدمن بتاعك عشان يسجل إن الاشتراك اتسدد، وبعدها تقدر تدخل عادي.";
+  }
   document.getElementById("subscriptionBlockedScreen").classList.remove("hidden");
   icons();
 }
@@ -1075,6 +1086,13 @@ function onLoginSuccess(data){
   localStorage.setItem("session", JSON.stringify(SESSION));
   if (SESSION.role === "student" && SESSION.subscription_active === false){
     showSubscriptionBlockedScreen();
+    return;
+  }
+  // Business Rule الغياب: عليه مديونية مش مسددة - المنصة مقفولة عليه لحد ما
+  // الأدمن/المشرف يسجل السداد، حتى لو اشتراكه الشهري مسدد عادي
+  if (SESSION.role === "student" && SESSION.absence_debt_active === true){
+    const amountTxt = SESSION.absence_debt_amount ? ` (${SESSION.absence_debt_amount} جنيه)` : "";
+    showSubscriptionBlockedScreen(`عليك مبلغ مستحق${amountTxt} بسبب الغياب عن إحدى الحصص. كلم المشرف أو الأدمن عشان يسجل السداد وتقدر تستخدم المنصة تاني.`);
     return;
   }
   boot();
@@ -1250,6 +1268,7 @@ const NAV_BY_ROLE = {
     {id:"subscriptions_report", label:"تقرير الاشتراكات الشهري", icon:"file-bar-chart"},
     {id:"session_subscriptions", label:"الاشتراك بالحصص", icon:"ticket"},
     {id:"session_subscriptions_report", label:"تقرير الاشتراك بالحصص", icon:"receipt"},
+    {id:"absence_debts", label:"مديونيات الغياب", icon:"alert-triangle"},
     {id:"supervisors", label:"المشرفين", icon:"shield-check"},
     {id:"head_supervisors", label:"مشرفي المشرفين", icon:"shield"},
     {id:"teachers", label:"المدرسين", icon:"presentation"},
@@ -1290,6 +1309,7 @@ const NAV_BY_ROLE = {
     {id:"monthly_reports", label:"التقرير الشهري", icon:"file-bar-chart"},
     {id:"supervisors", label:"المشرفين", icon:"shield-check"},
     {id:"supervisors_attendance_admin", label:"حضور المشرفين", icon:"map-pin"},
+    {id:"absence_debts", label:"مديونيات الغياب", icon:"alert-triangle"},
     {id:"activity_log", label:"سجل الأنشطة", icon:"history"},
     {id:"fraud_alerts", label:"كشف التلاعب", icon:"shield-alert"},
   ],
@@ -1301,6 +1321,7 @@ const NAV_BY_ROLE = {
     {id:"homework", label:"الواجبات", icon:"clipboard-list"},
     {id:"attendance", label:"الحضور والغياب", icon:"calendar-check"},
     {id:"participation", label:"تفاعل الطلاب", icon:"sparkles"},
+    {id:"absence_debts", label:"مديونيات الغياب", icon:"alert-triangle"},
     {id:"event_calendar", label:"التقويم", icon:"calendar-days"},
     {id:"monthly_reports", label:"التقرير الشهري", icon:"file-bar-chart"},
     {id:"student_requests", label:"طلبات الطلاب", icon:"inbox"},
@@ -1465,6 +1486,7 @@ const PAGE_TITLES = {
   student_commitment:"التزام الطلاب",
   sup_checkin:"حضوري وانصرافي",
   supervisors_attendance_admin:"حضور المشرفين",
+  absence_debts:"مديونيات الغياب",
 };
 
 async function renderPage(page){
@@ -1529,6 +1551,7 @@ async function renderPage(page){
       student_commitment: renderStudentCommitmentPage,
       sup_checkin: renderSupervisorCheckinPage,
       supervisors_attendance_admin: renderSupervisorsAttendanceAdminPage,
+      absence_debts: renderAbsenceDebtsPage,
     };
     const fn = renderers[page];
     if (fn) await fn();
@@ -2758,6 +2781,7 @@ async function openAddGroupModal(){
       </div>
     </div>
     <div class="form-group"><label class="form-label">قيمة الاشتراك الشهري</label><input class="form-input" id="f_g_fee" type="number" placeholder="جنيه/شهر"></div>
+    <div class="form-group"><label class="form-label">قيمة الحصة الواحدة</label><input class="form-input" id="f_g_session_price" type="number" placeholder="جنيه/حصة"><div class="form-hint">بتُستخدم في حساب مديونية الغياب التلقائية لما الطالب يتغيب عن حصة</div></div>
     <div class="form-group"><label class="form-label">المشرفين المسؤولين</label>${supervisorCheckboxes([], "f_g_sup")}</div>
     <div class="form-group"><label class="form-label">ملاحظات</label><textarea class="form-textarea" id="f_g_notes"></textarea></div>
     <div class="form-group">
@@ -2843,6 +2867,7 @@ async function submitAddGroup(){
     stage_id: parseInt(document.getElementById("f_g_stage").value),
     governorate_id: parseInt(governorate_id),
     monthly_fee: parseFloat(document.getElementById("f_g_fee").value) || null,
+    session_price: parseFloat(document.getElementById("f_g_session_price").value) || null,
     supervisor_ids: getCheckedSupervisorIds("f_g_sup"),
     notes: document.getElementById("f_g_notes").value.trim() || null,
     schedule_slots: validSlots.length ? validSlots : null,
@@ -2872,6 +2897,7 @@ async function openEditGroupModal(id){
       </div>
     </div>
     <div class="form-group"><label class="form-label">قيمة الاشتراك الشهري</label><input class="form-input" id="f_g_fee" type="number" value="${g.monthly_fee||''}"></div>
+    <div class="form-group"><label class="form-label">قيمة الحصة الواحدة</label><input class="form-input" id="f_g_session_price" type="number" value="${g.session_price||''}"><div class="form-hint">بتُستخدم في حساب مديونية الغياب التلقائية لما الطالب يتغيب عن حصة</div></div>
     <div class="form-group"><label class="form-label">المشرفين المسؤولين</label>${supervisorCheckboxes(g.supervisor_ids||[], "f_g_sup")}</div>
     <div class="form-group"><label class="form-label">ملاحظات</label><textarea class="form-textarea" id="f_g_notes">${escapeHtml(g.notes||'')}</textarea></div>
     <div class="form-group">
@@ -2899,6 +2925,7 @@ async function submitEditGroup(id){
     stage_id: parseInt(document.getElementById("f_g_stage").value),
     governorate_id: parseInt(governorate_id),
     monthly_fee: parseFloat(document.getElementById("f_g_fee").value) || null,
+    session_price: parseFloat(document.getElementById("f_g_session_price").value) || null,
     supervisor_ids: getCheckedSupervisorIds("f_g_sup"),
     notes: document.getElementById("f_g_notes").value.trim() || null,
     schedule_slots: validSlots,
@@ -3383,6 +3410,115 @@ async function bulkSetSubscription(isPaid){
       })});
       showToast(res.message || "تم التحديث بنجاح", "success");
       loadSubscriptionsList();
+    }
+  );
+}
+
+/* =====================================================================
+   مديونيات الغياب (Absence Debts) - Business Rule: أول ما يتسجل غياب لطالب
+   في حصة، بتتسجل مديونية تلقائيًا بقيمة سعر الحصة، والمنصة بتتقفل عليه لحد
+   ما يتسجل هنا إنه سدد. الطالب يقدر يدخل لحسابه عادي بس مش هيقدر يشوف أي
+   محتوى لحد السداد.
+===================================================================== */
+let ABSENCE_DEBTS_STATUS_TAB = "unpaid"; // unpaid | paid | all
+let ABSENCE_DEBTS_ROWS_CACHE = [];
+
+async function renderAbsenceDebtsPage(){
+  const groups = await loadGroups();
+  CACHE_ALL_GROUPS = groups;
+  const c = document.getElementById("pageContainer");
+  c.innerHTML = `
+    <div class="page-header">
+      <div><h1>مديونيات الغياب</h1><p>أول ما يتسجل غياب لطالب في أي حصة، بتتسجل عليه مديونية تلقائيًا بقيمة سعر الحصة والمنصة بتتقفل عليه لحد ما تسجل هنا إنه سدد. لتحديد "قيمة الحصة" لكل مجموعة، عدّل بيانات المجموعة من صفحة المجموعات.</p></div>
+    </div>
+    <div class="table-card">
+      <div class="toolbar" style="gap:10px;flex-wrap:wrap;">
+        <select class="form-select" id="debtGroupFilter" style="width:auto;min-width:180px;" onchange="loadAbsenceDebtsList()">
+          <option value="">كل المجموعات</option>
+          ${groups.map(g=>`<option value="${g.id}">${escapeHtml(g.name)}</option>`).join("")}
+        </select>
+        <div class="search-wrap" style="width:220px;"><i data-lucide="search" class="search-ic" style="width:14px;height:14px;"></i><input id="debtSearchInput" placeholder="بحث بالاسم..." oninput="renderAbsenceDebtsTable()"></div>
+      </div>
+      <div class="toolbar" style="gap:8px;border-top:none;flex-wrap:wrap;">
+        <button class="seg-btn active-red ${ABSENCE_DEBTS_STATUS_TAB==='unpaid'?'active':''}" onclick="ABSENCE_DEBTS_STATUS_TAB='unpaid';loadAbsenceDebtsList();">مستحقة (مقفولة)</button>
+        <button class="seg-btn ${ABSENCE_DEBTS_STATUS_TAB==='paid'?'active':''}" onclick="ABSENCE_DEBTS_STATUS_TAB='paid';loadAbsenceDebtsList();">متسددة</button>
+        <button class="seg-btn ${ABSENCE_DEBTS_STATUS_TAB==='all'?'active':''}" onclick="ABSENCE_DEBTS_STATUS_TAB='all';loadAbsenceDebtsList();">الكل</button>
+      </div>
+      <div id="absenceDebtsListWrap"><div class="empty-state"><div class="empty-title">بتحمّل...</div></div></div>
+    </div>
+  `;
+  icons();
+  await loadAbsenceDebtsList();
+}
+
+async function loadAbsenceDebtsList(){
+  const wrap = document.getElementById("absenceDebtsListWrap");
+  if (!wrap) return;
+  const groupId = document.getElementById("debtGroupFilter").value;
+  const qs = [`status=${ABSENCE_DEBTS_STATUS_TAB}`, groupId ? `group_id=${groupId}` : ""].filter(Boolean).join("&");
+  ABSENCE_DEBTS_ROWS_CACHE = await api(`/api/absence-debts?${qs}`);
+  renderAbsenceDebtsTable();
+}
+
+function getFilteredAbsenceDebtRows(){
+  const q = (document.getElementById("debtSearchInput")?.value || "").trim().toLowerCase();
+  return ABSENCE_DEBTS_ROWS_CACHE.filter(r => !q || r.student_name.toLowerCase().includes(q));
+}
+
+function renderAbsenceDebtsTable(){
+  const wrap = document.getElementById("absenceDebtsListWrap");
+  if (!wrap) return;
+  const rows = getFilteredAbsenceDebtRows();
+  const totalUnpaid = rows.filter(r=>!r.is_paid).reduce((s,r)=>s+(r.amount||0), 0);
+
+  wrap.innerHTML = `
+    <div style="padding:8px 16px;font-size:12px;color:var(--text-3);display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;">
+      <span>${rows.length} مديونية</span>
+      ${totalUnpaid ? `<span style="font-weight:700;color:var(--danger);">إجمالي المستحق: ${moneyLabel(totalUnpaid)}</span>` : ""}
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>الطالب</th><th>المجموعة</th><th>تاريخ الحصة</th><th>رقم الحصة</th><th>المبلغ</th><th>الحالة</th><th>تاريخ السداد</th><th></th></tr></thead>
+      <tbody>
+        ${rows.length ? rows.map(r => `
+          <tr>
+            <td>${escapeHtml(r.student_name)}</td>
+            <td>${escapeHtml(r.group_name)}</td>
+            <td>${r.session_date}</td>
+            <td>${r.session_number}</td>
+            <td>${moneyLabel(r.amount)}</td>
+            <td><span class="badge ${r.is_paid ? 'badge-green' : 'badge-red'}">${r.is_paid ? 'متسددة' : 'مستحقة - المنصة مقفولة'}</span></td>
+            <td>${r.paid_date || "—"}</td>
+            <td>${r.is_paid ? "" : `<button class="btn btn-primary btn-sm" onclick="payAbsenceDebt(${r.id})"><i data-lucide="check" style="width:13px;height:13px;"></i> تسجيل السداد</button>`}</td>
+          </tr>
+        `).join("") : `<tr><td colspan="8"><div class="empty-state"><div class="empty-title">مفيش مديونيات غياب${ABSENCE_DEBTS_STATUS_TAB==='unpaid' ? ' مستحقة حاليًا' : ''}</div></div></td></tr>`}
+      </tbody>
+    </table></div>
+  `;
+  icons();
+}
+
+async function payAbsenceDebt(debtId){
+  confirmAction(
+    "تسجيل السداد",
+    "متأكد إنك عايز تسجل إن قيمة الحصة دي اتسددت؟ المنصة هتتفتح للطالب تلقائيًا لو مفيش مديونيات تانية مستحقة عليه.",
+    async ()=>{
+      const res = await api(`/api/absence-debts/${debtId}/pay`, {method:"POST", body: JSON.stringify({})});
+      showToast(res.message || "تم تسجيل السداد", "success");
+      loadAbsenceDebtsList();
+    }
+  );
+}
+
+async function payAllAbsenceDebtsForStudent(studentId, studentName, onSuccess){
+  confirmAction(
+    "تسجيل سداد كل المديونيات",
+    `متأكد إنك عايز تسجل إن كل مديونيات الغياب المستحقة على "${escapeHtml(studentName||'')}" اتسددت؟`,
+    async ()=>{
+      const res = await api(`/api/students/${studentId}/absence-debts/pay-all`, {method:"POST", body: JSON.stringify({})});
+      showToast(res.message || "تم تسجيل السداد", "success");
+      if (typeof onSuccess === "function") onSuccess();
+      const listWrap = document.getElementById("absenceDebtsListWrap");
+      if (listWrap) loadAbsenceDebtsList();
     }
   );
 }
@@ -6545,7 +6681,7 @@ async function previewStudentByCode(key){
   if (!lookupCode){ profileEl.innerHTML = ""; return; }
   try{
     const s = await api(`/api/students/find-by-code?code=${encodeURIComponent(lookupCode)}`);
-    profileEl.innerHTML = renderStudentQuickProfileCard(s);
+    profileEl.innerHTML = renderStudentQuickProfileCard(s, key);
     icons();
   }catch(e){
     // مفيش طالب بالكود ده (أو لسه بيكتب) - امسح البروفايل القديم من غير ما نظهر خطأ
@@ -6553,7 +6689,7 @@ async function previewStudentByCode(key){
   }
 }
 
-function renderStudentQuickProfileCard(s){
+function renderStudentQuickProfileCard(s, quickAttKey){
   const paidHistory = (s.payments || []).filter(p => p.is_paid);
   return `
     <div style="border:1px solid var(--border);border-radius:var(--radius-md);padding:12px 14px;margin-bottom:4px;background:var(--surface-2);">
@@ -6566,7 +6702,18 @@ function renderStudentQuickProfileCard(s){
           <i data-lucide="${s.subscription_active ? 'check-circle' : 'alert-circle'}" style="width:11px;height:11px;"></i>
           ${s.subscription_active ? 'مسدد الاشتراك' : 'مش مسدد الاشتراك'}
         </span>
+        ${s.absence_debt_active ? `
+        <span class="badge badge-red" title="عليه مديونية غياب - المنصة مقفولة">
+          <i data-lucide="lock" style="width:11px;height:11px;"></i>
+          مديونية غياب (${moneyLabel(s.absence_debt_total||0)})
+        </span>` : ""}
       </div>
+      ${s.absence_debt_active ? `
+      <div style="margin-top:8px;">
+        <button class="btn btn-primary btn-sm" onclick="payAllAbsenceDebtsForStudent(${s.id}, '${jsAttr(s.full_name)}', ()=>previewStudentByCode('${quickAttKey}'))">
+          <i data-lucide="check" style="width:13px;height:13px;"></i> تسجيل سداد مديونية الغياب
+        </button>
+      </div>` : ""}
       <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--text-2);">
         ${s.phone ? `<span><i data-lucide="phone" style="width:11px;height:11px;"></i> ${escapeHtml(s.phone)}</span>` : ""}
         ${s.parent_phone ? `<span><i data-lucide="phone-call" style="width:11px;height:11px;"></i> ولي الأمر: ${escapeHtml(s.parent_phone)}</span>` : ""}

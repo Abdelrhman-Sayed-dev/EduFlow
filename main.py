@@ -179,6 +179,7 @@ class GroupIn(BaseModel):
     governorate_id: int
     notes: Optional[str] = Field(None, max_length=2000)
     monthly_fee: Optional[float] = None
+    session_price: Optional[float] = None  # قيمة الحصة الواحدة - مستخدمة في حساب مديونية الغياب التلقائية
     supervisor_ids: Optional[List[int]] = None  # ممكن أكتر من مشرف مسؤول عن نفس المجموعة
     schedule_slots: Optional[list[ScheduleSlotIn]] = None  # مواعيد المجموعة (يوم + وقت)
 
@@ -318,6 +319,14 @@ class AttendanceCodeIn(BaseModel):
     session_date: str
     status: str
     session_number: int = 1
+
+
+class AbsenceDebtPayIn(BaseModel):
+    notes: Optional[str] = Field(None, max_length=1000)
+
+
+class GroupSessionPriceIn(BaseModel):
+    session_price: float
 
 
 class SessionDateUpdateIn(BaseModel):
@@ -600,6 +609,59 @@ def is_student_subscribed(conn, student_id: int) -> bool:
     return has_active_session_purchase(conn, student_id)
 
 
+def has_unpaid_absence_debt(conn, student_id: int) -> bool:
+    """
+    Business Rule الغياب: هل عند الطالب أي مديونية غياب "مش مسددة"؟ لو آه، المنصة
+    مقفولة عليه (يقدر يدخل لحسابه بس مش هيقدر يستخدم أي محتوى) لحد ما الأدمن/المشرف
+    يسجل إنه سدد قيمة الحصة دي. مستقل تمامًا عن الاشتراك الشهري (is_student_subscribed).
+    """
+    row = conn.execute(
+        "SELECT 1 FROM absence_debts WHERE student_id=? AND is_paid=0 LIMIT 1",
+        (student_id,)
+    ).fetchone()
+    return bool(row)
+
+
+def get_unpaid_absence_total(conn, student_id: int) -> float:
+    """إجمالي المبلغ المستحق (غير المسدد) على الطالب بسبب حصص الغياب"""
+    row = conn.execute(
+        "SELECT COALESCE(SUM(amount), 0) as t FROM absence_debts WHERE student_id=? AND is_paid=0",
+        (student_id,)
+    ).fetchone()
+    return row["t"] or 0.0
+
+
+def _sync_absence_debt(conn, student_id: int, group_id: int, session_date: str, session_number: int, status: str):
+    """
+    بيزامن مديونية الغياب مع حالة الحضور المسجلة - بينادى تلقائي أول ما حد يسجل
+    حضور/غياب (set_attendance / set_attendance_by_code)، من غير ما يعمل أي نظام
+    حضور جديد، وبيستخدم بيانات جدول attendance الموجود بالفعل بس.
+    - لو الحالة 'absent': ينشئ سطر مديونية "مش مسدد" بقيمة سعر حصة المجموعة، لو
+      مفيش سطر مسجل بالفعل لنفس الحصة (عشان ميتكررش لو اتسجل الغياب أكتر من مرة).
+    - لو الحالة غير كده (حاضر/متأخر/عذر): يمسح أي مديونية "لسه مش مسددة" كانت
+      اتسجلت غلط لنفس الحصة دي (مثلاً المشرف صحّح غياب لحضور) - المديونيات
+      اللي اتسددت بالفعل بتفضل زي ما هي كسجل تاريخي.
+    """
+    if status == "absent":
+        existing = conn.execute(
+            "SELECT id FROM absence_debts WHERE student_id=? AND session_date=? AND session_number=?",
+            (student_id, session_date, session_number)
+        ).fetchone()
+        if not existing:
+            grp = conn.execute("SELECT session_price FROM groups WHERE id=?", (group_id,)).fetchone()
+            price = (grp["session_price"] if grp and grp["session_price"] is not None else 0) or 0
+            conn.execute(
+                """INSERT INTO absence_debts (student_id, group_id, session_date, session_number, amount, is_paid)
+                   VALUES (?, ?, ?, ?, ?, 0)""",
+                (student_id, group_id, session_date, session_number, price)
+            )
+    else:
+        conn.execute(
+            "DELETE FROM absence_debts WHERE student_id=? AND session_date=? AND session_number=? AND is_paid=0",
+            (student_id, session_date, session_number)
+        )
+
+
 def paid_months_for_student(conn, student_id: int) -> Optional[set]:
     """
     نفس فكرة get_student_paid_months بس بتاخد student_id مباشرة بدل session - مستخدمة
@@ -731,6 +793,14 @@ def _resolve_session_by_token(token: Optional[str]):
             # ده تحقق مركزي بيغطي كل الـ endpoints تلقائيًا من غير ما نعدل كل واحدة لوحدها
             if not is_student_subscribed(conn, student["id"]):
                 raise HTTPException(status_code=402, detail="يجب سداد الاشتراك الشهري لمشاهدة المحتوى")
+            # Business Rule الغياب: لو عليه مديونية غياب مش مسددة، المنصة مقفولة
+            # عليه (بغض النظر عن حالة الاشتراك الشهري) لحد ما الأدمن/المشرف يسجل
+            # إنه سدد قيمة الحصة
+            if has_unpaid_absence_debt(conn, student["id"]):
+                raise HTTPException(
+                    status_code=402,
+                    detail="عليك مبلغ مستحق بسبب الغياب عن إحدى الحصص - كلم المشرف أو الأدمن عشان يسجل السداد وتقدر تستخدم المنصة تاني"
+                )
             # تاريخ أول اشتراك للطالب (بالظبط) - للعرض بس في الواجهة، مش بيتحقق
             # منه للسماح بالمحتوى (ده بقى مسؤولية get_student_paid_months بس)
             subscription_since = get_first_subscription_date(conn, student["id"])
@@ -825,6 +895,8 @@ ACTION_LABELS = {
     "group_add": "إضافة مجموعة",
     "group_update": "تعديل مجموعة",
     "group_delete": "حذف مجموعة",
+    "group_session_price_update": "تعديل قيمة الحصة للمجموعة",
+    "absence_debt_paid": "تسجيل سداد مديونية غياب",
     "supervisor_check_in": "تسجيل حضور مشرف",
     "supervisor_check_out": "تسجيل انصراف مشرف",
     "supervisor_attendance_correction": "تعديل يدوي لحضور مشرف",
@@ -1104,6 +1176,8 @@ def login_with_code(data: CodeLoginIn, request: Request = None):
                 "group_name": group["name"] if group else None,
                 "subscription_active": is_student_subscribed(conn, student["id"]),
                 "subscription_since": get_first_subscription_date(conn, student["id"]),
+                "absence_debt_active": has_unpaid_absence_debt(conn, student["id"]),
+                "absence_debt_amount": get_unpaid_absence_total(conn, student["id"]),
             }
 
         user = conn.execute("SELECT * FROM users WHERE access_code=?", (code,)).fetchone()
@@ -1249,7 +1323,7 @@ def get_groups(stage_id: Optional[int] = None, governorate_id: Optional[int] = N
                session=Depends(get_current_session)):
     """جلب المجموعات - المشرف يشوف مجموعاته بس، والطالب يشوف مجموعته بس"""
     query = """
-        SELECT g.id, g.name, g.notes, g.monthly_fee, g.stage_id, g.governorate_id,
+        SELECT g.id, g.name, g.notes, g.monthly_fee, g.session_price, g.stage_id, g.governorate_id,
                g.created_at, st.name as stage_name, gov.name as governorate_name,
                (SELECT GROUP_CONCAT(u.full_name, '، ') FROM group_supervisors gs
                   JOIN users u ON u.id = gs.supervisor_id WHERE gs.group_id = g.id) as supervisor_name,
@@ -1293,7 +1367,7 @@ def get_group_info(group_id: int, session=Depends(get_current_session)):
     """بيانات مجموعة معينة + بيانات المشرف (اسمه ورقمه) + مواعيد المجموعة"""
     with get_connection() as conn:
         group = conn.execute("""
-            SELECT g.id, g.name, g.notes, g.monthly_fee,
+            SELECT g.id, g.name, g.notes, g.monthly_fee, g.session_price,
                    st.name as stage_name, gov.name as governorate_name,
                    (SELECT GROUP_CONCAT(u.full_name, '، ') FROM group_supervisors gs
                       JOIN users u ON u.id = gs.supervisor_id WHERE gs.group_id = g.id) as supervisor_name,
@@ -1349,9 +1423,9 @@ def add_group(group: GroupIn, session=Depends(require_roles("admin"))):
     with get_connection() as conn:
         try:
             cur = conn.execute(
-                """INSERT INTO groups (name, stage_id, governorate_id, notes, monthly_fee)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (group.name, group.stage_id, group.governorate_id, group.notes, group.monthly_fee)
+                """INSERT INTO groups (name, stage_id, governorate_id, notes, monthly_fee, session_price)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (group.name, group.stage_id, group.governorate_id, group.notes, group.monthly_fee, group.session_price)
             )
         except Exception:
             raise HTTPException(status_code=400, detail="المجموعة دي موجودة بالفعل في نفس المرحلة والمحافظة")
@@ -1378,10 +1452,10 @@ def add_group(group: GroupIn, session=Depends(require_roles("admin"))):
 def update_group(group_id: int, group: GroupIn, session=Depends(require_roles("admin"))):
     with get_connection() as conn:
         result = conn.execute(
-            """UPDATE groups SET name=?, stage_id=?, governorate_id=?, notes=?, monthly_fee=?
+            """UPDATE groups SET name=?, stage_id=?, governorate_id=?, notes=?, monthly_fee=?, session_price=?
                WHERE id=?""",
             (group.name, group.stage_id, group.governorate_id, group.notes,
-             group.monthly_fee, group_id)
+             group.monthly_fee, group.session_price, group_id)
         )
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="المجموعة غير موجودة")
@@ -1415,6 +1489,23 @@ def set_group_monthly_fee(group_id: int, payload: MonthlyFeeIn, session=Depends(
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="المجموعة غير موجودة")
         return {"message": "تم تحديث قيمة الاشتراك"}
+
+
+@app.put("/api/groups/{group_id}/session-price")
+def set_group_session_price(group_id: int, payload: GroupSessionPriceIn, session=Depends(require_roles("admin"))):
+    """
+    تحديد قيمة الحصة الواحدة للمجموعة - القيمة دي هي اللي بتتحسب بيها مديونية
+    الغياب التلقائية أول ما يتسجل غياب لأي طالب في المجموعة (Business Rule
+    الغياب). تعديل القيمة هنا بيأثر بس على مديونيات الغياب الجديدة اللي هتتسجل
+    بعد كده - مايغيرش قيمة المديونيات القديمة المسجلة بالفعل.
+    """
+    with get_connection() as conn:
+        result = conn.execute("UPDATE groups SET session_price=? WHERE id=?", (payload.session_price, group_id))
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="المجموعة غير موجودة")
+        log_session_activity(conn, session, "group_session_price_update",
+                              f"تعديل قيمة الحصة لمجموعة #{group_id} إلى {payload.session_price}", group_id=group_id)
+        return {"message": "تم تحديث قيمة الحصة"}
 
 
 @app.put("/api/groups/{group_id}/supervisor")
@@ -4721,6 +4812,14 @@ def delete_attendance_session(group_id: int, session_date: str, session_number: 
         if deleted.rowcount == 0:
             raise HTTPException(status_code=404, detail="مفيش سجلات حضور بالتاريخ والحصة دول للمجموعة دي")
 
+        # لو الحصة دي كانت فيها مديونيات غياب "مش مسددة" مرتبطة بيها، نمسحها هي
+        # كمان بما إن سجل الغياب نفسه اتمسح - المديونيات المسددة بالفعل بتفضل
+        # كسجل مالي تاريخي زي ما هي
+        conn.execute("""
+            DELETE FROM absence_debts
+            WHERE session_date=? AND session_number=? AND group_id=? AND is_paid=0
+        """, (session_date, session_number, group_id))
+
         log_session_activity(
             conn, session, "attendance",
             f"حذف حصة غياب كاملة - مجموعة \"{group['name']}\" - حصة {session_number} - تاريخ {session_date}",
@@ -4781,6 +4880,29 @@ def update_attendance_session_date(data: SessionDateUpdateIn,
         """, (data.old_date, data.session_number, data.group_id))
         moved["attendance"] = added
         kept["attendance"] = len(src_rows) - added
+
+        # --- مديونيات الغياب: نفس منطق الدمج بتاع الحضور بالظبط - أي مديونية
+        # "مش مسددة" في التاريخ القديم بتتنقل للتاريخ الجديد، إلا لو أصلاً فيه
+        # مديونية مسجلة لنفس الطالب في التاريخ الجديد (تتسيب زي ما هي)
+        debt_src_rows = conn.execute("""
+            SELECT student_id, amount, notes FROM absence_debts
+            WHERE group_id=? AND session_date=? AND session_number=? AND is_paid=0
+        """, (data.group_id, data.old_date, data.session_number)).fetchall()
+        debts_added = 0
+        for row in debt_src_rows:
+            cur = conn.execute("""
+                INSERT INTO absence_debts (student_id, group_id, session_date, session_number, amount, is_paid, notes)
+                VALUES (?, ?, ?, ?, ?, 0, ?)
+                ON CONFLICT(student_id, session_date, session_number) DO NOTHING
+            """, (row["student_id"], data.group_id, data.new_date, data.session_number, row["amount"], row["notes"]))
+            if cur.rowcount:
+                debts_added += 1
+        conn.execute("""
+            DELETE FROM absence_debts
+            WHERE group_id=? AND session_date=? AND session_number=? AND is_paid=0
+        """, (data.group_id, data.old_date, data.session_number))
+        moved["absence_debts"] = debts_added
+        kept["absence_debts"] = len(debt_src_rows) - debts_added
 
         # --- التفاعل: نفس منطق الدمج
         src_rows = conn.execute("""
@@ -4901,6 +5023,8 @@ def set_attendance(att: AttendanceIn, session=Depends(require_roles("admin", "he
             DO UPDATE SET status=excluded.status, notes=COALESCE(excluded.notes, attendance.notes)
         """, (att.student_id, att.session_date, att.session_number, att.status, att.notes))
         st_row = conn.execute("SELECT full_name, group_id FROM students WHERE id=?", (att.student_id,)).fetchone()
+        if st_row:
+            _sync_absence_debt(conn, att.student_id, st_row["group_id"], att.session_date, att.session_number, att.status)
         log_session_activity(
             conn, session, "attendance",
             f"تسجيل حضور للطالب \"{st_row['full_name'] if st_row else att.student_id}\" - حصة {att.session_number}: {att.status}",
@@ -4940,6 +5064,15 @@ def find_student_by_code(code: str, session=Depends(require_roles("admin", "head
             (student["id"],)
         ).fetchall()
         sd["payments"] = [dict(p) for p in payments_rows]
+        # Business Rule الغياب: مديونيات الغياب غير المسددة (لو موجودة) - بتقفل
+        # المنصة على الطالب بغض النظر عن حالة الاشتراك الشهري فوق
+        debts_rows = conn.execute(
+            "SELECT id, session_date, session_number, amount, is_paid, paid_date FROM absence_debts WHERE student_id=? ORDER BY session_date DESC",
+            (student["id"],)
+        ).fetchall()
+        sd["absence_debts"] = [dict(d) for d in debts_rows]
+        sd["absence_debt_active"] = any(not d["is_paid"] for d in sd["absence_debts"])
+        sd["absence_debt_total"] = sum(d["amount"] for d in sd["absence_debts"] if not d["is_paid"])
         return sd
 
 
@@ -4962,6 +5095,7 @@ def set_attendance_by_code(data: AttendanceCodeIn, session=Depends(require_roles
             ON CONFLICT(student_id, session_date, session_number)
             DO UPDATE SET status=excluded.status
         """, (student["id"], data.session_date, data.session_number, data.status))
+        _sync_absence_debt(conn, student["id"], student["group_id"], data.session_date, data.session_number, data.status)
         log_session_activity(
             conn, session, "attendance",
             f"تسجيل حضور بالكود للطالب \"{student['full_name']}\" - حصة {data.session_number}: {data.status}",
@@ -4970,7 +5104,8 @@ def set_attendance_by_code(data: AttendanceCodeIn, session=Depends(require_roles
         subscription_paid = is_student_subscribed(conn, student["id"])
         return {
             "message": "تم تسجيل الحضور", "student_name": student["full_name"], "student_id": student["id"],
-            "subscription_paid": subscription_paid
+            "subscription_paid": subscription_paid,
+            "absence_debt_active": has_unpaid_absence_debt(conn, student["id"]),
         }
 
 
@@ -6050,6 +6185,141 @@ def set_bulk_payment(data: BulkPaymentIn, session=Depends(require_roles("admin",
             f"تحديث اشتراك جماعي لـ {updated} طالب - شهر {data.month}: {'مسدد' if data.is_paid else 'غير مسدد'}"
         )
         return {"message": f"تم تحديث اشتراك {updated} طالب", "updated": updated}
+
+
+# ---------------------------------------------------------------------------
+# مديونيات الغياب (Absence Debts) - Business Rule: أول ما يتسجل غياب لطالب،
+# بتتسجل مديونية تلقائيًا (شوف _sync_absence_debt فوق) وبتقفل المنصة عليه
+# لحد ما الأدمن/المشرف يسجل السداد هنا. نفس أدوار الوصول المستخدمة في
+# نظام المدفوعات الشهرية (admin / head_supervisor / supervisor - المشرف
+# يشوف مجموعاته بس).
+# ---------------------------------------------------------------------------
+
+@app.get("/api/absence-debts")
+def list_absence_debts(group_id: Optional[int] = None, student_id: Optional[int] = None,
+                        status: Optional[str] = None,
+                        session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
+    """
+    قائمة مديونيات الغياب - status: 'unpaid' (الافتراضي لو مش محدد) / 'paid' / 'all'.
+    المشرف يشوف مديونيات مجموعاته بس.
+    """
+    with get_connection() as conn:
+        if session["role"] == "supervisor" and group_id:
+            assert_supervisor_owns_group(conn, session, group_id)
+
+        query = """
+            SELECT d.id, d.student_id, s.full_name as student_name, d.group_id, g.name as group_name,
+                   d.session_date, d.session_number, d.amount, d.is_paid, d.paid_date, d.notes,
+                   d.created_at
+            FROM absence_debts d
+            JOIN students s ON s.id = d.student_id
+            JOIN groups g ON g.id = d.group_id
+            WHERE 1=1
+        """
+        params = []
+        if group_id:
+            query += " AND d.group_id = ?"
+            params.append(group_id)
+        if student_id:
+            query += " AND d.student_id = ?"
+            params.append(student_id)
+        if status == "paid":
+            query += " AND d.is_paid = 1"
+        elif status == "all":
+            pass
+        else:
+            query += " AND d.is_paid = 0"
+        if session["role"] == "supervisor":
+            query += " AND d.group_id IN (SELECT group_id FROM group_supervisors WHERE supervisor_id=?)"
+            params.append(session["id"])
+        query += " ORDER BY d.session_date DESC, d.id DESC"
+
+        rows = conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+
+@app.get("/api/students/{student_id}/absence-debts")
+def get_student_absence_debts(student_id: int, session=Depends(get_current_session)):
+    """مديونيات غياب طالب معين - الطالب يشوف مديونياته هو بس"""
+    with get_connection() as conn:
+        student = conn.execute("SELECT group_id FROM students WHERE id=?", (student_id,)).fetchone()
+        if not student:
+            raise HTTPException(status_code=404, detail="الطالب غير موجود")
+        if session["role"] == "supervisor":
+            assert_supervisor_owns_group(conn, session, student["group_id"])
+        elif session["role"] == "student" and session["id"] != student_id:
+            raise HTTPException(status_code=403, detail="تقدر تشوف مديونياتك بس")
+
+        rows = conn.execute(
+            "SELECT * FROM absence_debts WHERE student_id=? ORDER BY session_date DESC",
+            (student_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+@app.post("/api/absence-debts/{debt_id}/pay")
+def pay_absence_debt(debt_id: int, data: Optional[AbsenceDebtPayIn] = None,
+                      session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
+    """
+    تسجيل سداد مديونية غياب - بمجرد ما تتسجل هنا، المنصة بتتفتح تلقائيًا للطالب
+    (لو مفيش أي مديونية غياب تانية لسه مش مسددة عليه) لأن has_unpaid_absence_debt
+    بترجع False على طول.
+    """
+    with get_connection() as conn:
+        debt = conn.execute(
+            "SELECT * FROM absence_debts WHERE id=?", (debt_id,)
+        ).fetchone()
+        if not debt:
+            raise HTTPException(status_code=404, detail="مديونية الغياب غير موجودة")
+        if session["role"] == "supervisor":
+            assert_supervisor_owns_group(conn, session, debt["group_id"])
+        if debt["is_paid"]:
+            raise HTTPException(status_code=400, detail="المديونية دي متسددة بالفعل")
+
+        from datetime import date
+        paid_date = date.today().isoformat()
+        notes = data.notes if data else None
+        conn.execute(
+            "UPDATE absence_debts SET is_paid=1, paid_date=?, paid_by=?, notes=COALESCE(?, notes) WHERE id=?",
+            (paid_date, session["id"], notes, debt_id)
+        )
+        student = conn.execute("SELECT full_name FROM students WHERE id=?", (debt["student_id"],)).fetchone()
+        log_session_activity(
+            conn, session, "absence_debt_paid",
+            f"تسجيل سداد مديونية غياب للطالب \"{student['full_name'] if student else debt['student_id']}\" "
+            f"- حصة {debt['session_number']} بتاريخ {debt['session_date']} - {debt['amount']}",
+            group_id=debt["group_id"]
+        )
+        return {"message": "تم تسجيل السداد - المنصة اتفتحت للطالب"}
+
+
+@app.post("/api/students/{student_id}/absence-debts/pay-all")
+def pay_all_absence_debts(student_id: int, data: Optional[AbsenceDebtPayIn] = None,
+                           session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
+    """تسجيل سداد كل مديونيات الغياب المستحقة على طالب معين دفعة واحدة"""
+    with get_connection() as conn:
+        student = conn.execute("SELECT full_name, group_id FROM students WHERE id=?", (student_id,)).fetchone()
+        if not student:
+            raise HTTPException(status_code=404, detail="الطالب غير موجود")
+        if session["role"] == "supervisor":
+            assert_supervisor_owns_group(conn, session, student["group_id"])
+
+        from datetime import date
+        paid_date = date.today().isoformat()
+        notes = data.notes if data else None
+        result = conn.execute(
+            "UPDATE absence_debts SET is_paid=1, paid_date=?, paid_by=?, notes=COALESCE(?, notes) WHERE student_id=? AND is_paid=0",
+            (paid_date, session["id"], notes, student_id)
+        )
+        if result.rowcount == 0:
+            raise HTTPException(status_code=400, detail="مفيش مديونيات غياب مستحقة على الطالب ده")
+
+        log_session_activity(
+            conn, session, "absence_debt_paid",
+            f"تسجيل سداد {result.rowcount} مديونية غياب دفعة واحدة للطالب \"{student['full_name']}\"",
+            group_id=student["group_id"]
+        )
+        return {"message": f"تم تسجيل سداد {result.rowcount} مديونية - المنصة اتفتحت للطالب", "count": result.rowcount}
 
 
 @app.get("/api/reports/subscriptions-summary")
