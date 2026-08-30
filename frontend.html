@@ -3471,6 +3471,12 @@ function renderAbsenceDebtsTable(){
   const rows = getFilteredAbsenceDebtRows();
   const totalUnpaid = rows.filter(r=>!r.is_paid).reduce((s,r)=>s+(r.amount||0), 0);
 
+  // لو الطالب غاب أكتر من حصة، هيبقى عنده أكتر من سطر مستقل هنا - نحسب عدد
+  // المديونيات المستحقة لكل طالب عشان نعرض زرار "سدد كل مديونياته" بدل ما
+  // الأدمن يدوس على كل سطر لوحده
+  const unpaidCountByStudent = {};
+  rows.filter(r=>!r.is_paid).forEach(r => { unpaidCountByStudent[r.student_id] = (unpaidCountByStudent[r.student_id]||0) + 1; });
+
   wrap.innerHTML = `
     <div style="padding:8px 16px;font-size:12px;color:var(--text-3);display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;">
       <span>${rows.length} مديونية</span>
@@ -3479,22 +3485,40 @@ function renderAbsenceDebtsTable(){
     <div class="table-wrap"><table>
       <thead><tr><th>الطالب</th><th>المجموعة</th><th>تاريخ الحصة</th><th>رقم الحصة</th><th>المبلغ</th><th>الحالة</th><th>تاريخ السداد</th><th></th></tr></thead>
       <tbody>
-        ${rows.length ? rows.map(r => `
+        ${rows.length ? rows.map(r => {
+          const studentUnpaidCount = unpaidCountByStudent[r.student_id] || 0;
+          return `
           <tr>
-            <td>${escapeHtml(r.student_name)}</td>
+            <td>${escapeHtml(r.student_name)}${studentUnpaidCount > 1 ? ` <span class="badge badge-red" style="font-size:10px;">${studentUnpaidCount} حصص</span>` : ""}</td>
             <td>${escapeHtml(r.group_name)}</td>
             <td>${r.session_date}</td>
             <td>${r.session_number}</td>
-            <td>${moneyLabel(r.amount)}</td>
+            <td>${moneyLabel(r.amount)} ${!r.is_paid ? `<button class="icon-btn" onclick="editAbsenceDebtAmount(${r.id}, ${r.amount})" title="تعديل القيمة"><i data-lucide="pencil" style="width:12px;height:12px;"></i></button>` : ""}</td>
             <td><span class="badge ${r.is_paid ? 'badge-green' : 'badge-red'}">${r.is_paid ? 'متسددة' : 'مستحقة - المنصة مقفولة'}</span></td>
             <td>${r.paid_date || "—"}</td>
-            <td>${r.is_paid ? "" : `<button class="btn btn-primary btn-sm" onclick="payAbsenceDebt(${r.id})"><i data-lucide="check" style="width:13px;height:13px;"></i> تسجيل السداد</button>`}</td>
+            <td style="display:flex;gap:6px;flex-wrap:wrap;">
+              ${r.is_paid ? "" : `<button class="btn btn-primary btn-sm" onclick="payAbsenceDebt(${r.id})"><i data-lucide="check" style="width:13px;height:13px;"></i> تسجيل السداد</button>`}
+              ${!r.is_paid && studentUnpaidCount > 1 ? `<button class="btn btn-ghost btn-sm" onclick="payAllAbsenceDebtsForStudent(${r.student_id}, '${jsAttr(r.student_name)}', ()=>loadAbsenceDebtsList())" title="سدد كل مديونيات الطالب دفعة واحدة"><i data-lucide="check-check" style="width:13px;height:13px;"></i> سدد الكل (${studentUnpaidCount})</button>` : ""}
+            </td>
           </tr>
-        `).join("") : `<tr><td colspan="8"><div class="empty-state"><div class="empty-title">مفيش مديونيات غياب${ABSENCE_DEBTS_STATUS_TAB==='unpaid' ? ' مستحقة حاليًا' : ''}</div></div></td></tr>`}
+        `;}).join("") : `<tr><td colspan="8"><div class="empty-state"><div class="empty-title">مفيش مديونيات غياب${ABSENCE_DEBTS_STATUS_TAB==='unpaid' ? ' مستحقة حاليًا' : ''}</div></div></td></tr>`}
       </tbody>
     </table></div>
   `;
   icons();
+}
+
+async function editAbsenceDebtAmount(debtId, currentAmount){
+  const val = prompt("قيمة الحصة الصحيحة (جنيه):", currentAmount || 0);
+  if (val === null) return;
+  const amount = parseFloat(val);
+  if (isNaN(amount) || amount < 0){
+    showToast("قيمة غير صحيحة", "error");
+    return;
+  }
+  await api(`/api/absence-debts/${debtId}`, {method:"PUT", body: JSON.stringify({amount})});
+  showToast("تم تحديث قيمة المديونية", "success");
+  loadAbsenceDebtsList();
 }
 
 async function payAbsenceDebt(debtId){
