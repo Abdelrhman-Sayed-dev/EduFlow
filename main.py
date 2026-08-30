@@ -325,6 +325,10 @@ class AbsenceDebtPayIn(BaseModel):
     notes: Optional[str] = Field(None, max_length=1000)
 
 
+class AbsenceDebtAmountIn(BaseModel):
+    amount: float = Field(..., ge=0)
+
+
 class GroupSessionPriceIn(BaseModel):
     session_price: float
 
@@ -897,6 +901,7 @@ ACTION_LABELS = {
     "group_delete": "حذف مجموعة",
     "group_session_price_update": "تعديل قيمة الحصة للمجموعة",
     "absence_debt_paid": "تسجيل سداد مديونية غياب",
+    "absence_debt_amount_update": "تعديل قيمة مديونية غياب",
     "supervisor_check_in": "تسجيل حضور مشرف",
     "supervisor_check_out": "تسجيل انصراف مشرف",
     "supervisor_attendance_correction": "تعديل يدوي لحضور مشرف",
@@ -6255,6 +6260,35 @@ def get_student_absence_debts(student_id: int, session=Depends(get_current_sessi
             (student_id,)
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+@app.put("/api/absence-debts/{debt_id}")
+def update_absence_debt_amount(debt_id: int, data: AbsenceDebtAmountIn,
+                                session=Depends(require_roles("admin", "head_supervisor", "supervisor"))):
+    """
+    تعديل قيمة مديونية غياب موجودة بالفعل - مفيد لتصحيح مديونيات اتسجلت
+    بقيمة خاطئة (مثلاً صفر لأن سعر الحصة للمجموعة معملوش تحديد وقتها). تحديد
+    سعر الحصة من صفحة المجموعات بيظبط أي غياب جديد تلقائيًا، لكن المديونيات
+    القديمة المسجلة بالفعل محتاجة تعديل يدوي زي هنا.
+    """
+    with get_connection() as conn:
+        debt = conn.execute("SELECT * FROM absence_debts WHERE id=?", (debt_id,)).fetchone()
+        if not debt:
+            raise HTTPException(status_code=404, detail="مديونية الغياب غير موجودة")
+        if session["role"] == "supervisor":
+            assert_supervisor_owns_group(conn, session, debt["group_id"])
+        if debt["is_paid"]:
+            raise HTTPException(status_code=400, detail="المديونية دي متسددة بالفعل ومينفعش تتعدل")
+
+        conn.execute("UPDATE absence_debts SET amount=? WHERE id=?", (data.amount, debt_id))
+        student = conn.execute("SELECT full_name FROM students WHERE id=?", (debt["student_id"],)).fetchone()
+        log_session_activity(
+            conn, session, "absence_debt_amount_update",
+            f"تعديل قيمة مديونية غياب للطالب \"{student['full_name'] if student else debt['student_id']}\" "
+            f"- حصة {debt['session_number']} بتاريخ {debt['session_date']} من {debt['amount']} إلى {data.amount}",
+            group_id=debt["group_id"]
+        )
+        return {"message": "تم تحديث قيمة المديونية"}
 
 
 @app.post("/api/absence-debts/{debt_id}/pay")
